@@ -41,6 +41,10 @@
 # to launch a ship task whose explicit --mode disagrees, so an adjusted brief and the
 # recorded task metadata cannot drift apart.
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
+# Ship briefs also carry a chat-only "CHECKPOINT:" rule: the worker ends each
+# pipeline-stage turn with one literal CHECKPOINT line in its own message (never a
+# status-file append) so a harness hook can grep it and resume after a cutoff or a
+# context compaction. Scout and secondmate scaffolds omit it.
 # --mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
 # report rather than a merge, and a charter is not a delivery contract.
 # There is no --yolo flag here. The worker never owns merge decisions, so yolo is
@@ -452,6 +456,14 @@ $RULE1
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+8. End every pipeline-stage turn (rebase, review, fix round, no-mistakes gate) with this line in your
+   own chat message, before you move on to the next stage:
+   \`CHECKPOINT: stage=<name> pr=<url-or-id> done=<short summary> next=<short summary>\`
+   Write \`pr=none\` while no PR exists yet. The format is literal: a harness hook greps your final
+   message for it verbatim, so a usage-limit cutoff or a context compaction can resume from the last
+   completed stage. This is a CHAT-ONLY line. NEVER echo, append, or otherwise write a \`CHECKPOINT:\`
+   line into the status file - it is not a status append, and putting it there would wake firstmate
+   on every stage and break rule 4.
 
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.

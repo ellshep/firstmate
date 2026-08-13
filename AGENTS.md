@@ -518,6 +518,8 @@ The generated Herdr contract must use a named non-`default` isolated lab and its
 
 Load `secondmate-provisioning` before creating or using a charter brief and preserve its idle-by-default and marked-return-channel contracts.
 Status appends are sparse supervisor-actionable events, not routine progress; `bin/fm-classify-lib.sh` owns keyed open and resolved semantics.
+Generated ship briefs also carry a chat-only per-stage `CHECKPOINT:` resume line the worker writes in its own message rather than appending to the status file, so it never wakes firstmate.
+Scout briefs omit it because `data/<id>/report.md` is already the scout's resumable artifact.
 The scaffold is a safety contract, not a suggestion.
 
 ## 12. Self-update

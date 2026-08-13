@@ -371,6 +371,39 @@ test_ship_project_memory_wording() {
   pass "fm-brief.sh: ship project-memory wording carries the AGENTS.md authoring bar"
 }
 
+# The per-stage CHECKPOINT line is a chat-only resume marker a harness hook greps
+# from the worker's own message. It belongs to every ship mode, and must never
+# reach a scout or a secondmate charter: a scout's report file is already its
+# resumable artifact, and a charter has no pipeline stages.
+test_checkpoint_line_is_ship_only() {
+  local home id brief
+  home="$TMP_ROOT/checkpoint-home"
+  mkdir -p "$home/data"
+
+  for id_mode in "brief-ckpt-d1:no-mistakes" "brief-ckpt-d2:direct-PR" "brief-ckpt-d3:local-only"; do
+    id=${id_mode%%:*}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "${id_mode##*:}" >/dev/null 2>&1
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$id: brief was not scaffolded"
+    assert_grep "CHECKPOINT: stage=<name> pr=<url-or-id> done=<short summary> next=<short summary>" "$brief" \
+      "$id: ship brief lost the literal CHECKPOINT format"
+    assert_grep "pr=none" "$brief" "$id: ship brief lost the no-PR-yet CHECKPOINT value"
+    assert_grep "NEVER echo, append, or otherwise write a \`CHECKPOINT:\`" "$brief" \
+      "$id: ship brief lost the chat-only, never-a-status-append rule"
+  done
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-ckpt-d4 some-proj --scout >/dev/null 2>&1
+  assert_no_grep "CHECKPOINT" "$home/data/brief-ckpt-d4/brief.md" \
+    "scout brief must not carry the CHECKPOINT contract"
+
+  FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-ckpt-d5 --secondmate alpha >/dev/null 2>&1
+  assert_no_grep "CHECKPOINT" "$home/data/brief-ckpt-d5/brief.md" \
+    "secondmate charter must not carry the CHECKPOINT contract"
+
+  pass "fm-brief.sh: the CHECKPOINT resume line is ship-only and chat-only"
+}
+
 test_herdr_lab_contract_is_explicit_and_complete() {
   local home id brief
   home="$TMP_ROOT/herdr-lab-home"
@@ -722,6 +755,7 @@ test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
 test_ship_project_memory_wording
+test_checkpoint_line_is_ship_only
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path
 test_herdr_lab_omission_is_loud_for_ship_and_scout
