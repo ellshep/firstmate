@@ -375,6 +375,11 @@ test_ship_project_memory_wording() {
 # from the worker's own message. It belongs to every ship mode, and must never
 # reach a scout or a secondmate charter: a scout's report file is already its
 # resumable artifact, and a charter has no pipeline stages.
+# The rule must stay CONDITIONAL on a turn ending: an instruction to end a turn at
+# each stage boundary contradicts rule 4's nonterminal contract and would park an
+# autonomous worker mid-pipeline. The hook matches ^CHECKPOINT: and nothing reports
+# a miss, so the emitted template line must sit at column zero and the generated text
+# must carry both the literal-format constraint and the silent-miss warning.
 test_checkpoint_line_is_ship_only() {
   local home id brief
   home="$TMP_ROOT/checkpoint-home"
@@ -385,23 +390,37 @@ test_checkpoint_line_is_ship_only() {
     FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "${id_mode##*:}" >/dev/null 2>&1
     brief="$home/data/$id/brief.md"
     assert_present "$brief" "$id: brief was not scaffolded"
-    assert_grep "CHECKPOINT: stage=<name> pr=<url-or-id> done=<short summary> next=<short summary>" "$brief" \
-      "$id: ship brief lost the literal CHECKPOINT format"
+    grep -qx "CHECKPOINT: stage=<name> pr=<url-or-id> done=<short summary> next=<short summary>" "$brief" \
+      || fail "$id: the CHECKPOINT template line is not emitted unindented at column zero"
+    assert_grep "Whenever a turn ends while a pipeline stage" "$brief" \
+      "$id: ship brief lost the conditional turn-end framing"
+    assert_no_grep "End every pipeline-stage turn" "$brief" \
+      "$id: ship brief regressed to instructing the worker to end a turn per stage"
+    assert_grep "Do not end a turn just to write one" "$brief" \
+      "$id: ship brief lost the do-not-end-a-turn clause"
+    assert_grep "must begin at column zero as its own line" "$brief" \
+      "$id: ship brief lost the column-zero literal-match constraint"
+    assert_grep "no list marker or bullet, and not inside a code fence" "$brief" \
+      "$id: ship brief lost the no-marker/no-code-fence constraint"
+    assert_grep "silently dropped - nothing reports a missed checkpoint" "$brief" \
+      "$id: ship brief lost the silent-miss warning"
     assert_grep "pr=none" "$brief" "$id: ship brief lost the no-PR-yet CHECKPOINT value"
     assert_grep "NEVER echo, append, or otherwise write a \`CHECKPOINT:\`" "$brief" \
       "$id: ship brief lost the chat-only, never-a-status-append rule"
   done
 
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-ckpt-d4 some-proj --scout >/dev/null 2>&1
+  assert_present "$home/data/brief-ckpt-d4/brief.md" "scout brief was not scaffolded"
   assert_no_grep "CHECKPOINT" "$home/data/brief-ckpt-d4/brief.md" \
     "scout brief must not carry the CHECKPOINT contract"
 
   FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
     FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-ckpt-d5 --secondmate alpha >/dev/null 2>&1
+  assert_present "$home/data/brief-ckpt-d5/brief.md" "secondmate charter was not scaffolded"
   assert_no_grep "CHECKPOINT" "$home/data/brief-ckpt-d5/brief.md" \
     "secondmate charter must not carry the CHECKPOINT contract"
 
-  pass "fm-brief.sh: the CHECKPOINT resume line is ship-only and chat-only"
+  pass "fm-brief.sh: the CHECKPOINT resume line is ship-only, chat-only, and column-zero literal"
 }
 
 test_herdr_lab_contract_is_explicit_and_complete() {
