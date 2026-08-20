@@ -11,3 +11,5 @@ __pycache__/
 *.pyc
 .env
 config/
+# per-session Claude checkpoint hook state; the rest of .claude/ stays tracked
+.claude/checkpoints/
