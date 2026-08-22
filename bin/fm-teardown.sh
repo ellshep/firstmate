@@ -133,6 +133,16 @@
 #     root still exists, so the account's healthy LaunchAgent worker and every
 #     live remote secondmate worker are out of scope. Best effort: a sweep
 #     failure never blocks this teardown.
+#
+# Completion guard. Every refusal above exits non-zero on purpose, so a caller
+# treats exit 0 as proof the whole sequence ran. Bash breaks that on its own:
+# a `.` whose target is missing aborts the entire script mid-sequence and
+# reports status 0, so a code root missing one transitively sourced library
+# tore down nothing, said nothing, and still looked like a success - leaving
+# the task's temp root, state files, and endpoint behind. TEARDOWN_COMPLETED is
+# set only on the two paths that genuinely finish, and the EXIT trap turns a
+# zero status without it into a loud failure so the caller retries instead of
+# recording a teardown that never happened.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -185,6 +195,7 @@ DESCENDANT_TASK_STATES=()
 DESCENDANT_TASK_IDS=()
 DESCENDANT_TASK_KINDS=()
 DESCENDANT_TASK_HOMES=()
+TEARDOWN_COMPLETED=0
 teardown_release_locks() {
   local status=$? i
   if declare -F teardown_release_herdr_locks >/dev/null 2>&1; then
@@ -201,6 +212,10 @@ teardown_release_locks() {
   if [ "$CONTROL_LOCK_HELD" = 1 ]; then
     fm_lock_release "$CONTROL_LOCK" || true
     CONTROL_LOCK_HELD=0
+  fi
+  if [ "$status" -eq 0 ] && [ "$TEARDOWN_COMPLETED" != 1 ]; then
+    echo "error: teardown for $ID stopped before it finished; nothing was completed and no record may treat this task as torn down - rerun it." >&2
+    status=1
   fi
   return "$status"
 }
@@ -421,6 +436,7 @@ remote_secondmate_teardown_locked() {
 }
 
 if remote_secondmate_teardown_locked; then
+  TEARDOWN_COMPLETED=1
   exit 0
 else
   remote_teardown_rc=$?
@@ -2550,4 +2566,5 @@ if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only 
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi
 echo "teardown $ID complete (window $T, worktree $WT)"
+TEARDOWN_COMPLETED=1
 backlog_refresh_reminder
