@@ -182,7 +182,7 @@ Compaction and retry loaders remain stock because Pi exposes no supported replac
 `bin/fm-operational-input.sh` owns current cross-language operational-input construction and parsing, while the thin Pi adapter lives at `.pi/extensions/lib/fm-operational-input.ts`.
 Only `genuine-user-prompt`, `genuine-agent-response`, and `working-status` are policy-visible.
 Every other audited class is policy-hidden when Pi exposes a supported presentation boundary, but semantic input is never transformed to enforce that preference.
-The home-local persistence schema is owned by [`docs/configuration.md`](configuration.md#pi-calm-preference-configcalm).
+The home-local persistence schema is owned by [`docs/configuration.md`](configuration.md#calm-preference-configcalm).
 
 Current session-start, watcher, turn-end guard, away supervisor, and launch-brief inputs retain their versioned U+2063 static envelopes.
 The established leading `[fm-from-firstmate]` plus U+2063 routing carrier remains current so running secondmate charters remain compatible.
@@ -248,7 +248,8 @@ grok 0.2.106 (bde89716f679)
 
 | Harness | Conclusion | Evidence |
 | --- | --- | --- |
-| Claude Code 2.1.218 | Not feasible through the inspected supported project surface. | Project hooks can observe lifecycle and tool events, while the plugin CLI packages supported components; neither inspected surface exposes a transcript-row renderer or transcript-wide redraw API. |
+| Claude Code 2.1.218 | Not feasible through the inspected supported project surface. Superseded for later versions by the 2.1.228 record below; retained as the evidence that stood at that version. | Project hooks can observe lifecycle and tool events, while the plugin CLI packages supported components; neither inspected surface exposes a transcript-row renderer or transcript-wide redraw API. |
+| Claude Code 2.1.228 | Partially feasible with one undocumented displayed-message hook. | A `MessageDisplay` command hook can replace or blank the displayed assistant text of the flush it is given, verified by running the binary in both print mode and the real interactive TUI; the published hook reference states the opposite, so the seam is undocumented and the implementation degrades to the original text rather than gating on a version. Tool rows, thinking, status notices, and the working indicator remain outside any inspected renderer control. |
 | Codex CLI 0.144.6 | Not feasible through the inspected supported project surface. | The tracked hooks expose session, pre-tool, and stop handling, while the plugin and feature inventories expose no TUI tool-row renderer or transcript redraw control. |
 | OpenCode 1.17.18 | Not feasible without violating the preservation boundary. | Plugins expose events and tool execution hooks, not a built-in transcript-row renderer; same-name tool replacement changes execution rather than presentation alone. |
 | Pi (verified 0.81.1 through 0.82.0) | Partially feasible with two API-probed exported-class adapters. | Public APIs control working visibility, collapsed labels, known tool slots, custom entries, and expansion redraws; exported assistant and interactive-mode classes provide the collapsed-thinking and operational-user layout boundaries, gated on the exact method's presence rather than a version number, while generic user, tool, and status filtering remains unavailable. |
@@ -259,6 +260,60 @@ They do not claim that a harness can never add the missing renderer API.
 For the duplicate-turn fix and the latest presentation change, the launch templates for Claude, Codex, OpenCode, Pi, and Grok and the watcher, turn-end, session-start, away-supervisor, and from-firstmate producers were re-inspected.
 The canonical encoder and every non-Pi delivery path remain unchanged, and the tmux, Herdr, Zellij, Orca, and cmux runtime surfaces continue to transport the same input selected by the harness adapter.
 Only Pi's Calm presentation implementation changed; every producer and non-Pi transport remains unchanged.
+
+## 2026-08-19 Claude Code 2.1.228 displayed-message feasibility
+
+The 2.1.218 conclusion above is superseded for Claude Code.
+Every fact below was established by running the installed binary, not by reading its documentation.
+
+```text
+$ claude --version
+2.1.228 (Claude Code)
+```
+
+A `MessageDisplay` command hook that prints
+`{"hookSpecificOutput":{"hookEventName":"MessageDisplay","displayContent":"..."}}`
+replaces the displayed assistant text of the flush it was given, and `displayContent: ""` removes the row completely.
+The behavior reproduced in print mode and in the real interactive TUI.
+The published hook reference states that `MessageDisplay` cannot alter what is displayed, so the capability is undocumented; Calm therefore treats it as an unstable seam, exactly as it treats Pi's exported internals, and never gates on a version number.
+
+The hook receives `turn_id`, `message_id`, `index`, `final`, and `delta` on top of the common hook fields.
+`final` marks the last flush of ONE message, not the last message of a turn, and `message_id` does not match the transcript `uuid`.
+Print mode delivers a whole message as a single flush.
+The interactive TUI delivers one message as several flushes with an incrementing `index`, each `delta` carrying only the newly displayed text.
+Those flushes were observed to break on line boundaries rather than on provider chunk boundaries: two streamed chunks `"line1\nline2 par"` and `"tial rest\nline3 end"` arrived as three deltas `"line1\n"`, `"line2 partial rest\n"`, and `"line3 end"`, while a four-chunk stream containing no newline at all arrived as one flush.
+That alignment is an undocumented observation, so the filter treats an unmarked fragment as text to SHOW and never depends on it.
+
+The boundary holds: the stored transcript and the model's context are untouched, verified by finding the hidden text still present in the session `.jsonl` after the row was gone.
+A hook error prints the original delta, so the seam already fails toward showing text.
+
+### Designs ruled out
+
+Two designs were tested and abandoned before the marker design was chosen; neither is buildable on this surface.
+
+Hiding everything and reprinting the answer at turn end has no reprint channel.
+Stop-hook stdout is not rendered, `systemMessage` is not rendered, and a hook cannot open `/dev/tty`.
+
+Letting the hook decide for itself which text is narration is not buildable either.
+The separating signal is real - a `stop_reason` of `tool_use` marks narration and `end_turn` marks the genuine reply - but a message's own transcript entry is not written until after the display hook returns, and polling for 1.5s inside the hook never observed it.
+
+### Implemented design
+
+Calm on Claude Code is inverted relative to Pi: the hook hides only text carrying an explicit narration marker and passes everything else through byte-identically by printing nothing at all.
+[`calm.md`](calm.md#claude-code) owns the captain-facing contract, `bin/fm-claude-calm-display.sh` owns the marker bytes and the filter, and `AGENTS.md` section 9 owns when Firstmate marks a line.
+A missed marker degrades to one stray narration line on screen; Calm off, an absent or unreadable preference, a missing tool, malformed hook input, and an absent or altered seam all show the original text.
+
+`tests/fm-claude-calm-display.test.sh` drives the real Claude Code binary against a deterministic local Messages stand-in, so its screen assertions come from Claude's own renderer with no credentials and no network.
+It covers marked narration hidden, unmarked turns byte-identical to an unregistered hook, mixed flushes keeping exactly the unmarked lines, per-flush hiding in the real interactive TUI, the preference gate including the legacy `max` value, the transcript boundary, an absent `MessageDisplay` registration, malformed hook input, and the missing-tool fail-open path.
+The credentialed live regression was not required because this change adds no provider integration and no delivery path.
+
+```text
+$ tests/fm-claude-calm-display.test.sh
+ok - Calm's Claude display hook hides only marked lines and shows the original text on every malformed, ungated, and degraded path
+ok - Calm's Claude display hook keeps every unmarked line, marker position and flush split included
+ok - the real Claude Code renderer hides only marked narration, stays byte-identical everywhere else, and leaves the stored transcript intact
+ok - the real Claude Code TUI hides marked narration on every flush of one streamed message while keeping the answer lines
+```
 
 ## Regression coverage
 

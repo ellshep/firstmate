@@ -1,7 +1,14 @@
-# Pi Calm mode
+# Calm mode
 
-Calm is a Pi-only conversation presentation toggle.
-It is off by default, and the last `/calm` choice persists for the effective Firstmate home across Pi session starts and resumes.
+Calm is a conversation presentation preference shared by Pi and Claude Code.
+It is off by default, one home-local choice covers both, and the last `/calm` choice persists for the effective Firstmate home across Pi session starts and resumes.
+Claude Code has no `/calm` command of its own and simply reads the same stored choice at each displayed message, so a home that has never turned Calm on renders exactly as it always did.
+Each harness hides what its own presentation surface supports, and the sections below own those two contracts.
+Calm never changes what the model receives, what is persisted, what `/export` produces, or message ordering.
+
+## Pi
+
+Calm is a Pi conversation presentation toggle.
 
 While Calm is active and an agent run is under way, Calm hides Pi's built-in `Working...` row and shows a small two-row animated boat in its place, and no separate Calm status row is added.
 The water fills the usable width in standard ANSI blue and the complete boat is standard ANSI yellow.
@@ -45,8 +52,31 @@ When a session starts or reloads with Calm already on, Calm must instead registe
 Pi provides no ownership check early enough for that load-time path, and the first registrant wins the complete tool definition.
 If the other extension wins, a session-start console diagnostic names the tool and winning extension; if Calm wins, Pi does not expose the losing registration, so the other extension's override is unavailable and cannot be named.
 
+## Claude Code
+
+Claude Code presentation is INVERTED relative to Pi: nothing is hidden unless Firstmate explicitly marks it.
+While Calm is on, a marked line is dropped from the screen; every unmarked line always prints, byte for byte, exactly as Claude Code would have rendered it on its own.
+Firstmate marks only its own mid-turn narration, the running commentary that accompanies tool calls, and never a captain-facing answer.
+A missed marker therefore leaves one stray narration line on screen rather than swallowing an answer.
+
+The marker is U+2062 INVISIBLE TIMES at the start of a narration line.
+It is invisible on screen, distinct from the U+2063 operational-input mark, and absent from ordinary prose, code, and command output.
+It is display-only: the marked text stays in the stored transcript, in the model's context, and in `/export`.
+
+While Calm is off, absent, or unreadable, Claude Code renders its own original bytes and the marker is simply an invisible character in the line.
+Claude Code hides marked narration only through a `MessageDisplay` hook whose displayed-text control is undocumented and may change, so every failure - Calm off, a missing tool, malformed hook input, or a harness that stops honoring the hook - shows the original text.
+
+`bin/fm-claude-calm-display.sh` owns the marker bytes and the filter, and `AGENTS.md` section 9 owns when Firstmate marks a line.
+Claude Code's other transcript rows - tool calls and results, thinking, status notices, and its working indicator - are untouched, because the hook can only replace displayed assistant text.
+
+Regression entry point:
+
+```sh
+tests/fm-claude-calm-display.test.sh
+```
+
 [`calm-mode-feasibility.md`](calm-mode-feasibility.md) owns the version-scoped renderer taxonomy, built-in override constraints, and empirical evidence.
-[`configuration.md`](configuration.md#pi-calm-preference-configcalm) owns the persisted preference file and resolution rules.
+[`configuration.md`](configuration.md#calm-preference-configcalm) owns the persisted preference file and resolution rules.
 `.pi/extensions/lib/fm-calm-visibility.ts` owns the visibility policy, `.pi/extensions/lib/fm-calm-operational-user-layout.ts` owns the zero-height operational-user row adapter, and `.pi/extensions/lib/fm-calm-working-ship.ts` owns the animated working presentation.
 
 Regression entry points:
