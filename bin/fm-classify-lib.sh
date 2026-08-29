@@ -194,7 +194,9 @@ status_is_paused_or_captain_held() {  # <status-line>
 # statement of the status-fold contract that fixes this - a needs-decision/blocked
 # line OPENS a keyed decision, and only an explicit resolution or a verified
 # captain-held backlog transfer referencing that key CLOSES it; a later unrelated
-# terminal line never clears an open captain decision.
+# terminal line never clears an open captain decision. Wedge suppression reads this
+# same fold through status_has_open_decision rather than last_status_line, so a
+# pane parked on an unanswered decision is not treated as a possible stall.
 # Who WRITES the closing line is owned elsewhere: the answering firstmate closes
 # at answer time through fm-send's --resolve-key (bin/fm-send.sh header), and a
 # worker self-closes only a blocker that cleared without an answer (bin/fm-brief.sh
@@ -477,6 +479,16 @@ status_open_decisions() {  # <status-file>
     open=$(_fm_decision_fold_line "$open" "$line" "$resolve" "$held")
   done < "$f"
   printf '%s' "$open"
+}
+
+# 0 when <status-file> currently has at least one unanswered keyed decision per
+# status_open_decisions above. A pane parked on that decision is waiting for
+# firstmate, so wedge suppression consults this fold rather than last_status_line:
+# a later working/done/paused line does not close the decision, and a leftover
+# needs-decision that has already been resolved must not keep suppressing a
+# genuine stall. Cheap: a pure status-file fold, never a crew-state read.
+status_has_open_decision() {  # <status-file>
+  [ -n "$(status_open_decisions "$1")" ]
 }
 
 # 0 when <key> has a record in a folded "<key>\t<verb>\t<note>" open set.

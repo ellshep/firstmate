@@ -758,6 +758,43 @@ test_enriched_wedge_under_declared_wait_uses_pause_cadence() {
   pass "an enriched wedge under a declared wait uses the pause cadence and restores wedge detection on resume"
 }
 
+# A pane parked on an unanswered keyed decision is waiting for firstmate, not
+# wedged. The watcher's decorated possible-wedge reason must not force-escalate
+# that wait, and closing the exact key must restore the force-escalate path.
+test_enriched_wedge_under_open_decision_is_not_escalated() {
+  local dir state fakebin task win pane key reason
+  dir=$(make_supercase enriched-wedge-open-decision)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  task=parked-decision-w1; win="sess:fm-$task"; pane="$dir/pane.txt"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+  printf 'needs-decision [key=shape]: pick REST or RPC\n' > "$state/$task.status"
+  printf 'idle prompt $\n' > "$pane"
+  seen_through "$state" "$task"
+
+  reason="stale: $win (idle 250s, possible wedge, escalation 3, demand-deep-inspection: same pane has wedge-escalated 3 times in a row - do not re-absorb on the run-step/pane state alone)"
+  LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" handle_wake "$reason" "$state"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
+  [ ! -s "$state/.subsuper-escalations" ] \
+    || fail "an open keyed decision escalated as a possible wedge: $(cat "$state/.subsuper-escalations")"
+  [ ! -e "$state/.subsuper-stale-$key" ] \
+    || fail "an open keyed decision left wedge aging in place"
+
+  printf 'needs-decision [key=shape]: pick REST or RPC\nresolved [key=shape]: took REST\n' \
+    > "$state/$task.status"
+  seen_through "$state" "$task"
+  : > "$state/.subsuper-escalations"
+  reason="stale: $win (idle 250s, possible wedge, escalation 4)"
+  LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" handle_wake "$reason" "$state"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 housekeeping "$state"
+  grep -F "${reason#stale: }" "$state/.subsuper-escalations" >/dev/null \
+    || fail "wedge escalation was not restored after the keyed decision closed: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
+  pass "an enriched wedge under an open keyed decision is not escalated, and closing the decision restores it"
+}
+
 test_stale_terminal_escalates() {
   local dir state out
   dir=$(make_supercase stale-terminal)
@@ -2625,6 +2662,7 @@ test_classify_check_and_unknown_escalate
 test_stale_transient_self_records_marker
 test_stale_diagnostic_wedge_survives_busy_housekeeping
 test_enriched_wedge_under_declared_wait_uses_pause_cadence
+test_enriched_wedge_under_open_decision_is_not_escalated
 test_stale_terminal_escalates
 test_stale_actionable_wait_escalates_and_keeps_pause_cadence
 test_stale_paused_classifies_pause

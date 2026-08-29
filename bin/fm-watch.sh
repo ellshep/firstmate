@@ -55,7 +55,11 @@
 #                          escalation count, and demand-deep-inspection marker,
 #                          for human inspection only - never an automatic
 #                          interrupt, signal, or restart of the worker or its
-#                          tool process.
+#                          tool process. Before firing, that timer consults
+#                          status_has_open_decision: an unanswered keyed
+#                          decision means the pane is waiting for firstmate,
+#                          so the idle window restarts instead of escalating, and
+#                          closing the decision restores the unchanged schedule.
 #   stale: <window> (unread firstmate instruction: ...)
 #                          the steering-inbox ladder spent its delivery-attempt
 #                          budget on an idle pane without an acknowledgement
@@ -864,6 +868,12 @@ clear_write_tracking() {  # <window-key>
 # The worktree write probe runs ONLY here, inside the at-threshold branch that is
 # about to escalate: at most one bounded walk per window per STALE_ESCALATE_SECS,
 # never per poll.
+# An unanswered keyed decision is consulted here, at the same moment, through
+# status_has_open_decision: that fold already knows the pane is waiting for
+# firstmate, so firing a possible-wedge would be a false stall. The idle window
+# restarts instead of escalating, and a later resolved/captain-held close for
+# that key restores this function's ordinary schedule. Not a second source of
+# decision state, a new marker, or a timeout heuristic.
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task>
   local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n reason
   since=$(cat "$since_file" 2>/dev/null || true)
@@ -878,6 +888,11 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
     *)
       age=$(( $(date +%s) - since ))
       if [ "$age" -ge "$STALE_ESCALATE_SECS" ]; then
+        if status_has_open_decision "$STATE/$task.status"; then
+          date +%s > "$since_file"
+          triage_log "absorbed $label (open keyed decision, idle ${age}s): $win"
+          return 0
+        fi
         if crew_worktree_written_since "$task" "$STATE" "$since_file"; then
           wedge_defer_writing "$win" "$since_file" "$label" "$age"
           return 0

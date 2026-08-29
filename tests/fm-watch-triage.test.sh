@@ -443,6 +443,33 @@ test_status_is_paused_classifier() {
   pass "status_is_paused: only the leading paused verb matches, paused is not captain-relevant, and the two declared-wait verbs stay separable"
 }
 
+# status_has_open_decision: wedge suppression must consult the fold, not last-line.
+# A buried needs-decision stays open; a resolved leftover must not keep suppressing.
+test_status_has_open_decision_classifier() {
+  local dir state
+  dir=$(make_case open-decision-pred); state="$dir/state"
+  printf 'needs-decision [key=shape]: pick REST or RPC\n' > "$state/open.status"
+  status_has_open_decision "$state/open.status" \
+    || fail "an unanswered keyed needs-decision was not an open decision"
+  printf 'needs-decision [key=shape]: pick REST or RPC\nworking: parked waiting for firstmate\n' \
+    > "$state/buried.status"
+  status_has_open_decision "$state/buried.status" \
+    || fail "a needs-decision buried under working: was not an open decision"
+  printf 'blocked [key=creds]: need a token\n' > "$state/blocked.status"
+  status_has_open_decision "$state/blocked.status" \
+    || fail "an unanswered keyed blocked was not an open decision"
+  printf 'needs-decision [key=shape]: pick REST or RPC\nresolved [key=shape]: took REST\n' \
+    > "$state/closed.status"
+  status_has_open_decision "$state/closed.status" \
+    && fail "a resolved keyed decision still counted as open"
+  printf 'working: still compiling\n' > "$state/none.status"
+  status_has_open_decision "$state/none.status" \
+    && fail "a log with no decision counted as open"
+  status_has_open_decision "$state/missing.status" \
+    && fail "a missing status file counted as open"
+  pass "status_has_open_decision follows the fold: buried stays open, resolved leftover does not"
+}
+
 # crew_absorb_class: the single fm-crew-state.sh read that returns BOTH absorb
 # reasons - working (active run/busy pane), paused (declared external wait), or none
 # (surface it) - so the watcher's stale path gets both for one bounded call.
@@ -3277,6 +3304,146 @@ test_busy_declared_pause_is_rechecked_not_wedge_escalated() {
   pass "a busy pane under a declared pause is rechecked on the long cadence, and lifting the pause restores the wedge escalation"
 }
 
+# --- busy pane parked on an unanswered keyed decision: not a wedge ----------
+# A worker that wrote needs-decision and stopped is waiting for firstmate, even
+# when its harness still looks busy past BUSY_TURN_MAX_SECS. The wedge timer
+# used to fire anyway because it never consulted the open-decision fold. This
+# fixture drives both directions on the same over-age busy pane: the open
+# decision suppresses the false signal (A), and closing that exact key restores
+# the unchanged wedge schedule (B), proving the discriminator is the fold.
+test_busy_open_keyed_decision_is_not_wedge_escalated() {
+  local dir state fakebin out capture_file window key sig pid statusf
+  dir=$(make_case busy-open-decision); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-parked-decision"
+  statusf="$state/parked-decision.status"
+  printf 'Working... (7200.4s) awaiting firstmate' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=pi\n' "$window" > "$state/parked-decision.meta"
+  record_pi_busy "$state" parked-decision
+  printf 'needs-decision [key=shape]: pick REST or RPC\n' > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked-decision_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  touch -t 200001010000 "$state/parked-decision.meta"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_FAKE_CREW_STATE='state: working · source: pane · harness busy (pi-ext)' \
+    FM_BUSY_TURN_MAX_SECS=1 FM_STALE_ESCALATE_SECS=1 FM_PAUSE_RESURFACE_SECS=999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_poll_cycle "$state" "$pid" || { reap "$pid"; fail "a busy pane parked on an open keyed decision was escalated: $(cat "$out")"; }
+  reap "$pid"
+  [ ! -s "$out" ] || fail "a busy pane parked on an open keyed decision printed a wake reason: $(cat "$out")"
+  grep -F "possible wedge" "$out" >/dev/null && fail "a parked open decision was labeled a possible wedge: $(cat "$out")"
+  [ ! -e "$state/.wedge-escalations-$key" ] || fail "a parked open decision incremented the wedge escalation counter"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the intentional open-decision absorb stop"
+
+  printf 'needs-decision [key=shape]: pick REST or RPC\nresolved [key=shape]: took REST\n' > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked-decision_status"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_FAKE_CREW_STATE='state: working · source: pane · harness busy (pi-ext)' \
+    FM_BUSY_TURN_MAX_SECS=1 FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || { reap "$pid"; fail "closing the keyed decision did not restore wedge escalation"; }
+  grep -F "possible wedge" "$out" >/dev/null || fail "the restored wedge after a closed decision did not flag a possible wedge: $(cat "$out")"
+  pass "a busy pane parked on an open keyed decision is not a wedge, and closing the decision restores escalation"
+}
+
+# A leftover needs-decision that the fold has already closed is not a parked
+# wait. The same over-age busy pane must still escalate, so suppression cannot
+# latch onto decision history.
+test_busy_closed_decision_still_wedge_escalates() {
+  local dir state fakebin out capture_file window key sig pid statusf
+  dir=$(make_case busy-closed-decision); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-closed-decision"
+  statusf="$state/closed-decision.status"
+  printf 'Working...' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=pi\n' "$window" > "$state/closed-decision.meta"
+  record_pi_busy "$state" closed-decision
+  printf 'needs-decision [key=shape]: pick REST or RPC\nresolved [key=shape]: took REST\nworking: resuming after the answer\n' \
+    > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-closed-decision_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf '%s' "$(hash_text "Working...")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  touch -t 200001010000 "$state/closed-decision.meta"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_FAKE_CREW_STATE='state: working · source: pane · harness busy (pi-ext)' \
+    FM_BUSY_TURN_MAX_SECS=1 FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=999 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "a busy pane with only a closed leftover decision did not wedge-escalate"
+  grep -F "possible wedge" "$out" >/dev/null || fail "a genuinely wedged pane with a closed leftover decision was not flagged a possible wedge: $(cat "$out")"
+  pass "a genuinely wedged busy pane still escalates when its leftover keyed decision is already closed"
+}
+
+# Last-line working: must not hide a still-open keyed decision from the wedge
+# timer. Absorb as provably working, then prove the buried decision suppresses
+# at threshold and that closing it restores the ordinary schedule.
+test_buried_open_decision_is_not_wedge_escalated() {
+  local dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case buried-open-decision); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-buried-decision"
+  printf 'idle building output' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/buried-decision.meta"
+  printf 'needs-decision [key=api]: pick REST or RPC\nworking: parked waiting for firstmate\n' \
+    > "$state/buried-decision.status"
+  sig=$(seen_sig "$state/buried-decision.status"); printf '%s' "$sig" > "$state/.seen-buried-decision_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle building output")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · ci running'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "a buried open decision was surfaced on first sight instead of absorbed: $(cat "$out")"
+  fi
+  [ -s "$state/.stale-since-$key" ] || fail "a buried open decision did not start the idle timer"
+  reap "$pid"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the intentional buried-decision absorb stop"
+
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "a buried open decision wedge-escalated: $(cat "$out")"
+  fi
+  grep -F "possible wedge" "$out" >/dev/null && { reap "$pid"; fail "a buried open decision was labeled a possible wedge: $(cat "$out")"; }
+  [ ! -e "$state/.wedge-escalations-$key" ] || { reap "$pid"; fail "a buried open decision incremented the wedge counter"; }
+  reap "$pid"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the intentional buried-decision suppress stop"
+
+  printf 'needs-decision [key=api]: pick REST or RPC\nworking: parked waiting for firstmate\nresolved [key=api]: took REST\n' \
+    > "$state/buried-decision.status"
+  sig=$(seen_sig "$state/buried-decision.status"); printf '%s' "$sig" > "$state/.seen-buried-decision_status"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "closing a buried keyed decision did not restore wedge escalation"
+  grep -F "possible wedge" "$out" >/dev/null || fail "the restored wedge after closing a buried decision did not flag a possible wedge: $(cat "$out")"
+  unset FM_FAKE_CREW_STATE
+  pass "a buried open keyed decision is not a wedge, and closing it restores escalation"
+}
+
 # --- declared pause + busy pane + AWAY MODE: the bound must hand off, not decorate
 # Away mode is daemon-owned: the watcher reverts to one-shot and lets the daemon
 # classify. The busy-turn bound used to be the one stale path that ignored that,
@@ -4378,6 +4545,7 @@ test_stale_is_terminal_classifier
 test_classifier_primitives
 test_crew_is_provably_working_classifier
 test_status_is_paused_classifier
+test_status_has_open_decision_classifier
 test_crew_absorb_class_classifier
 test_crew_worktree_written_since_classifier
 test_empty_write_prune_widens_the_probe
@@ -4434,6 +4602,9 @@ test_busy_pane_turn_end_touch_resets_age
 test_busy_pane_repeated_escalation_reaches_demand_deep_inspection
 test_busy_pane_default_turn_age_bound_is_3600s
 test_busy_declared_pause_is_rechecked_not_wedge_escalated
+test_busy_open_keyed_decision_is_not_wedge_escalated
+test_busy_closed_decision_still_wedge_escalates
+test_buried_open_decision_is_not_wedge_escalated
 test_afk_busy_declared_pause_hands_off_plain_stale
 test_afk_busy_declared_pause_ticking_pane_hands_off_once
 test_nonterminal_stale_not_working_surfaced
