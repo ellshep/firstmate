@@ -93,9 +93,11 @@
 #   metadata are unchanged.
 #   A clean projected create or exact resume makes one bounded attempt to hold
 #   the one session-scoped presentation-order lock (keyed by named session plus
-#   canonical socket, outside any home's state/) through launch handoff. Lock
-#   contention warns and falls back to the ordinary flat layout before any
-#   projection mutation. The exact response-derived new workspace is inserted
+#   canonical socket, outside any home's state/) across presentation mutations
+#   only, then releases it before worktree acquisition. Lock contention on a
+#   fresh create warns and falls back to the ordinary flat layout before any
+#   projection mutation; a contended exact resume refuses rather than falling
+#   back flat. The exact response-derived new workspace is inserted
 #   immediately after its owning parent (firstmate or 2ndmate-<id>) contiguous
 #   child block. Ordering never authorizes lifecycle cleanup, and any
 #   unavailable, ambiguous, or failed move warns while the spawn continues.
@@ -1021,6 +1023,9 @@ trap spawn_abort_cleanup EXIT
 # One bounded lock per live Herdr session/socket, shared across all homes.
 # <session> is required so secondmate and primary spawns serialize against the
 # same session without writing any other home's state directory.
+# The lock covers presentation mutations (create, reclaim, prune, order) and is
+# released before worktree acquisition, so the bounded wait can serialize
+# another spawn's mutations rather than its Treehouse or git handoff.
 spawn_herdr_presentation_order_lock_acquire() {
   local session=${1:-} attempt lock_path
   [ -n "$session" ] || session=$(fm_backend_herdr_session)
@@ -3004,6 +3009,13 @@ rovo_endpoint_cleanup() {
   [ "$BACKEND" = zellij ] && tab_id=$ZELLIJ_TAB_ID
   fm_backend_kill "$BACKEND" "$T" "$tab_id" "fm-$ID" 2>/dev/null || true
 }
+
+# Projected presentation mutations are complete. Release before worktree
+# acquisition so a concurrent resume can serialize within the bounded wait.
+# Abort cleanup re-acquires if this spawn still fails.
+if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
+  spawn_herdr_presentation_order_lock_release
+fi
 
 if [ "$RELAUNCH" -eq 1 ]; then
   # No worktree is acquired: the recorded one is reused as-is. What must be

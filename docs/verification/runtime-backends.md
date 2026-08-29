@@ -768,8 +768,21 @@ ok - real Herdr lab validation completed on Herdr 0.8.0 with the default-session
 ```
 
 The projected spawn in that run used the historical empty opt-in file, so a home that had already enabled the projection keeps it without any migration step.
-One concurrent cross-home recovery case refused under contention on a loaded machine and passed on an immediate rerun; recovery-path presentation lock contention is a deliberate hard refusal rather than a flat fallback, which default-on now makes reachable from any Herdr home.
-That run measured the default-on projection on Herdr 0.8.0 only, while the focus-flash regression below was last run on 0.7.5 before the flip, so neither run covered a defective release under default-on projection; the version floor and the focus-flash suite's Part C close that gap.
+Recovery-path presentation lock contention is a deliberate hard refusal rather than a flat fallback, which default-on makes reachable from any Herdr home.
+The 2026-08-04 run measured the default-on projection on Herdr 0.8.0 only, while the focus-flash regression below was last run on 0.7.5 before the flip, so neither run covered a defective release under default-on projection; the version floor and the focus-flash suite's Part C close that gap.
+
+The projection suite was re-run on 2026-08-29 against Herdr 0.8.0 protocol 19 on macOS aarch64:
+
+```sh
+bin/fm-test-run.sh tests/fm-backend-herdr-presentation-e2e.test.sh
+```
+
+Observed concurrent-recovery guarantee:
+
+```text
+ok - real Herdr lab: concurrent cross-home recoveries replace exact husks under one session lock with no focus drift
+ok - real Herdr lab validation completed on Herdr 0.8.0 with the default-session tripwire intact
+```
 
 The restored-shell session-start cleanup ran on 2026-07-24 against Herdr 0.7.5 protocol 17:
 
