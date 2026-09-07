@@ -51,8 +51,8 @@
 #     reads idle or busy; only a status append that stops declaring the wait
 #     ends that routing. An unanswered keyed decision, per that library's
 #     status_has_open_decision fold, likewise is not a wedge: the pane is
-#     waiting for firstmate, so housekeeping drops wedge aging until the fold
-#     shows the decision closed.
+#     waiting for firstmate, so housekeeping refreshes the stale marker until
+#     the fold shows the decision closed, and a later close starts a fresh window.
 #     Crewmates are autonomous, so a delayed stale response does not stall a
 #     healthy crewmate's own progress.
 #     Buffered escalation delivery also has a max-defer alarm: if a digest stays
@@ -1066,9 +1066,10 @@ housekeeping() {  # <state>
     fi
     if status_has_open_decision "$state/$task.status"; then
       # Parked on an unanswered keyed decision: waiting for firstmate, not wedged.
-      # Drop wedge aging so a later close starts a fresh window instead of
-      # firing on a timer that elapsed while the decision was still open.
-      rm -f "$marker"
+      # Refresh the marker timestamp so a later close starts a fresh window.
+      # Deleting it here leaves no daemon marker to age after the answer when
+      # the watcher still suppresses duplicate stale wakes for the same pane.
+      printf '%s\n' "$now" > "$marker"
       continue
     fi
     age=$(( now - $(cat "$marker" 2>/dev/null || echo "$now") ))

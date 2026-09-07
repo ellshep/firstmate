@@ -795,6 +795,53 @@ test_enriched_wedge_under_open_decision_is_not_escalated() {
   pass "an enriched wedge under an open keyed decision is not escalated, and closing the decision restores it"
 }
 
+# Housekeeping, not handle_wake, owns the AFK idle-stale path. Refresh the
+# daemon marker while the decision is open so a later close starts a full
+# STALE_ESCALATE_SECS window instead of firing on age accumulated while parked.
+test_housekeeping_open_decision_refreshes_marker_so_close_starts_fresh_window() {
+  local dir state fakebin task win pane key now refreshed
+  dir=$(make_supercase open-decision-refresh-marker)
+  state="$dir/state"; fakebin="$dir/fakebin"
+  task=parked-refresh-w1; win="sess:fm-$task"; pane="$dir/pane.txt"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  fm_write_meta "$state/$task.meta" "window=$win" "backend=tmux"
+  printf 'needs-decision [key=shape]: pick REST or RPC\nworking: still parked\n' \
+    > "$state/$task.status"
+  printf 'idle prompt $\n' > "$pane"
+  seen_through "$state" "$task"
+  now=$(date +%s)
+  echo $(( now - 500 )) > "$state/.subsuper-stale-$key"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    FM_STALE_ESCALATE_SECS=240 FM_HEARTBEAT_SCAN_SECS=1000000 housekeeping "$state"
+  [ ! -s "$state/.subsuper-escalations" ] \
+    || fail "housekeeping escalated a pane parked on an open keyed decision: $(cat "$state/.subsuper-escalations")"
+  [ -e "$state/.subsuper-stale-$key" ] \
+    || fail "housekeeping dropped the daemon stale marker instead of refreshing it"
+  refreshed=$(cat "$state/.subsuper-stale-$key")
+  [ "$refreshed" -ge "$now" ] \
+    || fail "housekeeping did not refresh the stale marker timestamp: $refreshed"
+
+  printf 'needs-decision [key=shape]: pick REST or RPC\nworking: still parked\nresolved [key=shape]: took REST\n' \
+    > "$state/$task.status"
+  seen_through "$state" "$task"
+  : > "$state/.subsuper-escalations"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    FM_STALE_ESCALATE_SECS=240 FM_HEARTBEAT_SCAN_SECS=1000000 housekeeping "$state"
+  [ ! -s "$state/.subsuper-escalations" ] \
+    || fail "escalated inside one fresh window after the decision closed: $(cat "$state/.subsuper-escalations")"
+
+  echo $(( $(date +%s) - 500 )) > "$state/.subsuper-stale-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
+    FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
+    FM_STALE_ESCALATE_SECS=240 FM_HEARTBEAT_SCAN_SECS=1000000 housekeeping "$state"
+  grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
+    || fail "wedge escalation did not resume after a full window past the answer: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
+  pass "housekeeping refreshes the stale marker under an open decision so a close starts a fresh window"
+}
+
 test_stale_terminal_escalates() {
   local dir state out
   dir=$(make_supercase stale-terminal)
@@ -2663,6 +2710,7 @@ test_stale_transient_self_records_marker
 test_stale_diagnostic_wedge_survives_busy_housekeeping
 test_enriched_wedge_under_declared_wait_uses_pause_cadence
 test_enriched_wedge_under_open_decision_is_not_escalated
+test_housekeeping_open_decision_refreshes_marker_so_close_starts_fresh_window
 test_stale_terminal_escalates
 test_stale_actionable_wait_escalates_and_keeps_pause_cadence
 test_stale_paused_classifies_pause
