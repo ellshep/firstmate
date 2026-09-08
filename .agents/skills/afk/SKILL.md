@@ -149,10 +149,12 @@ Classify each wake this way:
   If it is still declared past `FM_PAUSE_RESURFACE_SECS` (default 3600s), housekeeping sends one recheck and resets the pause window.
   The window ages against the crew's own latest status line, so only a status append that stops declaring the wait ends this routing and restores wedge detection.
   That recheck names which human the wait is on: the external dependency for `paused:`, and the captain themself for a `captain-held` transfer, who can answer the held decision or release the hold.
+- `stale` with no newly classified actionable status event, but whose status fold still contains an unanswered keyed `needs-decision` or `blocked`, self-handles ordinary stale and enriched possible-wedge reasons rather than escalating them.
+  Housekeeping refreshes the stale marker while the decision remains open, so a later `resolved` or `captain-held` close starts a fresh `FM_STALE_ESCALATE_SECS` window and then restores ordinary wedge detection.
 - `check` -> always escalate. Check scripts print only when firstmate should wake.
 - `stale` with a terminal status or bare legacy captain-relevant line -> escalate.
   Nonterminal progress remains transient even when its prose contains a legacy free-text token or its seen-status marker already matches, so record a marker and self-handle.
-  If the pane is still idle past `FM_STALE_ESCALATE_SECS` (default 240s), housekeeping escalates it as a possible wedge.
+  If the pane is still idle past `FM_STALE_ESCALATE_SECS` (default 240s) without a declared wait or open keyed decision diverting it, housekeeping escalates it as a possible wedge.
   This bounds wedge-detection latency to the threshold plus a tick: a delay, never a loss.
   Healthy crewmates are autonomous and do not wait on firstmate mid-task.
 - `heartbeat` -> self-handle.
@@ -230,6 +232,7 @@ These properties must hold:
 - Nothing is lost after queue publication.
   The daemon leaves every presented wake durable until routing completes and post-handling acknowledgement succeeds, so interruption replays the same work to the daemon or its successor.
 - Wedge detection is bounded-latency, not lossy.
+- An open keyed decision suppresses wedge escalation only while unanswered; closing it starts a fresh stale window.
 - Declared external waits are rechecked on a separate, bounded cadence rather than being mislabeled as wedges.
 - The catch-all scan backs up the keyword classifier.
 - The daemon preserves a single-instance portable lock, crash-loop backoff,
