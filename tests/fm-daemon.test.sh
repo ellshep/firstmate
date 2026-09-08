@@ -762,7 +762,7 @@ test_enriched_wedge_under_declared_wait_uses_pause_cadence() {
 # wedged. The watcher's decorated possible-wedge reason must not force-escalate
 # that wait, and closing the exact key must restore the force-escalate path.
 test_enriched_wedge_under_open_decision_is_not_escalated() {
-  local dir state fakebin task win pane key reason
+  local dir state fakebin task win pane key reason now refreshed
   dir=$(make_supercase enriched-wedge-open-decision)
   state="$dir/state"; fakebin="$dir/fakebin"
   task=parked-decision-w1; win="sess:fm-$task"; pane="$dir/pane.txt"
@@ -773,14 +773,26 @@ test_enriched_wedge_under_open_decision_is_not_escalated() {
   seen_through "$state" "$task"
 
   reason="stale: $win (idle 250s, possible wedge, escalation 3, demand-deep-inspection: same pane has wedge-escalated 3 times in a row - do not re-absorb on the run-step/pane state alone)"
+  now=$(date +%s)
   LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" handle_wake "$reason" "$state"
+  [ -e "$state/.subsuper-stale-$key" ] \
+    || fail "an open keyed decision stale wake did not record daemon stale tracking"
+  refreshed=$(cat "$state/.subsuper-stale-$key")
+  [ "$refreshed" -ge "$now" ] \
+    || fail "an open keyed decision stale wake did not refresh daemon stale tracking: $refreshed"
+  echo $(( $(date +%s) - 500 )) > "$state/.subsuper-stale-$key"
+  now=$(date +%s)
+  LOG="$dir/daemon.log" FM_STATE_OVERRIDE="$state" handle_wake "$reason" "$state"
+  refreshed=$(cat "$state/.subsuper-stale-$key")
+  [ "$refreshed" -ge "$now" ] \
+    || fail "an open keyed decision stale wake preserved stale marker age: $refreshed"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
     FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=999999 \
     FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
   [ ! -s "$state/.subsuper-escalations" ] \
     || fail "an open keyed decision escalated as a possible wedge: $(cat "$state/.subsuper-escalations")"
-  [ ! -e "$state/.subsuper-stale-$key" ] \
-    || fail "an open keyed decision left wedge aging in place"
+  [ -e "$state/.subsuper-stale-$key" ] \
+    || fail "an open keyed decision dropped daemon stale tracking"
 
   printf 'needs-decision [key=shape]: pick REST or RPC\nresolved [key=shape]: took REST\n' \
     > "$state/$task.status"

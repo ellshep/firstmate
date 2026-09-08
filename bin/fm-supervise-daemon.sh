@@ -481,6 +481,12 @@ stale_marker_record() {  # <window> <state>  — create if absent
   [ -e "$marker" ] || _now > "$marker"
 }
 
+stale_marker_refresh() {  # <window> <state>
+  local win=$1 state=$2 key
+  key=$(_stale_key "$(window_to_task "$win" "$state")")
+  _now > "$state/.subsuper-stale-$key"
+}
+
 stale_marker_remove() {  # <window> <state>
   local win=$1 state=$2 key
   key=$(_stale_key "$(window_to_task "$win" "$state")")
@@ -1069,7 +1075,7 @@ housekeeping() {  # <state>
       # Refresh the marker timestamp so a later close starts a fresh window.
       # Deleting it here leaves no daemon marker to age after the answer when
       # the watcher still suppresses duplicate stale wakes for the same pane.
-      printf '%s\n' "$now" > "$marker"
+      stale_marker_refresh "$win" "$state"
       continue
     fi
     age=$(( now - $(cat "$marker" 2>/dev/null || echo "$now") ))
@@ -1431,7 +1437,10 @@ handle_wake() {  # <reason> <state>
             esac
           fi
         fi
-        if [ "$_clear_wedge" = 1 ]; then
+        if status_has_open_decision "$state/$task.status"; then
+          pause_marker_remove "$arg" "$state"
+          stale_marker_refresh "$arg" "$state"
+        elif [ "$_clear_wedge" = 1 ]; then
           stale_marker_remove "$arg" "$state"
         else
           pause_marker_remove "$arg" "$state"
