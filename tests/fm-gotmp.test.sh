@@ -49,25 +49,39 @@ TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-gotmp-tests.XXXXXX")
 # whole script - reporting exit status 0 - the moment a `.` target is missing, so one
 # unlisted transitive dependency silently skipped the cleanup this suite asserts.
 # Executables teardown shells out to stay stubbed, so linking libraries wholesale
-# never puts live fleet state in reach.
+# never puts live fleet state in reach. The real tmux adapter stays linked so the
+# abort-midway case can still reach a missing transitive source after the EXIT trap
+# is installed; the fixture's fake session name never addresses a live pane.
 link_fake_bin() {
   local fake=$1 f
-  mkdir -p "$fake/bin/backends" "$fake/state"
+  mkdir -p "$fake/bin/backends" "$fake/state" "$fake/data"
   # Symlink the REAL teardown so the test exercises actual code, not a copy.
   ln -s "$TEARDOWN" "$fake/bin/fm-teardown.sh"
   ln -s "$ROOT/bin/fm-backend.sh" "$fake/bin/fm-backend.sh"
   for f in "$ROOT"/bin/*-lib.sh "$ROOT"/bin/backends/*.sh; do
     ln -s "$f" "$fake/bin/${f#"$ROOT"/bin/}"
   done
+  # Sourced by fm-marker-lib.sh via BASH_SOURCE, so a fake-bin symlink must sit
+  # beside it; it is not a *-lib.sh and the glob above will not carry it.
+  ln -s "$ROOT/bin/fm-operational-input.sh" "$fake/bin/fm-operational-input.sh"
+  # Ordinary ship teardown fatally reports the final parent-channel outcome.
+  ln -s "$ROOT/bin/fm-inactive-reconcile.sh" "$fake/bin/fm-inactive-reconcile.sh"
   # Stubs for the scripts teardown shells out to (each best-effort at its call site).
-  for f in fm-guard.sh fm-fleet-sync.sh fm-remote-job-reap-orphans.sh; do
+  for f in fm-guard.sh fm-fleet-sync.sh fm-remote-job-reap-orphans.sh fm-home-summary-refresh.sh; do
     rm -f "$fake/bin/$f"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$fake/bin/$f"
     chmod +x "$fake/bin/$f"
   done
-  # Report no backend so backlog_refresh_reminder takes the plain-message path.
+  # Report no backend so the fused backlog close is skipped and the follow-up
+  # echo takes the plain-message path; there is no tasks-axi and no backlog here.
   rm -f "$fake/bin/fm-tasks-axi-lib.sh"
-  printf 'fm_tasks_axi_backend_available() { return 1; }\n' > "$fake/bin/fm-tasks-axi-lib.sh"
+  cat > "$fake/bin/fm-tasks-axi-lib.sh" <<'SH'
+FM_TASKS_AXI_MIN=0.2.4
+fm_tasks_axi_backend() { printf 'markdown\n'; }
+fm_tasks_axi_backend_available() { return 1; }
+fm_tasks_axi_compatible() { return 1; }
+fm_backlog_backend_manual() { return 1; }
+SH
 }
 
 make_fake_root() {
