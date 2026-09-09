@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fm-running.sh - grouped, bounded survey of what is running on this Mac.
+# fm-running.sh - grouped survey of what is running on this Mac.
 #
 # Read-only: never kills, signals, or restarts anything. When a process is
 # flagged as stale, the script prints the exact `kill <pid>` command and does
@@ -28,16 +28,29 @@
 # known agent CLIs, and commands whose path looks like an MCP server).
 # Firstmate's own long-running services are always listed, unfiltered.
 # --all drops that AI/tooling filter and still excludes system daemons.
+# Every matching row is printed; long command paths truncate to the command
+# column for the current terminal width (COLUMNS, else tput cols, else 80).
+# A TOOL column names the process from the first real script or binary after
+# any interpreter or launcher (node, python, uv, uvx, npx, and absolute paths
+# to those). When nothing better can be derived, it falls back to argv0's
+# basename.
 #
-# The orphan classifier is fm_running_orphan_reason. Tests source this file
-# and call it with synthetic ppid/cwd/elapsed rows; the live process table
-# is not a test fixture.
+# Colour and box-drawing are used only when stdout is a TTY and NO_COLOR is
+# unset. Piped output is a plain-text equivalent with the same rows.
+#
+# The orphan classifier is fm_running_orphan_reason. Layout helpers take row
+# fields and an available width and print a formatted string. Tests source
+# this file and call those functions with synthetic rows; the live process
+# table is not a test fixture.
 set -u
 
 FM_RUNNING_STALE_SECS=${FM_RUNNING_STALE_SECS:-86400}
-FM_RUNNING_CMD_WIDTH=96
-FM_RUNNING_GROUP_CAP=12
-FM_RUNNING_PORT_CAP=40
+FM_RUNNING_INDENT=2
+FM_RUNNING_PID_W=6
+FM_RUNNING_AGE_W=4
+FM_RUNNING_TOOL_W=16
+FM_RUNNING_PORT_W=5
+FM_RUNNING_GAP=2
 
 fm_running_usage() {
   cat <<'EOF'
@@ -128,6 +141,71 @@ fm_running_basename() {  # <path>
   local p=$1
   p=${p##*/}
   printf '%s' "$p"
+}
+
+# Rest of <command> after argv0, with leading spaces stripped.
+fm_running_cmd_rest() {  # <command>
+  local cmd argv0 rest
+  cmd=$1
+  argv0=$(fm_running_argv0 "$cmd")
+  [ -n "$argv0" ] || { printf ''; return; }
+  rest=${cmd#"$argv0"}
+  rest=${rest#"${rest%%[![:space:]]*}"}
+  printf '%s' "$rest"
+}
+
+# Interpreters and launchers whose basename is not the running tool.
+fm_running_is_launcher_base() {  # <basename>
+  case "$1" in
+    node|bun|deno|python|python3|Python|uv|uvx|npx|tsx)
+      return 0
+      ;;
+    python3.*) return 0 ;;
+  esac
+  return 1
+}
+
+# Identifying tool name for the TOOL column. Skips interpreter/launcher
+# tokens (and their flags / uv wrapper words), then takes the basename of
+# the first real script or binary argument. Falls back to argv0's basename.
+fm_running_tool_name() {  # <command>
+  local cmd argv0 base fallback
+  cmd=$(fm_running_flat_cmd "$1")
+  argv0=$(fm_running_argv0 "$cmd")
+  fallback=$(fm_running_basename "$argv0")
+  [ -n "$fallback" ] || fallback=$argv0
+
+  while [ -n "$cmd" ]; do
+    argv0=$(fm_running_argv0 "$cmd")
+    [ -n "$argv0" ] || break
+    base=$(fm_running_basename "$argv0")
+    if fm_running_is_launcher_base "$base"; then
+      cmd=$(fm_running_cmd_rest "$cmd")
+      continue
+    fi
+    case "$argv0" in
+      -*)
+        cmd=$(fm_running_cmd_rest "$cmd")
+        case "$argv0" in
+          --python|--from|--with|--package|--directory|--project|-p|-m|-c|-e|--eval)
+            cmd=$(fm_running_cmd_rest "$cmd")
+            ;;
+        esac
+        continue
+        ;;
+    esac
+    case "$base" in
+      tool|run|exec)
+        cmd=$(fm_running_cmd_rest "$cmd")
+        continue
+        ;;
+    esac
+    base=${base%%@*}
+    [ -n "$base" ] || base=$fallback
+    printf '%s' "$base"
+    return
+  done
+  printf '%s' "$fallback"
 }
 
 fm_running_is_system_argv0() {  # <argv0>
@@ -245,13 +323,213 @@ fm_running_is_tooling_command() {  # <command>
   return 1
 }
 
-fm_running_short_cmd() {  # <command>
-  local cmd=$1
-  cmd=$(printf '%s' "$cmd" | tr '\t\n' '  ' | sed 's/  */ /g; s/^ //; s/ $//')
-  if [ "${#cmd}" -gt "$FM_RUNNING_CMD_WIDTH" ]; then
-    printf '%s…' "${cmd:0:$((FM_RUNNING_CMD_WIDTH - 1))}"
+fm_running_flat_cmd() {  # <command>
+  printf '%s' "$1" | tr '\t\n' '  ' | sed 's/  */ /g; s/^ //; s/ $//'
+}
+
+fm_running_term_width() {
+  local n
+  n=${COLUMNS:-}
+  case "$n" in
+    '' | *[!0-9]*) n= ;;
+  esac
+  if [ -n "$n" ] && [ "$n" -gt 0 ]; then
+    printf '%s' "$n"
+    return
+  fi
+  n=$(tput cols 2>/dev/null) || n=
+  case "$n" in
+    '' | *[!0-9]*) n= ;;
+  esac
+  if [ -n "$n" ] && [ "$n" -gt 0 ]; then
+    printf '%s' "$n"
+    return
+  fi
+  printf '80'
+}
+
+# Colour and box-drawing only on a TTY when NO_COLOR is unset.
+fm_running_init_style() {
+  if [ -n "${NO_COLOR:-}" ] || [ ! -t 1 ]; then
+    FM_RUNNING_RICH=0
   else
-    printf '%s' "$cmd"
+    FM_RUNNING_RICH=1
+  fi
+}
+
+fm_running_process_prefix_w() {
+  printf '%s' $((FM_RUNNING_INDENT + FM_RUNNING_PID_W + FM_RUNNING_GAP + FM_RUNNING_AGE_W + FM_RUNNING_GAP + FM_RUNNING_TOOL_W + FM_RUNNING_GAP))
+}
+
+fm_running_port_prefix_w() {
+  printf '%s' $((FM_RUNNING_INDENT + FM_RUNNING_PORT_W + FM_RUNNING_GAP + FM_RUNNING_PID_W + FM_RUNNING_GAP + FM_RUNNING_AGE_W + FM_RUNNING_GAP + FM_RUNNING_TOOL_W + FM_RUNNING_GAP))
+}
+
+# Truncate <text> to <width> columns. Never wraps. Uses a one-column ellipsis
+# when the text does not fit. Width 0 or less prints nothing.
+fm_running_fit() {  # <width> <text>
+  local width text len
+  width=$(fm_running_int "$1")
+  text=$2
+  if [ "$width" -le 0 ]; then
+    printf ''
+    return
+  fi
+  len=${#text}
+  if [ "$len" -le "$width" ]; then
+    printf '%s' "$text"
+    return
+  fi
+  if [ "$width" -eq 1 ]; then
+    printf '…'
+    return
+  fi
+  printf '%s…' "${text:0:$((width - 1))}"
+}
+
+fm_running_section_heading() {  # <width> <title> [alarm]
+  local width title alarm fill left rest title_w
+  width=$(fm_running_int "$1")
+  title=$2
+  alarm=${3:-0}
+  if [ "$alarm" = 1 ]; then
+    fill='!'
+    left='!! '
+    title=$(printf '%s' "$title" | tr '[:lower:]' '[:upper:]')
+  elif [ "${FM_RUNNING_RICH:-0}" = 1 ]; then
+    fill='─'
+    left='── '
+  else
+    fill='-'
+    left='-- '
+  fi
+  title_w=$((width - ${#left} - 1))
+  [ "$title_w" -ge 1 ] || title_w=1
+  title=$(fm_running_fit "$title_w" "$title")
+  rest=$((width - ${#left} - ${#title} - 1))
+  [ "$rest" -ge 0 ] || rest=0
+  local line pad=''
+  while [ "${#pad}" -lt "$rest" ]; do
+    pad=${pad}${fill}
+  done
+  line="${left}${title} ${pad}"
+  line=$(fm_running_fit "$width" "$line")
+  if [ "${FM_RUNNING_RICH:-0}" = 1 ]; then
+    if [ "$alarm" = 1 ]; then
+      printf '\033[1;31m%s\033[0m' "$line"
+    else
+      printf '\033[1m%s\033[0m' "$line"
+    fi
+  else
+    printf '%s' "$line"
+  fi
+}
+
+fm_running_group_heading() {  # <width> <name>
+  local width name fitted name_w
+  width=$(fm_running_int "$1")
+  name=$2
+  name_w=$width
+  if [ "$width" -gt 2 ]; then
+    name_w=$((width - 2))
+  fi
+  fitted=$(fm_running_fit "$name_w" "$name")
+  if [ "${FM_RUNNING_RICH:-0}" = 1 ]; then
+    printf '  \033[1;36m%s\033[0m' "$fitted"
+  else
+    printf '  %s' "$fitted"
+  fi
+}
+
+fm_running_process_row() {  # <width> <pid> <age> <tool> <command>
+  local width pid age tool cmd prefix_w cmd_w row
+  width=$(fm_running_int "$1")
+  pid=$2
+  age=$3
+  tool=$4
+  cmd=$5
+  prefix_w=$(fm_running_process_prefix_w)
+  cmd_w=$((width - prefix_w))
+  [ "$cmd_w" -ge 1 ] || cmd_w=1
+  row=$(printf '%*s%*s%*s%-*s%*s%-*s%*s%s' \
+    "$FM_RUNNING_INDENT" '' \
+    "$FM_RUNNING_PID_W" "$pid" \
+    "$FM_RUNNING_GAP" '' \
+    "$FM_RUNNING_AGE_W" "$age" \
+    "$FM_RUNNING_GAP" '' \
+    "$FM_RUNNING_TOOL_W" "$(fm_running_fit "$FM_RUNNING_TOOL_W" "$tool")" \
+    "$FM_RUNNING_GAP" '' \
+    "$(fm_running_fit "$cmd_w" "$cmd")")
+  fm_running_fit "$width" "$row"
+}
+
+fm_running_process_header() {  # <width>
+  fm_running_process_row "$1" "PID" "UP" "TOOL" "COMMAND"
+}
+
+fm_running_port_row() {  # <width> <port> <pid> <age> <tool> <command>
+  local width port pid age tool cmd prefix_w cmd_w row
+  width=$(fm_running_int "$1")
+  port=$2
+  pid=$3
+  age=$4
+  tool=$5
+  cmd=$6
+  prefix_w=$(fm_running_port_prefix_w)
+  cmd_w=$((width - prefix_w))
+  [ "$cmd_w" -ge 1 ] || cmd_w=1
+  row=$(printf '%*s%*s%*s%*s%*s%-*s%*s%-*s%*s%s' \
+    "$FM_RUNNING_INDENT" '' \
+    "$FM_RUNNING_PORT_W" "$port" \
+    "$FM_RUNNING_GAP" '' \
+    "$FM_RUNNING_PID_W" "$pid" \
+    "$FM_RUNNING_GAP" '' \
+    "$FM_RUNNING_AGE_W" "$age" \
+    "$FM_RUNNING_GAP" '' \
+    "$FM_RUNNING_TOOL_W" "$(fm_running_fit "$FM_RUNNING_TOOL_W" "$tool")" \
+    "$FM_RUNNING_GAP" '' \
+    "$(fm_running_fit "$cmd_w" "$cmd")")
+  fm_running_fit "$width" "$row"
+}
+
+fm_running_port_header() {  # <width>
+  fm_running_port_row "$1" "PORT" "PID" "UP" "TOOL" "COMMAND"
+}
+
+fm_running_cont_row() {  # <width> <prefix_width> <text>
+  local width pre text cmd_w
+  width=$(fm_running_int "$1")
+  pre=$(fm_running_int "$2")
+  text=$3
+  cmd_w=$((width - pre))
+  [ "$cmd_w" -ge 1 ] || cmd_w=1
+  [ "$pre" -ge 0 ] || pre=0
+  fm_running_fit "$width" "$(printf '%*s%s' "$pre" '' "$(fm_running_fit "$cmd_w" "$text")")"
+}
+
+fm_running_orphan_block() {  # <width> <pid> <age> <tool> <command> <reason>
+  local width pid age tool cmd reason row pre
+  width=$(fm_running_int "$1")
+  pid=$2
+  age=$3
+  tool=$4
+  cmd=$5
+  reason=$6
+  row=$(fm_running_process_row "$width" "$pid" "$age" "$tool" "$cmd")
+  if [ "${#row}" -ge 2 ]; then
+    row="!!${row:2}"
+  else
+    row="!!"
+  fi
+  pre=$(fm_running_process_prefix_w)
+  if [ "${FM_RUNNING_RICH:-0}" = 1 ]; then
+    printf '\033[1;31m%s\033[0m\n' "$row"
+    printf '\033[31m%s\033[0m\n' "$(fm_running_cont_row "$width" "$pre" "$reason")"
+    printf '\033[31m%s\033[0m\n' "$(fm_running_cont_row "$width" "$pre" "stop: kill $pid")"
+  else
+    printf '%s\n' "$row"
+    printf '%s\n' "$(fm_running_cont_row "$width" "$pre" "$reason")"
+    printf '%s\n' "$(fm_running_cont_row "$width" "$pre" "stop: kill $pid")"
   fi
 }
 
@@ -291,8 +569,8 @@ fm_running_parse_listen_f() {
   '
 }
 
-fm_running_print_section() {  # <title>
-  printf '\n## %s\n' "$1"
+fm_running_print_section() {  # <title> [alarm]
+  printf '\n%s\n' "$(fm_running_section_heading "${FM_RUNNING_COLS:-80}" "$1" "${2:-0}")"
 }
 
 fm_running_cleanup() {
@@ -305,9 +583,8 @@ fm_running_main() {
   local show_all=0 uname_s ps_bin lsof_bin work procs cwds listens
   local listen_err listen_raw listen_rc cwd_raw pid_list
   local pid ppid cmd argv0 secs label owner cwd port reason short cwd_row
-  local fm_count=0 group_owner='' group_shown=0 group_skipped=0
-  local port_shown=0 port_skipped=0 orphan_count=0
-  local listen_note=''
+  local fm_count=0 group_owner='' orphan_count=0 first_group=1
+  local listen_note='' cols prefix_w
 
   case "${1:-}" in
     '') ;;
@@ -450,13 +727,18 @@ fm_running_main() {
 
   fm_running_write_owners "$procs" "$work/owners"
 
-  printf '# Running\n'
+  fm_running_init_style
+  cols=$(fm_running_term_width)
+  FM_RUNNING_COLS=$cols
+
+  printf '%s\n' "$(fm_running_section_heading "$cols" "Running")"
 
   fm_running_print_section 'Firstmate services'
+  printf '%s\n' "$(fm_running_process_header "$cols")"
   while IFS="$(printf '\t')" read -r pid ppid secs argv0 cmd || [ -n "$pid" ]; do
     [ -n "$pid" ] || continue
     label=$(fm_running_firstmate_label "$cmd") || continue
-    printf '  %s  pid %s  up %s\n' "$label" "$pid" "$(fm_running_fmt_age "$secs")"
+    printf '%s\n' "$(fm_running_process_row "$cols" "$pid" "$(fm_running_fmt_age "$secs")" "$(fm_running_tool_name "$cmd")" "$label")"
     fm_count=$((fm_count + 1))
   done < "$procs"
   if [ "$fm_count" -eq 0 ]; then
@@ -474,7 +756,7 @@ fm_running_main() {
     fi
     owner=$(awk -F'\t' -v pid="$pid" '$1 == pid { print $2; exit }' "$work/owners")
     [ -n "$owner" ] || owner='no owning app'
-    short=$(fm_running_short_cmd "$cmd")
+    short=$(fm_running_flat_cmd "$cmd")
     printf '%s\t%s\t%s\t%s\n' "$owner" "$pid" "$secs" "$short"
   done < "$procs" >> "$work/groups.unsorted"
   LC_ALL=C sort -t "$(printf '\t')" -k1,1 -k2,2n "$work/groups.unsorted" > "$work/groups"
@@ -482,9 +764,9 @@ fm_running_main() {
   if [ ! -s "$work/groups" ]; then
     printf '  none found\n'
   else
+    printf '%s\n' "$(fm_running_process_header "$cols")"
     group_owner=''
-    group_shown=0
-    group_skipped=0
+    first_group=1
     while IFS= read -r line; do
       [ -n "$line" ] || continue
       owner=$(printf '%s' "$line" | awk -F'\t' '{ print $1 }')
@@ -492,27 +774,19 @@ fm_running_main() {
       secs=$(printf '%s' "$line" | awk -F'\t' '{ print $3 }')
       short=$(printf '%s' "$line" | awk -F'\t' '{ print $4 }')
       if [ "$owner" != "$group_owner" ]; then
-        if [ -n "$group_owner" ] && [ "$group_skipped" -gt 0 ]; then
-          printf '    … %s more\n' "$group_skipped"
+        if [ "$first_group" -eq 0 ]; then
+          printf '\n'
         fi
-        printf '  %s\n' "$owner"
+        printf '%s\n' "$(fm_running_group_heading "$cols" "$owner")"
         group_owner=$owner
-        group_shown=0
-        group_skipped=0
+        first_group=0
       fi
-      if [ "$group_shown" -ge "$FM_RUNNING_GROUP_CAP" ]; then
-        group_skipped=$((group_skipped + 1))
-        continue
-      fi
-      printf '    pid %s  up %s  %s\n' "$pid" "$(fm_running_fmt_age "$secs")" "$short"
-      group_shown=$((group_shown + 1))
+      printf '%s\n' "$(fm_running_process_row "$cols" "$pid" "$(fm_running_fmt_age "$secs")" "$(fm_running_tool_name "$short")" "$short")"
     done < "$work/groups"
-    if [ -n "$group_owner" ] && [ "$group_skipped" -gt 0 ]; then
-      printf '    … %s more\n' "$group_skipped"
-    fi
   fi
 
   fm_running_print_section 'Listening TCP ports'
+  prefix_w=$(fm_running_port_prefix_w)
   if [ -n "$listen_note" ]; then
     printf '  unavailable: %s\n' "$listen_note"
   elif [ ! -s "$listens" ]; then
@@ -529,7 +803,7 @@ fm_running_main() {
       cmd=$(awk -F'\t' -v pid="$pid" '$1 == pid { print $5; exit }' "$procs")
       [ -n "$cmd" ] || cmd="pid $pid"
       cwd=$(awk -F'\t' -v pid="$pid" '$1 == pid { print $2; exit }' "$cwds")
-      short=$(fm_running_short_cmd "$cmd")
+      short=$(fm_running_flat_cmd "$cmd")
       [ -n "$secs" ] || secs=0
       printf '%s\t%s\t%s\t%s\t%s\n' "$port" "$pid" "$secs" "$short" "$cwd"
     done < "$listens" >> "$work/ports.unsorted"
@@ -537,30 +811,23 @@ fm_running_main() {
     if [ ! -s "$work/ports" ]; then
       printf '  no non-system TCP listeners\n'
     else
+      printf '%s\n' "$(fm_running_port_header "$cols")"
       while IFS= read -r line; do
         [ -n "$line" ] || continue
-        if [ "$port_shown" -ge "$FM_RUNNING_PORT_CAP" ]; then
-          port_skipped=$((port_skipped + 1))
-          continue
-        fi
         port=$(printf '%s' "$line" | awk -F'\t' '{ print $1 }')
         pid=$(printf '%s' "$line" | awk -F'\t' '{ print $2 }')
         secs=$(printf '%s' "$line" | awk -F'\t' '{ print $3 }')
         short=$(printf '%s' "$line" | awk -F'\t' '{ print $4 }')
         cwd=$(printf '%s' "$line" | awk -F'\t' '{ print $5 }')
-        printf '  %s  pid %s  up %s  %s\n' "$port" "$pid" "$(fm_running_fmt_age "$secs")" "$short"
+        printf '%s\n' "$(fm_running_port_row "$cols" "$port" "$pid" "$(fm_running_fmt_age "$secs")" "$(fm_running_tool_name "$short")" "$short")"
         if [ -n "$cwd" ]; then
-          printf '      cwd %s\n' "$cwd"
+          printf '%s\n' "$(fm_running_cont_row "$cols" "$prefix_w" "cwd $cwd")"
         fi
-        port_shown=$((port_shown + 1))
       done < "$work/ports"
-      if [ "$port_skipped" -gt 0 ]; then
-        printf '  … %s more\n' "$port_skipped"
-      fi
     fi
   fi
 
-  fm_running_print_section 'Stale or orphaned'
+  : > "$work/orphans"
   while IFS="$(printf '\t')" read -r pid ppid secs argv0 cmd || [ -n "$pid" ]; do
     [ -n "$pid" ] || continue
     fm_running_is_system_argv0 "$argv0" && continue
@@ -568,14 +835,23 @@ fm_running_main() {
     [ -n "$cwd_row" ] || continue
     cwd=$(printf '%s' "$cwd_row" | awk -F'\t' '{ print $2 }')
     reason=$(fm_running_orphan_reason "$ppid" "$cwd" "$secs") || continue
-    short=$(fm_running_short_cmd "$cmd")
-    printf '  pid %s  %s\n' "$pid" "$short"
-    printf '    %s\n' "$reason"
-    printf '    stop: kill %s\n' "$pid"
+    short=$(fm_running_flat_cmd "$cmd")
+    printf '%s\t%s\t%s\t%s\n' "$pid" "$secs" "$short" "$reason"
     orphan_count=$((orphan_count + 1))
-  done < "$procs"
+  done < "$procs" >> "$work/orphans"
   if [ "$orphan_count" -eq 0 ]; then
+    fm_running_print_section 'Stale or orphaned' 0
     printf '  none flagged\n'
+  else
+    fm_running_print_section 'Stale or orphaned' 1
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      pid=$(printf '%s' "$line" | awk -F'\t' '{ print $1 }')
+      secs=$(printf '%s' "$line" | awk -F'\t' '{ print $2 }')
+      short=$(printf '%s' "$line" | awk -F'\t' '{ print $3 }')
+      reason=$(printf '%s' "$line" | awk -F'\t' '{ print $4 }')
+      fm_running_orphan_block "$cols" "$pid" "$(fm_running_fmt_age "$secs")" "$(fm_running_tool_name "$short")" "$short" "$reason"
+    done < "$work/orphans"
   fi
 }
 
