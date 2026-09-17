@@ -20,7 +20,7 @@ TMP_ROOT=$(fm_test_tmproot fm-spawn-env-local)
 # rather than read from the script, so widening bin/fm-spawn.sh's exclusion
 # constant fails a test instead of passing silently.
 KEPT_KEYS='APP_NAME SUPABASE_URL SUPABASE_SERVICE_KEY MY_PRODUCT'
-DROPPED_KEYS='DATABASE_URL DATABASE_URL_POOLED DATABASE_URL_DIRECT DATABASE_URL_PROD POSTGRES_URL SUPABASE_SERVICE_KEY_PROD'
+DROPPED_KEYS='DATABASE_URL DATABASE_URL_POOLED DATABASE_URL_DIRECT DATABASE_URL_PROD POSTGRES_URL INTERNAL_DB SUPABASE_SERVICE_KEY_PROD'
 
 file_mode() { # <path>
   stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
@@ -94,6 +94,7 @@ DATABASE_URL_POOLED=postgres://hosted/pool
 export DATABASE_URL_DIRECT=postgres://hosted/direct
 DATABASE_URL_PROD=postgres://prod/app
 POSTGRES_URL=postgres://hosted/alternate
+INTERNAL_DB="postgres://hosted/app"
 SUPABASE_URL=https://example.supabase.co
 SUPABASE_SERVICE_KEY=service-key
 SUPABASE_SERVICE_KEY_PROD=prod-service-key

@@ -2849,10 +2849,10 @@ freshen_spawn_worktree_base() { # <worktree>
 # worktree takes its database from the per-worktree throwaway Postgres that
 # exists for exactly this purpose, never from a hosted one. There is routinely
 # more than one such key. A database connection is excluded when either its key
-# looks like a connection setting or its value starts with a database URI
-# scheme. The key test catches values whose format is unfamiliar, while the
-# value test catches connection keys whose name is unfamiliar; neither test is
-# complete on its own.
+# looks like a connection setting or its value contains a database URI scheme.
+# The key test catches values whose format is unfamiliar, while the value test
+# catches connection keys whose name is unfamiliar; neither test is complete on
+# its own.
 #
 # *_PROD: these are not a stricter spelling of their non-prod siblings. A file
 # of this shape has been observed carrying, under _PROD names, a production
@@ -2923,7 +2923,7 @@ propagate_env_local() { # <project> <worktree>
     fi
     rc=0
     (umask 077
-      grep -Ev "^[[:space:]]*(export[[:space:]]+)?(($FM_SPAWN_ENV_EXCLUDED_KEYS)[[:space:]]*=|[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*($FM_SPAWN_ENV_DATABASE_SCHEMES))" "$src" > "$dst") || rc=$?
+      grep -Ev "^[[:space:]]*(export[[:space:]]+)?(($FM_SPAWN_ENV_EXCLUDED_KEYS)[[:space:]]*=|[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=.*($FM_SPAWN_ENV_DATABASE_SCHEMES))" "$src" > "$dst") || rc=$?
     # grep exits 1 when every line was filtered out; only above that is a failure.
     if [ "$rc" -gt 1 ]; then
       rm -f "$dst"
