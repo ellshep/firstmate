@@ -28,6 +28,10 @@
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
 #   secondmate's charter.
+#   Once a ship/scout worktree is verified and before the agent launches, the
+#   project's gitignored root `.env*` files are copied into it minus
+#   propagate_env_local's excluded keys, so the worker is not credential-blind.
+#   That copy is zero-configuration and never blocks a spawn; see the function.
 #        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded endpoint and worktree instead of creating either. It is
@@ -2837,6 +2841,66 @@ freshen_spawn_worktree_base() { # <worktree>
   fi
 }
 
+# Keys never copied into a task worktree's inherited environment file. One
+# extended-regex alternation, matched against the KEY of a `KEY=` line and
+# nothing else; this constant is the only thing to edit to change the set.
+#
+# DATABASE_URL, DATABASE_URL_*: a disposable worktree takes its database from
+# the per-worktree throwaway Postgres that exists for exactly this purpose,
+# never from a hosted one. There is routinely more than one such key.
+#
+# *_PROD: these are not a stricter spelling of their non-prod siblings. A file
+# of this shape has been observed carrying, under _PROD names, a production
+# database connection and a production service-role key - the kind of key that
+# bypasses row-level security, so anything holding it can read and write every
+# row of every tenant. Copying them would fan both into every disposable worker
+# copy, on every spawn, unasked. Excluding them by construction is the captain's
+# own standing decision, not a default to be traded off: production credentials
+# stay in the captain's own checkout. Widening this set means first answering
+# why a throwaway worktree needs a production database and a key that ignores
+# row-level security, and no convenience this path could buy is worth that.
+FM_SPAWN_ENV_EXCLUDED_KEYS='DATABASE_URL|DATABASE_URL_[A-Za-z0-9_]*|[A-Za-z0-9_]*_PROD'
+
+# Copy the spawning project's gitignored root `.env*` files into the fresh task
+# worktree, minus the excluded keys above, so the worker's very first command
+# sees the credentials the captain's own checkout has. Gitignored is exactly why
+# they never arrive with the worktree, and `git check-ignore` is the whole
+# selection test: a tracked file such as `.env.schema` is excluded by it, so no
+# filename list, flag, or per-project setting is needed. The destination is
+# checked too, because a file the worktree would NOT ignore is one a worker
+# could commit. Copy only when the destination is absent: a relaunch reuses its
+# worktree and a worker may have edited the file deliberately, which also makes
+# this idempotent.
+#
+# DELIBERATELY NOT FAIL-CLOSED, unlike the rest of this script: no such file, an
+# unreadable one, a project that is not a git repository, or a failed copy all
+# skip and let the spawn proceed. A worker without credentials is the status quo
+# and survivable; a spawn that refuses to start is not. Nothing but a count is
+# ever reported, because these are credentials.
+propagate_env_local() { # <project> <worktree>
+  local project=$1 worktree=$2 src name dst rc copied=0
+  for src in "$project"/.env*; do
+    [ -f "$src" ] || continue
+    name=${src##*/}
+    dst=$worktree/$name
+    # -L as well as -e: a dangling symlink is not "absent", and writing through
+    # one would put credentials wherever it points, outside the worktree.
+    { [ ! -e "$dst" ] && [ ! -L "$dst" ]; } || continue
+    git -C "$project" check-ignore -q -- "$name" 2>/dev/null || continue
+    git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null || continue
+    rc=0
+    (umask 077
+      grep -Ev "^[[:space:]]*(export[[:space:]]+)?($FM_SPAWN_ENV_EXCLUDED_KEYS)[[:space:]]*=" "$src" > "$dst") || rc=$?
+    # grep exits 1 when every line was filtered out; only above that is a failure.
+    if [ "$rc" -gt 1 ]; then
+      rm -f "$dst"
+      continue
+    fi
+    copied=$((copied + 1))
+  done
+  [ "$copied" -eq 0 ] || echo "note: copied $copied local environment file(s) into the task worktree" >&2
+}
+
 herdr_projection_meta_field_exact() { # <meta> <key>
   local meta=$1 key=$2 count
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
@@ -3569,6 +3633,9 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
+fi
+if [ "$KIND" != secondmate ]; then
+  propagate_env_local "$PROJ_ABS" "$WT"
 fi
 
 # Pre-register Claude's workspace trust for the directory this launch starts in,
