@@ -2900,6 +2900,14 @@ propagate_env_local() { # <project> <worktree>
     done
   fi
   for src in "$project"/.env*; do
+    # Do not follow source symlinks: the project-local exclusion filter only
+    # constrains bytes from a file owned by this project, not an arbitrary file
+    # elsewhere on the machine. Missing credentials are survivable; silently
+    # copying an outside file is not.
+    if [ -L "$src" ]; then
+      echo "note: skipped '$src' because it is a symlink" >&2
+      continue
+    fi
     [ -f "$src" ] || continue
     name=${src##*/}
     dst=$worktree/$name

@@ -147,6 +147,33 @@ test_gitignored_env_reaches_the_worktree_without_excluded_keys() {
   pass "a gitignored .env reaches the task worktree at mode 600 with excluded keys filtered out"
 }
 
+test_gitignored_source_symlink_is_skipped_without_blocking_regular_copy() {
+  local rec id out status outside
+  id='env-local-source-symlink'
+  rec=$(make_case source-symlink "$id")
+  read_case_record "$rec"
+  write_env_local "$PROJECT_DIR"
+  outside="$CASE_DIR/outside-project.env"
+  printf 'LEAKED_SECRET=outside-project\nDATABASE_URL=postgres://outside\n' > "$outside"
+  ln -s "$outside" "$PROJECT_DIR/.env.outside"
+  printf 'SIDE_FILE_KEY=present\n' > "$PROJECT_DIR/.env.local"
+
+  out=$(run_spawn "$id" --scout)
+  status=$?
+  expect_code 0 "$status" "a source symlink should be skipped without blocking the spawn"$'\n'"$out"
+  [ ! -e "$POOL_DIR/.env.outside" ] \
+    || fail "an outside-project source symlink was copied into the task worktree"
+  [ -f "$POOL_DIR/.env.local" ] \
+    || fail "a regular gitignored env file beside the symlink was not copied"
+  has_key "$POOL_DIR/.env.local" SIDE_FILE_KEY \
+    || fail "the regular env file beside the symlink lost its ordinary key"
+  assert_contains "$out" "$PROJECT_DIR/.env.outside" \
+    "the skipped source symlink path was not reported"
+  assert_contains "$out" "because it is a symlink" \
+    "the source symlink skip did not explain the reason"
+  pass "a gitignored source symlink is skipped while a regular env file still propagates"
+}
+
 test_tracked_env_schema_is_not_copied() {
   local rec id out status
   id='env-local-tracked'
@@ -251,6 +278,7 @@ test_project_without_env_files_spawns_normally() {
 }
 
 test_gitignored_env_reaches_the_worktree_without_excluded_keys
+test_gitignored_source_symlink_is_skipped_without_blocking_regular_copy
 test_tracked_env_schema_is_not_copied
 test_file_the_worktree_would_not_ignore_is_not_copied
 test_fresh_spawn_replaces_pooled_destination_with_filtered_current_source
