@@ -2868,9 +2868,13 @@ FM_SPAWN_ENV_EXCLUDED_KEYS='DATABASE_URL|DATABASE_URL_[A-Za-z0-9_]*|[A-Za-z0-9_]
 # selection test: a tracked file such as `.env.schema` is excluded by it, so no
 # filename list, flag, or per-project setting is needed. The destination is
 # checked too, because a file the worktree would NOT ignore is one a worker
-# could commit. Copy only when the destination is absent: a relaunch reuses its
-# worktree and a worker may have edited the file deliberately, which also makes
-# this idempotent.
+# could commit. Preserve an existing destination only on relaunch: the same
+# task reuses its worktree and a worker may have edited the file deliberately.
+# Fresh pooled slots are recycled between tasks, and `git clean -fd` does not
+# remove ignored files (`-x` is required), so an ignored env file can survive
+# the reset. If it survives into the next task, the filter is bypassed and
+# stale or production-sensitive values are carried forward; a filter that
+# leftover state can bypass is not a filter.
 #
 # DELIBERATELY NOT FAIL-CLOSED, unlike the rest of this script: no such file, an
 # unreadable one, a project that is not a git repository, or a failed copy all
@@ -2883,11 +2887,16 @@ propagate_env_local() { # <project> <worktree>
     [ -f "$src" ] || continue
     name=${src##*/}
     dst=$worktree/$name
-    # -L as well as -e: a dangling symlink is not "absent", and writing through
-    # one would put credentials wherever it points, outside the worktree.
-    { [ ! -e "$dst" ] && [ ! -L "$dst" ]; } || continue
     git -C "$project" check-ignore -q -- "$name" 2>/dev/null || continue
     git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null || continue
+    if [ "$RELAUNCH" -eq 1 ]; then
+      # -L as well as -e: a dangling symlink is not "absent", and writing
+      # through one would put credentials wherever it points, outside the
+      # worktree.
+      { [ ! -e "$dst" ] && [ ! -L "$dst" ]; } || continue
+    else
+      rm -f "$dst" 2>/dev/null || continue
+    fi
     rc=0
     (umask 077
       grep -Ev "^[[:space:]]*(export[[:space:]]+)?($FM_SPAWN_ENV_EXCLUDED_KEYS)[[:space:]]*=" "$src" > "$dst") || rc=$?

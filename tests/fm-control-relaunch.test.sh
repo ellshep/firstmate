@@ -970,6 +970,24 @@ test_spawn_relaunch_without_a_harness_reuses_the_recorded_one() {
   pass "fm-spawn --relaunch: with no explicit harness it reuses the task's recorded one, never the crew default"
 }
 
+test_spawn_relaunch_preserves_the_worker_owned_env_file() {
+  local dir out
+  dir=$(new_case relaunchenv rl-env)
+  add_ship_task "$dir" rl-env claude
+  printf '.env*\n' > "$dir/proj/.gitignore"
+  printf '.env*\n' > "$dir/wt/.gitignore"
+  printf 'CAPTAIN_SOURCE=do-not-copy\n' > "$dir/proj/.env"
+  printf 'WORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local\n' > "$dir/wt/.env"
+  printf 'zsh' > "$dir/fake/command"
+
+  out=$(run_spawn "$dir" rl-env --relaunch)
+  [ "$(cat "$dir/wt/.env")" = $'WORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local' ] \
+    || fail "a relaunch overwrote the worker-owned env file: $(cat "$dir/wt/.env")"
+  assert_contains "$out" "spawned rl-env harness=claude" \
+    "the relaunch should launch with the recorded agent-free endpoint"
+  pass "fm-spawn --relaunch: an existing worker-owned env file is preserved"
+}
+
 test_promoted_scout_relaunch_receives_the_current_delivery_contract() {
   local dir home id brief launch out mode rule
   for mode in no-mistakes direct-PR local-only; do
@@ -1707,6 +1725,7 @@ test_secondmate_relaunch_onto_a_crewmate_only_adapter_refuses_before_stop
 test_explicit_secondmate_harness_ignores_configured_profile_axes
 test_ship_relaunch_ignores_the_crew_harness_config
 test_spawn_relaunch_without_a_harness_reuses_the_recorded_one
+test_spawn_relaunch_preserves_the_worker_owned_env_file
 test_promoted_scout_relaunch_receives_the_current_delivery_contract
 test_prefixed_prior_harness_wiring_is_still_retired
 test_muse_session_binding_is_retired_on_a_harness_switch

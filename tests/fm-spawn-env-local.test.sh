@@ -5,9 +5,9 @@
 # checkout root, so a fresh task worktree never receives them and every worker
 # starts credential-blind. These tests drive the real spawn path with a fake
 # terminal and prove the worktree inherits those files with the excluded keys
-# filtered out, that a tracked `.env.schema` is never copied, that an existing
-# destination is left alone, and that a project with nothing to copy still
-# spawns.
+# filtered out, that a tracked `.env.schema` is never copied, that a recycled
+# pool destination is refreshed, that a dangling symlink is safe, and that a
+# project with nothing to copy still spawns.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -177,20 +177,24 @@ test_file_the_worktree_would_not_ignore_is_not_copied() {
   pass "a destination the worktree would let a worker commit is not written"
 }
 
-test_existing_destination_is_not_overwritten() {
+test_fresh_spawn_replaces_pooled_destination_with_filtered_current_source() {
   local rec id out status
-  id='env-local-existing'
-  rec=$(make_case existing "$id")
+  id='env-local-pooled'
+  rec=$(make_case pooled "$id")
   read_case_record "$rec"
   write_env_local "$PROJECT_DIR"
-  printf 'WORKER_EDITED=yes\n' > "$POOL_DIR/.env"
+  printf 'STALE_WORKER_KEY=stale\nDATABASE_URL=postgres://stale/app\n' > "$POOL_DIR/.env"
 
   out=$(run_spawn "$id" --scout)
   status=$?
-  expect_code 0 "$status" "the spawn should launch over an existing worktree .env"$'\n'"$out"
-  [ "$(cat "$POOL_DIR/.env")" = 'WORKER_EDITED=yes' ] \
-    || fail "an existing worktree .env was overwritten: $(cat "$POOL_DIR/.env")"
-  pass "an existing destination file is left completely alone"
+  expect_code 0 "$status" "a fresh spawn should launch over a recycled pool .env"$'\n'"$out"
+  ! has_key "$POOL_DIR/.env" DATABASE_URL \
+    || fail "a recycled pool .env carried the excluded database key"
+  has_key "$POOL_DIR/.env" APP_NAME \
+    || fail "a fresh spawn did not copy an ordinary key from the current source"
+  ! has_key "$POOL_DIR/.env" STALE_WORKER_KEY \
+    || fail "a fresh spawn inherited stale worker state from the pool slot"
+  pass "a fresh spawn refreshes a recycled pool destination through the env filter"
 }
 
 test_dangling_symlink_destination_is_not_written_through() {
@@ -227,7 +231,7 @@ test_project_without_env_files_spawns_normally() {
 test_gitignored_env_reaches_the_worktree_without_excluded_keys
 test_tracked_env_schema_is_not_copied
 test_file_the_worktree_would_not_ignore_is_not_copied
-test_existing_destination_is_not_overwritten
+test_fresh_spawn_replaces_pooled_destination_with_filtered_current_source
 test_dangling_symlink_destination_is_not_written_through
 test_project_without_env_files_spawns_normally
 
