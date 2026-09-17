@@ -6,8 +6,9 @@
 # starts credential-blind. These tests drive the real spawn path with a fake
 # terminal and prove the worktree inherits those files with the excluded keys
 # filtered out, that a tracked `.env.schema` is never copied, that a recycled
-# pool destination is refreshed, that a dangling symlink is safe, and that a
-# project with nothing to copy still spawns.
+# pool destination is refreshed, stale unmatched files are cleared, that a
+# dangling symlink is safe, and that a project with nothing to copy still
+# spawns.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -18,8 +19,8 @@ TMP_ROOT=$(fm_test_tmproot fm-spawn-env-local)
 # The keys this suite expects to survive and to be dropped, spelled out here
 # rather than read from the script, so widening bin/fm-spawn.sh's exclusion
 # constant fails a test instead of passing silently.
-KEPT_KEYS='APP_NAME SUPABASE_URL SUPABASE_SERVICE_KEY NOT_DATABASE_URL MY_PRODUCT'
-DROPPED_KEYS='DATABASE_URL DATABASE_URL_POOLED DATABASE_URL_DIRECT DATABASE_URL_PROD SUPABASE_SERVICE_KEY_PROD'
+KEPT_KEYS='APP_NAME SUPABASE_URL SUPABASE_SERVICE_KEY MY_PRODUCT'
+DROPPED_KEYS='DATABASE_URL DATABASE_URL_POOLED DATABASE_URL_DIRECT DATABASE_URL_PROD POSTGRES_URL SUPABASE_SERVICE_KEY_PROD'
 
 file_mode() { # <path>
   stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
@@ -92,10 +93,10 @@ DATABASE_URL=postgres://hosted/app
 DATABASE_URL_POOLED=postgres://hosted/pool
 export DATABASE_URL_DIRECT=postgres://hosted/direct
 DATABASE_URL_PROD=postgres://prod/app
+POSTGRES_URL=postgres://hosted/alternate
 SUPABASE_URL=https://example.supabase.co
 SUPABASE_SERVICE_KEY=service-key
 SUPABASE_SERVICE_KEY_PROD=prod-service-key
-NOT_DATABASE_URL=keep-me
 MY_PRODUCT=keep-me-too
 ENV
 }
@@ -211,7 +212,28 @@ test_dangling_symlink_destination_is_not_written_through() {
   expect_code 0 "$status" "the spawn should launch over a dangling worktree .env symlink"$'\n'"$out"
   [ ! -e "$outside" ] \
     || fail "credentials were written through a dangling symlink to $outside"
-  pass "a dangling symlink destination is treated as present, not absent"
+  [ -f "$POOL_DIR/.env" ] && [ ! -L "$POOL_DIR/.env" ] \
+    || fail "a fresh spawn did not replace the dangling symlink with a local copy"
+  pass "a fresh spawn removes a dangling symlink before writing the local copy"
+}
+
+test_fresh_spawn_clears_stale_unmatched_env_file() {
+  local rec id out status
+  id='env-local-stale-unmatched'
+  rec=$(make_case stale-unmatched "$id")
+  read_case_record "$rec"
+  write_env_local "$PROJECT_DIR"
+  printf 'STALE_ONLY=yes\n' > "$POOL_DIR/.env.local"
+
+  out=$(run_spawn "$id" --scout)
+  status=$?
+  expect_code 0 "$status" "a fresh spawn should clear an ignored env file absent from the source"$'\n'"$out"
+  [ ! -e "$POOL_DIR/.env.local" ] \
+    || fail "a stale source-absent .env.local survived fresh pool cleanup"
+  [ -f "$POOL_DIR/.env" ] || fail "fresh cleanup removed the current source env file"
+  has_key "$POOL_DIR/.env" APP_NAME \
+    || fail "fresh cleanup left no ordinary key from the current source"
+  pass "a fresh spawn clears a stale source-absent env file and copies current credentials"
 }
 
 test_project_without_env_files_spawns_normally() {
@@ -233,6 +255,7 @@ test_tracked_env_schema_is_not_copied
 test_file_the_worktree_would_not_ignore_is_not_copied
 test_fresh_spawn_replaces_pooled_destination_with_filtered_current_source
 test_dangling_symlink_destination_is_not_written_through
+test_fresh_spawn_clears_stale_unmatched_env_file
 test_project_without_env_files_spawns_normally
 
 echo "# all fm-spawn-env-local tests passed"

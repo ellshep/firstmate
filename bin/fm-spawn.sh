@@ -2841,13 +2841,18 @@ freshen_spawn_worktree_base() { # <worktree>
   fi
 }
 
-# Keys never copied into a task worktree's inherited environment file. One
-# extended-regex alternation, matched against the KEY of a `KEY=` line and
-# nothing else; this constant is the only thing to edit to change the set.
+# Keys never copied into a task worktree's inherited environment file. The
+# extended-regex alternations below match a `KEY=` line and nothing else; these
+# constants are the only things to edit to change the set.
 #
-# DATABASE_URL, DATABASE_URL_*: a disposable worktree takes its database from
-# the per-worktree throwaway Postgres that exists for exactly this purpose,
-# never from a hosted one. There is routinely more than one such key.
+# DATABASE_URL, DATABASE_URL_* and the common alternate spellings: a disposable
+# worktree takes its database from the per-worktree throwaway Postgres that
+# exists for exactly this purpose, never from a hosted one. There is routinely
+# more than one such key. A database connection is excluded when either its key
+# looks like a connection setting or its value starts with a database URI
+# scheme. The key test catches values whose format is unfamiliar, while the
+# value test catches connection keys whose name is unfamiliar; neither test is
+# complete on its own.
 #
 # *_PROD: these are not a stricter spelling of their non-prod siblings. A file
 # of this shape has been observed carrying, under _PROD names, a production
@@ -2859,7 +2864,8 @@ freshen_spawn_worktree_base() { # <worktree>
 # stay in the captain's own checkout. Widening this set means first answering
 # why a throwaway worktree needs a production database and a key that ignores
 # row-level security, and no convenience this path could buy is worth that.
-FM_SPAWN_ENV_EXCLUDED_KEYS='DATABASE_URL|DATABASE_URL_[A-Za-z0-9_]*|[A-Za-z0-9_]*_PROD'
+FM_SPAWN_ENV_EXCLUDED_KEYS='([A-Za-z0-9_]+_)?DATABASE_URL(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?POSTGRES(?:QL)?_URL|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_URL|([A-Za-z0-9_]+_)?DB_URL|[A-Za-z0-9_]+_DATABASE_URL|[A-Za-z0-9_]*_PROD'
+FM_SPAWN_ENV_DATABASE_SCHEMES='(postgres|postgresql|mysql|mongodb(\+srv)?|rediss?)://'
 
 # Copy the spawning project's gitignored root `.env*` files into the fresh task
 # worktree, minus the excluded keys above, so the worker's very first command
@@ -2872,9 +2878,11 @@ FM_SPAWN_ENV_EXCLUDED_KEYS='DATABASE_URL|DATABASE_URL_[A-Za-z0-9_]*|[A-Za-z0-9_]
 # task reuses its worktree and a worker may have edited the file deliberately.
 # Fresh pooled slots are recycled between tasks, and `git clean -fd` does not
 # remove ignored files (`-x` is required), so an ignored env file can survive
-# the reset. If it survives into the next task, the filter is bypassed and
-# stale or production-sensitive values are carried forward; a filter that
-# leftover state can bypass is not a filter.
+# the reset. A source-driven pass cannot see a name the current project lacks;
+# fresh spawns therefore clear eligible destination `.env*` entries before
+# copying current sources. Otherwise the filter is bypassed and stale or
+# production-sensitive values are carried forward; a filter that leftover
+# state can bypass is not a filter.
 #
 # DELIBERATELY NOT FAIL-CLOSED, unlike the rest of this script: no such file, an
 # unreadable one, a project that is not a git repository, or a failed copy all
@@ -2883,6 +2891,14 @@ FM_SPAWN_ENV_EXCLUDED_KEYS='DATABASE_URL|DATABASE_URL_[A-Za-z0-9_]*|[A-Za-z0-9_]
 # ever reported, because these are credentials.
 propagate_env_local() { # <project> <worktree>
   local project=$1 worktree=$2 src name dst rc copied=0
+  if [ "$RELAUNCH" -eq 0 ]; then
+    for dst in "$worktree"/.env*; do
+      [ -e "$dst" ] || [ -L "$dst" ] || continue
+      name=${dst##*/}
+      git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null || continue
+      rm -f "$dst" 2>/dev/null || continue
+    done
+  fi
   for src in "$project"/.env*; do
     [ -f "$src" ] || continue
     name=${src##*/}
@@ -2899,7 +2915,7 @@ propagate_env_local() { # <project> <worktree>
     fi
     rc=0
     (umask 077
-      grep -Ev "^[[:space:]]*(export[[:space:]]+)?($FM_SPAWN_ENV_EXCLUDED_KEYS)[[:space:]]*=" "$src" > "$dst") || rc=$?
+      grep -Ev "^[[:space:]]*(export[[:space:]]+)?(($FM_SPAWN_ENV_EXCLUDED_KEYS)[[:space:]]*=|[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*($FM_SPAWN_ENV_DATABASE_SCHEMES))" "$src" > "$dst") || rc=$?
     # grep exits 1 when every line was filtered out; only above that is a failure.
     if [ "$rc" -gt 1 ]; then
       rm -f "$dst"
