@@ -717,7 +717,7 @@ tests/fm-extension-binding.test.sh 9053
 tests/fm-fleet-snapshot-view.test.sh 16820
 tests/fm-fleet-sync.test.sh 37749
 tests/fm-gate-refuse.test.sh 5339
-tests/fm-gemini-harness.test.sh 1000
+tests/fm-gemini-harness.test.sh 998
 tests/fm-gitignore-config.test.sh 72
 tests/fm-gotmp.test.sh 1340
 tests/fm-grok-continuity-live-e2e.test.sh 46
@@ -734,7 +734,7 @@ tests/fm-herdr-submit-confirm-live-e2e.test.sh 77
 tests/fm-herdr-version-floor-live-e2e.test.sh 46
 tests/fm-home-summary-refresh.test.sh 39717
 tests/fm-inactive-reconcile.test.sh 74399
-tests/fm-kimi-harness.test.sh 19100
+tests/fm-kimi-harness.test.sh 47534
 tests/fm-lint-workflows.test.sh 855
 tests/fm-live-gate.test.sh 6000
 tests/fm-mail-check.test.sh 9464
