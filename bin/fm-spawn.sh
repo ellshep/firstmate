@@ -2870,10 +2870,13 @@ freshen_spawn_worktree_base() { # <worktree>
 # database URI scheme. The key test catches values whose format is unfamiliar,
 # while the value test catches connection keys whose name is unfamiliar; neither
 # test is complete on its own.
-# This matcher is a deliberate best-effort heuristic rather than a guarantee:
-# unusual vendor spellings and proprietary non-URI connection formats are
-# expected to be missed, that residual is accepted, and no further entries are
-# to be added to this enumeration.
+# This boundary has two deliberate exclusions with different rationales:
+# database connection names and URI values are withheld so a disposable copy
+# uses the per-worktree throwaway Postgres already provided for it; *_PROD
+# entries are withheld as an absolute security boundary because production
+# secrets are the captain's own business. Key spellings outside both categories
+# were never in scope; widening or narrowing either boundary requires answering
+# that rationale.
 #
 # *_PROD: these are not a stricter spelling of their non-prod siblings. A file
 # of this shape has been observed carrying, under _PROD names, a production
