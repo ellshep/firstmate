@@ -19,8 +19,8 @@ TMP_ROOT=$(fm_test_tmproot fm-spawn-env-local)
 # The keys this suite expects to survive and to be dropped, spelled out here
 # rather than read from the script, so widening bin/fm-spawn.sh's exclusion
 # constant fails a test instead of passing silently.
-KEPT_KEYS='APP_NAME SUPABASE_URL SUPABASE_SERVICE_KEY MY_PRODUCT USER PORT PUBLIC_URL'
-DROPPED_KEYS='DATABASE_URL DATABASE_URL_POOLED DATABASE_URL_DIRECT DATABASE_URL_PROD POSTGRES_URL INTERNAL_DB DB_HOST DB_USER DB_PASSWORD MYSQL_HOST PGHOST PGHOSTADDR PGPORT PGDATABASE PGUSER PGPASSWORD PGPASSFILE PGSERVICE PGSERVICEFILE APP_DB_HOST SUPABASE_DB_CONNECTION MSSQL_URL SQLSERVER_URL COCKROACH_URL SERVICE_CONNECTION SUPABASE_SERVICE_KEY_PROD'
+KEPT_KEYS='APP_NAME SUPABASE_URL SUPABASE_SERVICE_KEY MY_PRODUCT USER PORT user port PUBLIC_URL'
+DROPPED_KEYS='DATABASE_URL DATABASE_URL_POOLED DATABASE_URL_DIRECT DATABASE_URL_PROD POSTGRES_URL INTERNAL_DB DB_HOST DB_USER DB_PASSWORD MYSQL_HOST PGHOST PGHOSTADDR PGPORT PGDATABASE PGUSER PGPASSWORD PGPASSFILE PGSERVICE PGSERVICEFILE APP_DB_HOST SUPABASE_DB_CONNECTION MSSQL_URL SQLSERVER_URL COCKROACH_URL SERVICE_CONNECTION SERVICE_ENDPOINT SUPABASE_SERVICE_KEY_PROD'
 
 file_mode() { # <path>
   stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
@@ -113,12 +113,15 @@ SUPABASE_DB_CONNECTION=prod-supabase-connection
 MSSQL_URL=mssql://host/db
 SQLSERVER_URL=sqlserver://host/db
 COCKROACH_URL=cockroachdb://host/db
+SERVICE_ENDPOINT=POSTGRES://HOST/DB
 SUPABASE_URL=https://example.supabase.co
 SUPABASE_SERVICE_KEY=service-key
 SUPABASE_SERVICE_KEY_PROD=prod-service-key
 MY_PRODUCT=keep-me-too
 USER=public-user
 PORT=443
+user=lowercase-user
+port=8443
 PUBLIC_URL=https://example.com
 SERVICE_CONNECTION=ambiguous-connection
 ENV
@@ -170,8 +173,10 @@ test_gitignored_env_reaches_the_worktree_without_excluded_keys() {
     "the spawn should report multi-segment excluded key names"
   assert_contains "$out" "MSSQL_URL" \
     "the spawn should report excluded database URI key names"
+  assert_contains "$out" "SERVICE_ENDPOINT" \
+    "the spawn should report case-insensitive URI matches"
   case "$out" in
-  *postgres://*|*prod-db.internal*|*service-key*)
+  *postgres://*|*POSTGRES://*|*prod-db.internal*|*service-key*)
     fail "the spawn logged an excluded value: $out"
     ;;
   esac

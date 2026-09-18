@@ -379,8 +379,14 @@ usage() {
 fm_spawn_env_report_names() { # <report> <filename>
   local report=$1 name=$2 excluded_names
   [ "$report" = /dev/null ] && return 0
-  excluded_names=$(cat "$report" 2>/dev/null || :)
-  rm -f "$report" 2>/dev/null || :
+  if ! excluded_names=$(cat "$report" 2>/dev/null); then
+    echo "error: could not read the temporary environment report for '$name'; refusing to launch" >&2
+    return 1
+  fi
+  if ! rm -f "$report" 2>/dev/null; then
+    echo "error: could not remove the temporary environment report for '$name'; refusing to launch" >&2
+    return 1
+  fi
   [ -z "$excluded_names" ] || echo "note: excluded local environment key(s) for $name: $excluded_names" >&2
 }
 
@@ -2884,7 +2890,10 @@ fm_spawn_env_filter() { # <source> <destination> <output> <report> <source-avail
     -v source_available="$source_available" \
     -v merge="$merge" \
     -v report="$report" '
-    BEGIN { schemes = ENVIRON["FM_SPAWN_ENV_DATABASE_SCHEMES"] }
+    BEGIN {
+      schemes = tolower(ENVIRON["FM_SPAWN_ENV_DATABASE_SCHEMES"])
+      excluded_lower = tolower(excluded)
+    }
     function key_of(line, text) {
       if (line !~ /^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/) return ""
       text = line
@@ -2899,7 +2908,7 @@ fm_spawn_env_filter() { # <source> <destination> <output> <report> <source-avail
       return text
     }
     function is_excluded(key, value) {
-      return key ~ ("^(" excluded ")$") || value ~ schemes
+      return tolower(key) ~ ("^(" excluded_lower ")$") || tolower(value) ~ schemes
     }
     function report_key(key) {
       if (key != "" && !reported[key]++) print key > report
@@ -2965,11 +2974,14 @@ fm_spawn_env_filter() { # <source> <destination> <output> <report> <source-avail
 # production-sensitive values are carried forward; a filter that leftover
 # state can bypass is not a filter.
 #
-# Fresh propagation skips missing or unreadable source files and failed copies;
-# destination cleanup and relaunch rebuilding return failure when an existing
-# destination cannot be replaced. A worker without credentials is survivable;
-# a spawn that can retain excluded credentials is not. Only counts and
-# excluded key names are reported, never their values.
+# Fresh propagation is deliberately not fail-closed for preconditions: a
+# missing or unreadable source, a source symlink, a non-git project, an already
+# present relaunch destination, or a name not ignored on either side skips.
+# Once a source is eligible to copy, failed temp creation, filtering,
+# permission changes, cleanup, or installation refuses the spawn. A worker
+# without credentials is survivable; a spawn that can retain excluded
+# credentials is not. Only counts and excluded key names are reported, never
+# their values.
 propagate_env_local() { # <project> <worktree>
   local project=$1 worktree=$2 src name dst copied=0 source_available tmp source_input destination_input report_tmp
   if [ "$RELAUNCH" -eq 0 ]; then
@@ -2977,7 +2989,10 @@ propagate_env_local() { # <project> <worktree>
       [ -e "$dst" ] || [ -L "$dst" ] || continue
       name=${dst##*/}
       git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null || continue
-      rm -f "$dst" 2>/dev/null || return 1
+      rm -f "$dst" 2>/dev/null || {
+        echo "error: could not remove existing local environment file '$name'; refusing to launch" >&2
+        return 1
+      }
     done
   else
     for dst in "$worktree"/.env*; do
@@ -2993,27 +3008,38 @@ propagate_env_local() { # <project> <worktree>
       [ "$source_available" -eq 1 ] && source_input=$src
       destination_input=/dev/null
       [ -f "$dst" ] && [ ! -L "$dst" ] && destination_input=$dst
-      tmp=$(umask 077; mktemp "$worktree/.fm-env-local.XXXXXX") || return 1
+      tmp=$(umask 077; mktemp "$worktree/.fm-env-local.XXXXXX") || {
+        echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
+        return 1
+      }
       report_tmp=$(umask 077; mktemp "$worktree/.fm-env-local-report.XXXXXX") || {
         rm -f "$tmp" 2>/dev/null || :
+        echo "error: could not create a temporary environment report for '$name'; refusing to launch" >&2
         return 1
       }
       fm_spawn_env_filter "$source_input" "$destination_input" "$tmp" "$report_tmp" "$source_available" 1 || {
         rm -f "$tmp" 2>/dev/null || :
         rm -f "$report_tmp" 2>/dev/null || :
+        echo "error: could not filter local environment file '$name'; refusing to launch" >&2
         return 1
       }
-      fm_spawn_env_report_names "$report_tmp" "$name"
+      fm_spawn_env_report_names "$report_tmp" "$name" || {
+        rm -f "$tmp" 2>/dev/null || :
+        return 1
+      }
       chmod 600 "$tmp" 2>/dev/null || {
         rm -f "$tmp" 2>/dev/null || :
+        echo "error: could not set permissions on local environment file '$name'; refusing to launch" >&2
         return 1
       }
       rm -f "$dst" 2>/dev/null || {
         rm -f "$tmp" 2>/dev/null || :
+        echo "error: could not replace local environment file '$name'; refusing to launch" >&2
         return 1
       }
       mv "$tmp" "$dst" 2>/dev/null || {
         rm -f "$tmp" 2>/dev/null || :
+        echo "error: could not install local environment file '$name'; refusing to launch" >&2
         return 1
       }
       copied=$((copied + 1))
@@ -3028,34 +3054,47 @@ propagate_env_local() { # <project> <worktree>
       echo "note: skipped '$src' because it is a symlink" >&2
       continue
     fi
-    [ -f "$src" ] || continue
+    [ -f "$src" ] && [ -r "$src" ] || continue
     name=${src##*/}
     dst=$worktree/$name
     git -C "$project" check-ignore -q -- "$name" 2>/dev/null || continue
     git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null || continue
     if [ "$RELAUNCH" -eq 0 ]; then
-      rm -f "$dst" 2>/dev/null || return 1
+      rm -f "$dst" 2>/dev/null || {
+        echo "error: could not remove existing local environment file '$name'; refusing to launch" >&2
+        return 1
+      }
     else
       [ ! -e "$dst" ] && [ ! -L "$dst" ] || continue
     fi
-    tmp=$(umask 077; mktemp "$worktree/.fm-env-local.XXXXXX") || continue
+    tmp=$(umask 077; mktemp "$worktree/.fm-env-local.XXXXXX") || {
+      echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
+      return 1
+    }
     report_tmp=$(umask 077; mktemp "$worktree/.fm-env-local-report.XXXXXX") || {
       rm -f "$tmp" 2>/dev/null || :
-      continue
+      echo "error: could not create a temporary environment report for '$name'; refusing to launch" >&2
+      return 1
     }
     fm_spawn_env_filter "$src" /dev/null "$tmp" "$report_tmp" 1 0 || {
       rm -f "$tmp" 2>/dev/null || :
       rm -f "$report_tmp" 2>/dev/null || :
-      continue
+      echo "error: could not filter local environment file '$name'; refusing to launch" >&2
+      return 1
     }
-    fm_spawn_env_report_names "$report_tmp" "$name"
+    fm_spawn_env_report_names "$report_tmp" "$name" || {
+      rm -f "$tmp" 2>/dev/null || :
+      return 1
+    }
     chmod 600 "$tmp" 2>/dev/null || {
       rm -f "$tmp" 2>/dev/null || :
-      continue
+      echo "error: could not set permissions on local environment file '$name'; refusing to launch" >&2
+      return 1
     }
     mv "$tmp" "$dst" 2>/dev/null || {
       rm -f "$tmp" 2>/dev/null || :
-      continue
+      echo "error: could not install local environment file '$name'; refusing to launch" >&2
+      return 1
     }
     copied=$((copied + 1))
   done
