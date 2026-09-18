@@ -981,11 +981,52 @@ test_spawn_relaunch_sanitizes_copied_env_but_preserves_worker_values() {
   printf 'zsh' > "$dir/fake/command"
 
   out=$(run_spawn "$dir" rl-env --relaunch)
-  [ "$(cat "$dir/wt/.env")" = $'WORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local\nDATABASE_URL_PROD=postgres://worker/prod' ] \
+  [ "$(cat "$dir/wt/.env")" = $'CAPTAIN_SOURCE=do-not-copy\nWORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local\nDATABASE_URL_PROD=postgres://worker/prod' ] \
     || fail "a relaunch did not sanitize copied values while preserving worker values: $(cat "$dir/wt/.env")"
   assert_contains "$out" "spawned rl-env harness=claude" \
     "the relaunch should launch with the recorded agent-free endpoint"
-  pass "fm-spawn --relaunch: copied excluded values are sanitized, worker values preserved"
+  [ "$(stat -f '%Lp' "$dir/wt/.env" 2>/dev/null || stat -c '%a' "$dir/wt/.env")" = 600 ] \
+    || fail "a rebuilt relaunch env file must be mode 600"
+  pass "fm-spawn --relaunch: rebuilds regular env files with source and worker values"
+}
+
+test_spawn_relaunch_replaces_destination_env_symlink() {
+  local dir out
+  dir=$(new_case relaunchenvlink rl-env-link)
+  add_ship_task "$dir" rl-env-link claude
+  printf '.env*\n' > "$dir/proj/.gitignore"
+  printf '.env*\n' > "$dir/wt/.gitignore"
+  printf 'CAPTAIN_SOURCE=do-not-copy\nDATABASE_URL=postgres://captain/hosted\n' > "$dir/proj/.env"
+  printf 'WORKER_SECRET=outside\nDATABASE_URL=postgres://outside/hosted\n' > "$dir/outside.env"
+  ln -s "$dir/outside.env" "$dir/wt/.env"
+  printf 'zsh' > "$dir/fake/command"
+
+  out=$(run_spawn "$dir" rl-env-link --relaunch)
+  [ ! -L "$dir/wt/.env" ] || fail "a relaunch must replace a destination env symlink"
+  [ "$(cat "$dir/wt/.env")" = 'CAPTAIN_SOURCE=do-not-copy' ] \
+    || fail "a relaunch should write filtered source data instead of following the destination symlink: $(cat "$dir/wt/.env")"
+  [ "$(cat "$dir/outside.env")" = $'WORKER_SECRET=outside\nDATABASE_URL=postgres://outside/hosted' ] \
+    || fail "a relaunch must not modify the destination symlink target"
+  assert_contains "$out" "spawned rl-env-link harness=claude" \
+    "the relaunch should launch after replacing the destination symlink"
+  pass "fm-spawn --relaunch: replaces an env symlink without following it"
+}
+
+test_spawn_relaunch_refuses_unremovable_destination_env() {
+  local dir out rc
+  dir=$(new_case relaunchenvdir rl-env-dir)
+  add_ship_task "$dir" rl-env-dir claude
+  printf '.env*\n' > "$dir/proj/.gitignore"
+  printf '.env*\n' > "$dir/wt/.gitignore"
+  printf 'CAPTAIN_SOURCE=do-not-copy\n' > "$dir/proj/.env"
+  mkdir "$dir/wt/.env"
+  printf 'zsh' > "$dir/fake/command"
+
+  out=$(run_spawn "$dir" rl-env-dir --relaunch); rc=$?
+  expect_code 1 "$rc" "a relaunch must refuse an env destination it cannot remove"
+  [ -d "$dir/wt/.env" ] || fail "a failed env removal must leave the unremovable destination in place"
+  [ "$(cat "$dir/fake/command")" = zsh ] || fail "an env removal failure must refuse before launching the replacement"
+  pass "fm-spawn --relaunch: refuses an unremovable env destination"
 }
 
 test_promoted_scout_relaunch_receives_the_current_delivery_contract() {
@@ -1726,6 +1767,8 @@ test_explicit_secondmate_harness_ignores_configured_profile_axes
 test_ship_relaunch_ignores_the_crew_harness_config
 test_spawn_relaunch_without_a_harness_reuses_the_recorded_one
 test_spawn_relaunch_sanitizes_copied_env_but_preserves_worker_values
+test_spawn_relaunch_replaces_destination_env_symlink
+test_spawn_relaunch_refuses_unremovable_destination_env
 test_promoted_scout_relaunch_receives_the_current_delivery_contract
 test_prefixed_prior_harness_wiring_is_still_retired
 test_muse_session_binding_is_retired_on_a_harness_switch

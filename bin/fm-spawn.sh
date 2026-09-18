@@ -2874,8 +2874,8 @@ FM_SPAWN_ENV_DATABASE_SCHEMES='(postgres|postgresql|mysql|mongodb(\+srv)?|rediss
 # selection test: a tracked file such as `.env.schema` is excluded by it, so no
 # filename list, flag, or per-project setting is needed. The destination is
 # checked too, because a file the worktree would NOT ignore is one a worker
-# could commit. Preserve an existing destination only on relaunch: the same
-# task reuses its worktree and a worker may have edited the file deliberately.
+# could commit. On relaunch, rebuild an existing destination from the filtered
+# source and worker-owned values.
 # Fresh pooled slots are recycled between tasks, and `git clean -fd` does not
 # remove ignored files (`-x` is required), so an ignored env file can survive
 # the reset. A source-driven pass cannot see a name the current project lacks;
@@ -2884,13 +2884,14 @@ FM_SPAWN_ENV_DATABASE_SCHEMES='(postgres|postgresql|mysql|mongodb(\+srv)?|rediss
 # production-sensitive values are carried forward; a filter that leftover
 # state can bypass is not a filter.
 #
-# DELIBERATELY NOT FAIL-CLOSED, unlike the rest of this script: no such file, an
-# unreadable one, a project that is not a git repository, or a failed copy all
-# skip and let the spawn proceed. A worker without credentials is the status quo
-# and survivable; a spawn that refuses to start is not. Nothing but a count is
-# ever reported, because these are credentials.
+# Fresh propagation is deliberately not fail-closed, unlike the rest of this
+# script: no such file, an unreadable one, a project that is not a git
+# repository, or a failed copy all skip and let the spawn proceed. Relaunch
+# rebuilding returns failure when an existing destination cannot be replaced.
+# A worker without credentials is survivable; a spawn that refuses to start is
+# not. Nothing but a count is ever reported, because these are credentials.
 propagate_env_local() { # <project> <worktree>
-  local project=$1 worktree=$2 src name dst rc copied=0 source_available tmp
+  local project=$1 worktree=$2 src name dst rc copied=0 source_available tmp source_input destination_input
   if [ "$RELAUNCH" -eq 0 ]; then
     for dst in "$worktree"/.env*; do
       [ -e "$dst" ] || [ -L "$dst" ] || continue
@@ -2900,8 +2901,7 @@ propagate_env_local() { # <project> <worktree>
     done
   else
     for dst in "$worktree"/.env*; do
-      [ -f "$dst" ] || continue
-      [ -L "$dst" ] && continue
+      [ -e "$dst" ] || [ -L "$dst" ] || continue
       name=${dst##*/}
       git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null || continue
       src=$project/$name
@@ -2910,52 +2910,77 @@ propagate_env_local() { # <project> <worktree>
         && git -C "$project" check-ignore -q -- "$name" 2>/dev/null; then
         source_available=1
       fi
-      tmp=$(mktemp "$worktree/.fm-env-local.XXXXXX") || continue
-      if [ "$source_available" -eq 1 ]; then
-        FM_SPAWN_ENV_DATABASE_SCHEMES="$FM_SPAWN_ENV_DATABASE_SCHEMES" awk -v excluded="$FM_SPAWN_ENV_EXCLUDED_KEYS" '
-          BEGIN { schemes = ENVIRON["FM_SPAWN_ENV_DATABASE_SCHEMES"] }
-          function key_of(line, text) {
-            if (line !~ /^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/) return ""
-            text = line
-            sub(/^[[:space:]]*/, "", text)
-            sub(/^export[[:space:]]+/, "", text)
-            sub(/[[:space:]]*=.*/, "", text)
-            return text
-          }
-          function value_of(line, text) {
-            text = line
-            sub(/^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/, "", text)
-            return text
-          }
-          FILENAME == ARGV[1] {
-            key = key_of($0)
-            if (key != "") source[key SUBSEP value_of($0)] = 1
-            next
-          }
-          {
-            key = key_of($0)
-            value = value_of($0)
-            if (key != "" && source[key SUBSEP value] \
-              && (key ~ ("^(" excluded ")$") || value ~ schemes)) next
-            print
-          }
-        ' "$src" "$dst" > "$tmp" || {
-          rm -f "$tmp" 2>/dev/null || :
-          continue
+      source_input=/dev/null
+      [ "$source_available" -eq 1 ] && source_input=$src
+      destination_input=/dev/null
+      [ -f "$dst" ] && [ ! -L "$dst" ] && destination_input=$dst
+      tmp=$(umask 077; mktemp "$worktree/.fm-env-local.XXXXXX") || return 1
+      FM_SPAWN_ENV_DATABASE_SCHEMES="$FM_SPAWN_ENV_DATABASE_SCHEMES" awk \
+        -v excluded="$FM_SPAWN_ENV_EXCLUDED_KEYS" \
+        -v source_available="$source_available" '
+        BEGIN { schemes = ENVIRON["FM_SPAWN_ENV_DATABASE_SCHEMES"] }
+        function key_of(line, text) {
+          if (line !~ /^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/) return ""
+          text = line
+          sub(/^[[:space:]]*/, "", text)
+          sub(/^export[[:space:]]+/, "", text)
+          sub(/[[:space:]]*=.*/, "", text)
+          return text
         }
-      else
-        rc=0
-        grep -Ev "^[[:space:]]*(export[[:space:]]+)?(($FM_SPAWN_ENV_EXCLUDED_KEYS)[[:space:]]*=|[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=.*($FM_SPAWN_ENV_DATABASE_SCHEMES))" "$dst" > "$tmp" || rc=$?
-        if [ "$rc" -gt 1 ]; then
-          rm -f "$tmp" 2>/dev/null || :
-          continue
-        fi
-      fi
-      if cmp -s "$tmp" "$dst"; then
+        function value_of(line, text) {
+          text = line
+          sub(/^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/, "", text)
+          return text
+        }
+        function is_excluded(key, value) {
+          return key ~ ("^(" excluded ")$") || value ~ schemes
+        }
+        FILENAME == ARGV[1] {
+          key = key_of($0)
+          value = value_of($0)
+          if (key != "") {
+            source[key SUBSEP value] = 1
+            if (!is_excluded(key, value)) {
+              source_lines[++source_count] = $0
+              source_keys[source_count] = key
+            }
+          } else {
+            source_lines[++source_count] = $0
+            source_keys[source_count] = ""
+          }
+          next
+        }
+        {
+          key = key_of($0)
+          value = value_of($0)
+          if (key != "") destination_keys[key] = 1
+          if ((source_available && key != "" && source[key SUBSEP value] || !source_available) \
+            && key != "" && is_excluded(key, value)) next
+          destination_lines[++destination_count] = $0
+        }
+        END {
+          for (i = 1; i <= source_count; i++) {
+            if (source_keys[i] == "" || !destination_keys[source_keys[i]]) print source_lines[i]
+          }
+          for (i = 1; i <= destination_count; i++) print destination_lines[i]
+        }
+      ' "$source_input" "$destination_input" > "$tmp" || {
         rm -f "$tmp" 2>/dev/null || :
-      else
-        mv "$tmp" "$dst" 2>/dev/null || rm -f "$tmp" 2>/dev/null || :
-      fi
+        return 1
+      }
+      chmod 600 "$tmp" 2>/dev/null || {
+        rm -f "$tmp" 2>/dev/null || :
+        return 1
+      }
+      rm -f "$dst" 2>/dev/null || {
+        rm -f "$tmp" 2>/dev/null || :
+        return 1
+      }
+      mv "$tmp" "$dst" 2>/dev/null || {
+        rm -f "$tmp" 2>/dev/null || :
+        return 1
+      }
+      copied=$((copied + 1))
     done
   fi
   for src in "$project"/.env*; do
@@ -2972,13 +2997,10 @@ propagate_env_local() { # <project> <worktree>
     dst=$worktree/$name
     git -C "$project" check-ignore -q -- "$name" 2>/dev/null || continue
     git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null || continue
-    if [ "$RELAUNCH" -eq 1 ]; then
-      # -L as well as -e: a dangling symlink is not "absent", and writing
-      # through one would put credentials wherever it points, outside the
-      # worktree.
-      { [ ! -e "$dst" ] && [ ! -L "$dst" ]; } || continue
-    else
+    if [ "$RELAUNCH" -eq 0 ]; then
       rm -f "$dst" 2>/dev/null || continue
+    else
+      [ ! -e "$dst" ] && [ ! -L "$dst" ] || continue
     fi
     rc=0
     (umask 077
@@ -3727,9 +3749,11 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
 fi
 if [ "$KIND" != secondmate ]; then
-  # Local environment propagation is best effort: missing credentials are
-  # survivable, while refusing a spawn is not.
-  propagate_env_local "$PROJ_ABS" "$WT" || :
+  # Fresh local environment propagation is best effort; relaunch rebuilding
+  # must refuse if an existing destination cannot be removed safely.
+  if ! propagate_env_local "$PROJ_ABS" "$WT"; then
+    [ "$RELAUNCH" -eq 0 ] || exit 1
+  fi
 fi
 
 # Pre-register Claude's workspace trust for the directory this launch starts in,
