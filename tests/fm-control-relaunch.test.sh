@@ -976,13 +976,19 @@ test_spawn_relaunch_sanitizes_copied_env_but_preserves_worker_values() {
   add_ship_task "$dir" rl-env claude
   printf '.env*\n' > "$dir/proj/.gitignore"
   printf '.env*\n' > "$dir/wt/.gitignore"
-  printf 'CAPTAIN_SOURCE=do-not-copy\nDATABASE_URL=postgres://captain/hosted\nDATABASE_URL_POOLED=postgres://captain/pool\n' > "$dir/proj/.env"
-  printf 'WORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local\nDATABASE_URL_POOLED=postgres://captain/pool\nDATABASE_URL_PROD=postgres://worker/prod\n' > "$dir/wt/.env"
+  printf 'CAPTAIN_SOURCE=do-not-copy\nDATABASE_URL=postgres://captain/hosted\nDATABASE_URL_POOLED=postgres://captain/pool\nAPP_DB_HOST=prod-app-db.internal\nSUPABASE_DB_CONNECTION=prod-supabase-connection\nMSSQL_URL=mssql://host/db\n' > "$dir/proj/.env"
+  printf 'WORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local\nDATABASE_URL_POOLED=postgres://captain/pool\nAPP_DB_HOST=prod-app-db.internal\nSUPABASE_DB_CONNECTION=prod-supabase-connection\nMSSQL_URL=mssql://host/db\nDATABASE_URL_PROD=postgres://worker/prod\n' > "$dir/wt/.env"
   printf 'zsh' > "$dir/fake/command"
 
   out=$(run_spawn "$dir" rl-env --relaunch)
   [ "$(cat "$dir/wt/.env")" = $'CAPTAIN_SOURCE=do-not-copy\nWORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local\nDATABASE_URL_PROD=postgres://worker/prod' ] \
     || fail "a relaunch did not sanitize copied values while preserving worker values: $(cat "$dir/wt/.env")"
+  assert_contains "$out" "APP_DB_HOST" \
+    "the relaunch should report multi-segment excluded key names"
+  assert_contains "$out" "MSSQL_URL" \
+    "the relaunch should report excluded database URI key names"
+  assert_not_contains "$out" "prod-app-db.internal" \
+    "the relaunch must not report excluded values"
   assert_contains "$out" "spawned rl-env harness=claude" \
     "the relaunch should launch with the recorded agent-free endpoint"
   [ "$(stat -f '%Lp' "$dir/wt/.env" 2>/dev/null || stat -c '%a' "$dir/wt/.env")" = 600 ] \

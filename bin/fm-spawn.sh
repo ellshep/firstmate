@@ -376,6 +376,14 @@ usage() {
   sed -n '2,${/^#/!q;p;}' "$0" | sed 's/^# \{0,1\}//'
 }
 
+fm_spawn_env_report_names() { # <report> <filename>
+  local report=$1 name=$2 excluded_names
+  [ "$report" = /dev/null ] && return 0
+  excluded_names=$(cat "$report" 2>/dev/null || :)
+  rm -f "$report" 2>/dev/null || :
+  [ -z "$excluded_names" ] || echo "note: excluded local environment key(s) for $name: $excluded_names" >&2
+}
+
 case "${1:-}" in
 -h | --help)
   usage
@@ -2866,13 +2874,16 @@ freshen_spawn_worktree_base() { # <worktree>
 # stay in the captain's own checkout. Widening this set means first answering
 # why a throwaway worktree needs a production database and a key that ignores
 # row-level security, and no convenience this path could buy is worth that.
-FM_SPAWN_ENV_EXCLUDED_KEYS='([A-Za-z0-9_]+_)?DATABASE_URL(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?POSTGRES(QL)?_URL|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_URL|([A-Za-z0-9_]+_)?DB_URL|[A-Za-z0-9_]+_DATABASE_URL|[A-Za-z0-9]+_(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION)(_[A-Za-z0-9_]+)*|(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION)(_[A-Za-z0-9_]+)+|PG(HOST|HOSTADDR|PORT|DATABASE|USER|PASSWORD|PASSFILE|SERVICE|SERVICEFILE)|[A-Za-z0-9_]*_PROD'
-FM_SPAWN_ENV_DATABASE_SCHEMES='(postgres|postgresql|mysql|mariadb|mongodb(\+srv)?|rediss?)://'
+FM_SPAWN_ENV_EXCLUDED_KEYS='([A-Za-z0-9_]+_)?DATABASE_URL(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?POSTGRES(QL)?_URL|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_URL|([A-Za-z0-9_]+_)?DB_URL|[A-Za-z0-9_]+_DATABASE_URL|[A-Za-z0-9_]+_(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION)(_[A-Za-z0-9_]+)*|(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION)(_[A-Za-z0-9_]+)+|PG(HOST|HOSTADDR|PORT|DATABASE|USER|PASSWORD|PASSFILE|SERVICE|SERVICEFILE)|[A-Za-z0-9_]*_PROD'
+FM_SPAWN_ENV_DATABASE_SCHEMES='(postgres|postgresql|mysql|mariadb|mssql|sqlserver|cockroachdb|mongodb(\+srv)?|rediss?)://'
 
-fm_spawn_env_excluded_names() { # <env-file>
-  local file=$1
+fm_spawn_env_filter() { # <source> <destination> <output> <report> <source-available> <merge>
+  local source=$1 destination=$2 output=$3 report=$4 source_available=$5 merge=$6
   FM_SPAWN_ENV_DATABASE_SCHEMES="$FM_SPAWN_ENV_DATABASE_SCHEMES" awk \
-    -v excluded="$FM_SPAWN_ENV_EXCLUDED_KEYS" '
+    -v excluded="$FM_SPAWN_ENV_EXCLUDED_KEYS" \
+    -v source_available="$source_available" \
+    -v merge="$merge" \
+    -v report="$report" '
     BEGIN { schemes = ENVIRON["FM_SPAWN_ENV_DATABASE_SCHEMES"] }
     function key_of(line, text) {
       if (line !~ /^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/) return ""
@@ -2890,11 +2901,51 @@ fm_spawn_env_excluded_names() { # <env-file>
     function is_excluded(key, value) {
       return key ~ ("^(" excluded ")$") || value ~ schemes
     }
-    {
-      key = key_of($0)
-      if (key != "" && is_excluded(key, value_of($0)) && !seen[key]++) print key
+    function report_key(key) {
+      if (key != "" && !reported[key]++) print key > report
     }
-  ' "$file"
+    FILENAME == ARGV[1] {
+      key = key_of($0)
+      value = value_of($0)
+      if (key != "") {
+        source_values[key SUBSEP value] = 1
+        if (is_excluded(key, value)) {
+          report_key(key)
+        } else if (merge) {
+          source_lines[++source_count] = $0
+          source_keys[source_count] = key
+        } else {
+          print
+        }
+      } else if (merge) {
+        source_lines[++source_count] = $0
+        source_keys[source_count] = ""
+      } else {
+        print
+      }
+      next
+    }
+    {
+      if (!merge) next
+      key = key_of($0)
+      value = value_of($0)
+      if (key != "") destination_keys[key] = 1
+      if (key != "" && is_excluded(key, value) \
+        && (!source_available || source_values[key SUBSEP value])) {
+        report_key(key)
+        next
+      }
+      destination_lines[++destination_count] = $0
+    }
+    END {
+      if (merge) {
+        for (i = 1; i <= source_count; i++) {
+          if (source_keys[i] == "" || !destination_keys[source_keys[i]]) print source_lines[i]
+        }
+        for (i = 1; i <= destination_count; i++) print destination_lines[i]
+      }
+    }
+  ' "$source" "$destination" > "$output"
 }
 
 # Copy the spawning project's gitignored root `.env*` files into the fresh task
@@ -2921,7 +2972,7 @@ fm_spawn_env_excluded_names() { # <env-file>
 # A worker without credentials is survivable; a spawn that refuses to start is
 # not. Only counts and excluded key names are reported, never their values.
 propagate_env_local() { # <project> <worktree>
-  local project=$1 worktree=$2 src name dst rc copied=0 source_available tmp source_input destination_input excluded_names
+  local project=$1 worktree=$2 src name dst copied=0 source_available tmp source_input destination_input report_tmp
   if [ "$RELAUNCH" -eq 0 ]; then
     for dst in "$worktree"/.env*; do
       [ -e "$dst" ] || [ -L "$dst" ] || continue
@@ -2940,72 +2991,21 @@ propagate_env_local() { # <project> <worktree>
         && git -C "$project" check-ignore -q -- "$name" 2>/dev/null; then
         source_available=1
       fi
-      if [ "$source_available" -eq 1 ]; then
-        excluded_names=$(fm_spawn_env_excluded_names "$src" 2>/dev/null || :)
-      elif [ -f "$dst" ] && [ ! -L "$dst" ]; then
-        excluded_names=$(fm_spawn_env_excluded_names "$dst" 2>/dev/null || :)
-      else
-        excluded_names=
-      fi
-      [ -z "$excluded_names" ] || echo "note: excluded local environment key(s) for $name: $excluded_names" >&2
       source_input=/dev/null
       [ "$source_available" -eq 1 ] && source_input=$src
       destination_input=/dev/null
       [ -f "$dst" ] && [ ! -L "$dst" ] && destination_input=$dst
       tmp=$(umask 077; mktemp "$worktree/.fm-env-local.XXXXXX") || return 1
-      FM_SPAWN_ENV_DATABASE_SCHEMES="$FM_SPAWN_ENV_DATABASE_SCHEMES" awk \
-        -v excluded="$FM_SPAWN_ENV_EXCLUDED_KEYS" \
-        -v source_available="$source_available" '
-        BEGIN { schemes = ENVIRON["FM_SPAWN_ENV_DATABASE_SCHEMES"] }
-        function key_of(line, text) {
-          if (line !~ /^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/) return ""
-          text = line
-          sub(/^[[:space:]]*/, "", text)
-          sub(/^export[[:space:]]+/, "", text)
-          sub(/[[:space:]]*=.*/, "", text)
-          return text
-        }
-        function value_of(line, text) {
-          text = line
-          sub(/^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/, "", text)
-          return text
-        }
-        function is_excluded(key, value) {
-          return key ~ ("^(" excluded ")$") || value ~ schemes
-        }
-        FILENAME == ARGV[1] {
-          key = key_of($0)
-          value = value_of($0)
-          if (key != "") {
-            source[key SUBSEP value] = 1
-            if (!is_excluded(key, value)) {
-              source_lines[++source_count] = $0
-              source_keys[source_count] = key
-            }
-          } else {
-            source_lines[++source_count] = $0
-            source_keys[source_count] = ""
-          }
-          next
-        }
-        {
-          key = key_of($0)
-          value = value_of($0)
-          if (key != "") destination_keys[key] = 1
-          if ((source_available && key != "" && source[key SUBSEP value] || !source_available) \
-            && key != "" && is_excluded(key, value)) next
-          destination_lines[++destination_count] = $0
-        }
-        END {
-          for (i = 1; i <= source_count; i++) {
-            if (source_keys[i] == "" || !destination_keys[source_keys[i]]) print source_lines[i]
-          }
-          for (i = 1; i <= destination_count; i++) print destination_lines[i]
-        }
-      ' "$source_input" "$destination_input" > "$tmp" || {
+      report_tmp=$(umask 077; mktemp "$worktree/.fm-env-local-report.XXXXXX") || {
         rm -f "$tmp" 2>/dev/null || :
         return 1
       }
+      fm_spawn_env_filter "$source_input" "$destination_input" "$tmp" "$report_tmp" "$source_available" 1 || {
+        rm -f "$tmp" 2>/dev/null || :
+        rm -f "$report_tmp" 2>/dev/null || :
+        return 1
+      }
+      fm_spawn_env_report_names "$report_tmp" "$name"
       chmod 600 "$tmp" 2>/dev/null || {
         rm -f "$tmp" 2>/dev/null || :
         return 1
@@ -3035,21 +3035,30 @@ propagate_env_local() { # <project> <worktree>
     dst=$worktree/$name
     git -C "$project" check-ignore -q -- "$name" 2>/dev/null || continue
     git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null || continue
-    excluded_names=$(fm_spawn_env_excluded_names "$src" 2>/dev/null || :)
-    [ -z "$excluded_names" ] || echo "note: excluded local environment key(s) for $name: $excluded_names" >&2
     if [ "$RELAUNCH" -eq 0 ]; then
       rm -f "$dst" 2>/dev/null || continue
     else
       [ ! -e "$dst" ] && [ ! -L "$dst" ] || continue
     fi
-    rc=0
-    (umask 077
-      grep -Ev "^[[:space:]]*(export[[:space:]]+)?(($FM_SPAWN_ENV_EXCLUDED_KEYS)[[:space:]]*=|[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=.*($FM_SPAWN_ENV_DATABASE_SCHEMES))" "$src" > "$dst") || rc=$?
-    # grep exits 1 when every line was filtered out; only above that is a failure.
-    if [ "$rc" -gt 1 ]; then
-      rm -f "$dst" 2>/dev/null || :
+    tmp=$(umask 077; mktemp "$worktree/.fm-env-local.XXXXXX") || continue
+    report_tmp=$(umask 077; mktemp "$worktree/.fm-env-local-report.XXXXXX") || {
+      rm -f "$tmp" 2>/dev/null || :
       continue
-    fi
+    }
+    fm_spawn_env_filter "$src" /dev/null "$tmp" "$report_tmp" 1 0 || {
+      rm -f "$tmp" 2>/dev/null || :
+      rm -f "$report_tmp" 2>/dev/null || :
+      continue
+    }
+    fm_spawn_env_report_names "$report_tmp" "$name"
+    chmod 600 "$tmp" 2>/dev/null || {
+      rm -f "$tmp" 2>/dev/null || :
+      continue
+    }
+    mv "$tmp" "$dst" 2>/dev/null || {
+      rm -f "$tmp" 2>/dev/null || :
+      continue
+    }
     copied=$((copied + 1))
   done
   [ "$copied" -eq 0 ] || echo "note: copied $copied local environment file(s) into the task worktree" >&2
