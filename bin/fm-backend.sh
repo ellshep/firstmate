@@ -68,6 +68,7 @@ FM_BACKEND_CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # codex-app remains deliberately absent; see docs/codex-app-backend.md.
 FM_BACKEND_KNOWN="tmux herdr zellij orca cmux"
 FM_BACKEND_SPAWN="tmux herdr zellij orca cmux"
+FM_BACKEND_COMPOSER_STRAY_AUTOCLEAR="tmux herdr"
 
 # fm_backend_list_contains: whitespace-delimited membership without relying on
 # shell word splitting. fm-backend.sh is normally sourced by bash scripts, but
@@ -893,6 +894,7 @@ fm_backend_composer_state() {  # <backend> <target> [expected-label] -> empty|pe
 fm_backend_composer_stray_only() {  # <backend> <target> [expected-label]
   local backend=$1
   shift
+  fm_backend_list_contains "$FM_BACKEND_COMPOSER_STRAY_AUTOCLEAR" "$backend" || return 1
   fm_backend_source "$backend" || return 1
   case "$backend" in
     tmux) fm_tmux_composer_stray_only "$@" ;;
