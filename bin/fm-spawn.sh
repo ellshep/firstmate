@@ -1042,6 +1042,7 @@ SPAWN_CONTROL_LOCK=
 SPAWN_CONTROL_LOCK_HELD=0
 SPAWN_CONTROL_PARENT=0
 SPAWN_META_TMP=
+SPAWN_ENV_TMP=
 SPAWN_META_LOCK=
 SPAWN_META_LOCK_HELD=0
 SPAWN_META_PUBLISH_STARTED=0
@@ -1211,6 +1212,9 @@ spawn_abort_cleanup() {
     SPAWN_CONTROL_LOCK_HELD=0
     fm_lock_release "$SPAWN_CONTROL_LOCK" || true
   fi
+  # A hard kill skips this trap; the leftover dies with the disposable worktree.
+  [ -z "$SPAWN_ENV_TMP" ] || rm -f "$SPAWN_ENV_TMP" 2>/dev/null || true
+  SPAWN_ENV_TMP=
   [ -z "$SPAWN_META_TMP" ] || rm -f "$SPAWN_META_TMP" 2>/dev/null || true
   if [ "$CONFIG_INHERIT_LOCK_HELD" = 1 ]; then
     CONFIG_INHERIT_LOCK_HELD=0
@@ -3006,6 +3010,7 @@ propagate_env_local() { # <project> <worktree>
         echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
         return 1
       }
+      SPAWN_ENV_TMP=$tmp
       excluded_names=$(fm_spawn_env_filter "$source_input" "$destination_input" "$tmp" "$source_available" 1) || {
         rm -f "$tmp" 2>/dev/null || :
         echo "error: could not filter local environment file '$name'; refusing to launch" >&2
@@ -3027,6 +3032,7 @@ propagate_env_local() { # <project> <worktree>
         echo "error: could not install local environment file '$name'; refusing to launch" >&2
         return 1
       }
+      SPAWN_ENV_TMP=
       copied=$((copied + 1))
     done
   fi
@@ -3056,6 +3062,7 @@ propagate_env_local() { # <project> <worktree>
       echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
       return 1
     }
+    SPAWN_ENV_TMP=$tmp
     excluded_names=$(fm_spawn_env_filter "$src" /dev/null "$tmp" 1 0) || {
       rm -f "$tmp" 2>/dev/null || :
       echo "error: could not filter local environment file '$name'; refusing to launch" >&2
@@ -3072,6 +3079,7 @@ propagate_env_local() { # <project> <worktree>
       echo "error: could not install local environment file '$name'; refusing to launch" >&2
       return 1
     }
+    SPAWN_ENV_TMP=
     copied=$((copied + 1))
   done
   [ "$copied" -eq 0 ] || echo "note: copied $copied local environment file(s) into the task worktree" >&2
