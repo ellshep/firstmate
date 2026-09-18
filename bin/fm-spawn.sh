@@ -2845,14 +2845,16 @@ freshen_spawn_worktree_base() { # <worktree>
 # extended-regex alternations below match a `KEY=` line and nothing else; these
 # constants are the only things to edit to change the set.
 #
-# DATABASE_URL, DATABASE_URL_*, common alternate spellings, and libpq's PG*
-# connection variables: a disposable worktree takes its database from the
-# per-worktree throwaway Postgres that exists for exactly this purpose, never
-# from a hosted one. There is routinely more than one such key. A database
-# connection is excluded when either its key looks like a connection setting
-# or its value contains a database URI scheme. The key test catches values whose
-# format is unfamiliar, while the value test catches connection keys whose name
-# is unfamiliar; neither test is complete on its own.
+# Database URL spellings, libpq's PG* connection variables, and compound keys
+# containing a whole connection component such as HOST, USER, or DATABASE: a
+# disposable worktree takes its database from the per-worktree throwaway
+# Postgres that exists for exactly this purpose, never from a hosted one. Bare
+# generic names such as USER and PORT are not connection keys by themselves;
+# an ambiguous compound name is excluded. A database connection is excluded
+# when either its key looks like a connection setting or its value contains a
+# database URI scheme. The key test catches values whose format is unfamiliar,
+# while the value test catches connection keys whose name is unfamiliar; neither
+# test is complete on its own.
 #
 # *_PROD: these are not a stricter spelling of their non-prod siblings. A file
 # of this shape has been observed carrying, under _PROD names, a production
@@ -2864,8 +2866,36 @@ freshen_spawn_worktree_base() { # <worktree>
 # stay in the captain's own checkout. Widening this set means first answering
 # why a throwaway worktree needs a production database and a key that ignores
 # row-level security, and no convenience this path could buy is worth that.
-FM_SPAWN_ENV_EXCLUDED_KEYS='([A-Za-z0-9_]+_)?DATABASE_URL(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?POSTGRES(QL)?_URL|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_URL|PG(HOST|HOSTADDR|PORT|DATABASE|USER|PASSWORD|PASSFILE|SERVICE|SERVICEFILE)|([A-Za-z0-9_]+_)?DB_URL|[A-Za-z0-9_]+_DATABASE_URL|[A-Za-z0-9_]*_PROD'
-FM_SPAWN_ENV_DATABASE_SCHEMES='(postgres|postgresql|mysql|mongodb(\+srv)?|rediss?)://'
+FM_SPAWN_ENV_EXCLUDED_KEYS='([A-Za-z0-9_]+_)?DATABASE_URL(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?POSTGRES(QL)?_URL|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_URL|([A-Za-z0-9_]+_)?DB_URL|[A-Za-z0-9_]+_DATABASE_URL|[A-Za-z0-9]+_(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION)(_[A-Za-z0-9_]+)*|(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION)(_[A-Za-z0-9_]+)+|PG(HOST|HOSTADDR|PORT|DATABASE|USER|PASSWORD|PASSFILE|SERVICE|SERVICEFILE)|[A-Za-z0-9_]*_PROD'
+FM_SPAWN_ENV_DATABASE_SCHEMES='(postgres|postgresql|mysql|mariadb|mongodb(\+srv)?|rediss?)://'
+
+fm_spawn_env_excluded_names() { # <env-file>
+  local file=$1
+  FM_SPAWN_ENV_DATABASE_SCHEMES="$FM_SPAWN_ENV_DATABASE_SCHEMES" awk \
+    -v excluded="$FM_SPAWN_ENV_EXCLUDED_KEYS" '
+    BEGIN { schemes = ENVIRON["FM_SPAWN_ENV_DATABASE_SCHEMES"] }
+    function key_of(line, text) {
+      if (line !~ /^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/) return ""
+      text = line
+      sub(/^[[:space:]]*/, "", text)
+      sub(/^export[[:space:]]+/, "", text)
+      sub(/[[:space:]]*=.*/, "", text)
+      return text
+    }
+    function value_of(line, text) {
+      text = line
+      sub(/^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/, "", text)
+      return text
+    }
+    function is_excluded(key, value) {
+      return key ~ ("^(" excluded ")$") || value ~ schemes
+    }
+    {
+      key = key_of($0)
+      if (key != "" && is_excluded(key, value_of($0)) && !seen[key]++) print key
+    }
+  ' "$file"
+}
 
 # Copy the spawning project's gitignored root `.env*` files into the fresh task
 # worktree, minus the excluded keys above, so the worker's very first command
@@ -2889,9 +2919,9 @@ FM_SPAWN_ENV_DATABASE_SCHEMES='(postgres|postgresql|mysql|mongodb(\+srv)?|rediss
 # repository, or a failed copy all skip and let the spawn proceed. Relaunch
 # rebuilding returns failure when an existing destination cannot be replaced.
 # A worker without credentials is survivable; a spawn that refuses to start is
-# not. Nothing but a count is ever reported, because these are credentials.
+# not. Only counts and excluded key names are reported, never their values.
 propagate_env_local() { # <project> <worktree>
-  local project=$1 worktree=$2 src name dst rc copied=0 source_available tmp source_input destination_input
+  local project=$1 worktree=$2 src name dst rc copied=0 source_available tmp source_input destination_input excluded_names
   if [ "$RELAUNCH" -eq 0 ]; then
     for dst in "$worktree"/.env*; do
       [ -e "$dst" ] || [ -L "$dst" ] || continue
@@ -2910,6 +2940,14 @@ propagate_env_local() { # <project> <worktree>
         && git -C "$project" check-ignore -q -- "$name" 2>/dev/null; then
         source_available=1
       fi
+      if [ "$source_available" -eq 1 ]; then
+        excluded_names=$(fm_spawn_env_excluded_names "$src" 2>/dev/null || :)
+      elif [ -f "$dst" ] && [ ! -L "$dst" ]; then
+        excluded_names=$(fm_spawn_env_excluded_names "$dst" 2>/dev/null || :)
+      else
+        excluded_names=
+      fi
+      [ -z "$excluded_names" ] || echo "note: excluded local environment key(s) for $name: $excluded_names" >&2
       source_input=/dev/null
       [ "$source_available" -eq 1 ] && source_input=$src
       destination_input=/dev/null
@@ -2997,6 +3035,8 @@ propagate_env_local() { # <project> <worktree>
     dst=$worktree/$name
     git -C "$project" check-ignore -q -- "$name" 2>/dev/null || continue
     git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null || continue
+    excluded_names=$(fm_spawn_env_excluded_names "$src" 2>/dev/null || :)
+    [ -z "$excluded_names" ] || echo "note: excluded local environment key(s) for $name: $excluded_names" >&2
     if [ "$RELAUNCH" -eq 0 ]; then
       rm -f "$dst" 2>/dev/null || continue
     else
