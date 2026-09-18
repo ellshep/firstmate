@@ -68,6 +68,10 @@ FM_BACKEND_CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # codex-app remains deliberately absent; see docs/codex-app-backend.md.
 FM_BACKEND_KNOWN="tmux herdr zellij orca cmux"
 FM_BACKEND_SPAWN="tmux herdr zellij orca cmux"
+# Stray-fragment auto-clear is deliberately limited to backends with a
+# real-backend CI lane. Experimental providers without that lane stay excluded
+# on purpose, not by omission; adding one requires the lane and adapter
+# evidence, not merely another dispatch case.
 FM_BACKEND_COMPOSER_STRAY_AUTOCLEAR="tmux herdr"
 
 # fm_backend_list_contains: whitespace-delimited membership without relying on
