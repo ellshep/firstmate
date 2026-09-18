@@ -2890,13 +2890,72 @@ FM_SPAWN_ENV_DATABASE_SCHEMES='(postgres|postgresql|mysql|mongodb(\+srv)?|rediss
 # and survivable; a spawn that refuses to start is not. Nothing but a count is
 # ever reported, because these are credentials.
 propagate_env_local() { # <project> <worktree>
-  local project=$1 worktree=$2 src name dst rc copied=0
+  local project=$1 worktree=$2 src name dst rc copied=0 source_available tmp
   if [ "$RELAUNCH" -eq 0 ]; then
     for dst in "$worktree"/.env*; do
       [ -e "$dst" ] || [ -L "$dst" ] || continue
       name=${dst##*/}
       git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null || continue
       rm -f "$dst" 2>/dev/null || continue
+    done
+  else
+    for dst in "$worktree"/.env*; do
+      [ -f "$dst" ] || continue
+      [ -L "$dst" ] && continue
+      name=${dst##*/}
+      git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null || continue
+      src=$project/$name
+      source_available=0
+      if [ ! -L "$src" ] && [ -f "$src" ] && [ -r "$src" ] \
+        && git -C "$project" check-ignore -q -- "$name" 2>/dev/null; then
+        source_available=1
+      fi
+      tmp=$(mktemp "$worktree/.fm-env-local.XXXXXX") || continue
+      if [ "$source_available" -eq 1 ]; then
+        FM_SPAWN_ENV_DATABASE_SCHEMES="$FM_SPAWN_ENV_DATABASE_SCHEMES" awk -v excluded="$FM_SPAWN_ENV_EXCLUDED_KEYS" '
+          BEGIN { schemes = ENVIRON["FM_SPAWN_ENV_DATABASE_SCHEMES"] }
+          function key_of(line, text) {
+            if (line !~ /^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/) return ""
+            text = line
+            sub(/^[[:space:]]*/, "", text)
+            sub(/^export[[:space:]]+/, "", text)
+            sub(/[[:space:]]*=.*/, "", text)
+            return text
+          }
+          function value_of(line, text) {
+            text = line
+            sub(/^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/, "", text)
+            return text
+          }
+          FILENAME == ARGV[1] {
+            key = key_of($0)
+            if (key != "") source[key SUBSEP value_of($0)] = 1
+            next
+          }
+          {
+            key = key_of($0)
+            value = value_of($0)
+            if (key != "" && source[key SUBSEP value] \
+              && (key ~ ("^(" excluded ")$") || value ~ schemes)) next
+            print
+          }
+        ' "$src" "$dst" > "$tmp" || {
+          rm -f "$tmp" 2>/dev/null || :
+          continue
+        }
+      else
+        rc=0
+        grep -Ev "^[[:space:]]*(export[[:space:]]+)?(($FM_SPAWN_ENV_EXCLUDED_KEYS)[[:space:]]*=|[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=.*($FM_SPAWN_ENV_DATABASE_SCHEMES))" "$dst" > "$tmp" || rc=$?
+        if [ "$rc" -gt 1 ]; then
+          rm -f "$tmp" 2>/dev/null || :
+          continue
+        fi
+      fi
+      if cmp -s "$tmp" "$dst"; then
+        rm -f "$tmp" 2>/dev/null || :
+      else
+        mv "$tmp" "$dst" 2>/dev/null || rm -f "$tmp" 2>/dev/null || :
+      fi
     done
   fi
   for src in "$project"/.env*; do
