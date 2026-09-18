@@ -294,12 +294,11 @@ fm_task_inbox_doorbell_line() {  # <record-path>
 # `Ctrl+Y to paste deleted text`).
 #
 # Returns 0 only when the clear was delivered AND the composer then read empty,
-# which is the caller's licence to ring. The clear is recorded the moment it is
-# delivered rather than after that confirmation, so a clear whose outcome could
-# not be proven still leaves the trace that firstmate typed into the pane.
+# which is the caller's licence to ring. The pre-clear observation is recorded
+# with that post-clear state, without claiming the exact bytes that were erased.
 fm_task_inbox_clear_stray() {  # <backend> <target> <record-path> [expected-label]
   local backend=$1 target=$2 rec=$3 label=${4:-}
-  local dir base task state harness key fragments
+  local dir base task state recorded_harness harness key fragments post_state
   dir=${rec%/*}
   base=${dir##*/}
   case "$base" in
@@ -308,16 +307,18 @@ fm_task_inbox_clear_stray() {  # <backend> <target> <record-path> [expected-labe
   esac
   state=${dir%/*}
   [ -n "$task" ] && [ -n "$state" ] && [ "$state" != "$dir" ] || return 1
-  harness=$(fm_meta_get "$state/$task.meta" harness)
-  [ -n "$harness" ] || return 1
+  recorded_harness=$(fm_meta_get "$state/$task.meta" harness)
+  [ -n "$recorded_harness" ] || return 1
+  harness=$(fm_control_harness_family "$recorded_harness" 2>/dev/null) || return 1
   key=$(fm_control_composer_clear_key "$harness" 2>/dev/null) || return 1
   [ -n "$key" ] || return 1
   fm_control_backend_supports_key "$backend" "$key" || return 1
   fragments=$(fm_backend_composer_stray_only "$backend" "$target" "$label" 2>/dev/null) || return 1
   [ -n "$fragments" ] || return 1
   fm_backend_send_key "$backend" "$target" "$key" "$label" >/dev/null 2>&1 || return 1
-  fm_task_inbox_note_cleared "$state" "$task" "$fragments" || return 1
-  [ "$(fm_backend_composer_state "$backend" "$target" "$label" 2>/dev/null)" = empty ] || return 1
+  post_state=$(fm_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || post_state=unknown
+  fm_task_inbox_note_cleared "$state" "$task" "$fragments" "$post_state" || return 1
+  [ "$post_state" = empty ] || return 1
   return 0
 }
 
@@ -329,10 +330,10 @@ fm_task_inbox_clear_stray() {  # <backend> <target> <record-path> [expected-labe
 # typed into a worker's composer on its own initiative is half the fix.
 # The fragments are quoted verbatim (their grammar admits only `<`, digits,
 # `;`, and `M`, so they carry no terminal control bytes).
-fm_task_inbox_note_cleared() {  # <state-dir> <task-id> <fragments>
-  local state=$1 task=$2 fragment=$3
-  printf 'note: cleared a stray terminal mouse-report fragment ("%s") from the composer; it was blocking delivery of a waiting instruction\n' \
-    "$fragment" >> "$state/$task.status" 2>/dev/null
+fm_task_inbox_note_cleared() {  # <state-dir> <task-id> <fragments> [post-clear-state]
+  local state=$1 task=$2 fragment=$3 post_state=${4:-unknown}
+  printf 'note: observed a stray terminal mouse-report fragment before composer clear ("%s"); post-clear composer state: %s; exact cleared content remains unverified\n' \
+    "$fragment" "$post_state" >> "$state/$task.status" 2>/dev/null
 }
 
 # Ring the doorbell, best-effort: one endpoint-liveness pre-check, one advisory

@@ -340,7 +340,7 @@ ring_with_composer() {  # <dir> <content> <harness>
 test_ring_clears_a_stray_fragment_and_records_it() {
   local dir rc keys
   dir="$TMP_ROOT/stray-clear"
-  rc=$(ring_with_composer "$dir" '3;36M' claude)
+  rc=$(ring_with_composer "$dir" '3;36M' claude-wrapper)
   [ "$rc" = 0 ] || fail "a composer holding only a stray fragment should be cleared and rung, got $rc"
   keys=$(cat "$dir/key.log")
   [ -n "$keys" ] || fail "no key was delivered, so the composer was never cleared"
@@ -353,7 +353,7 @@ test_ring_clears_a_stray_fragment_and_records_it() {
   esac
   grep -qF 'Firstmate instruction waiting' "$dir/send.log" \
     || fail "the doorbell was not rung after the composer was cleared"
-  [ "$(cat "$dir/state/t1.status")" = 'note: cleared a stray terminal mouse-report fragment ("3;36M") from the composer; it was blocking delivery of a waiting instruction' ] \
+  [ "$(cat "$dir/state/t1.status")" = 'note: observed a stray terminal mouse-report fragment before composer clear ("3;36M"); post-clear composer state: empty; exact cleared content remains unverified' ] \
     || fail "the clear left no exact durable trace:"$'\n'"$(cat "$dir/state/t1.status" 2>/dev/null)"
   pass "inbox: a stray mouse-report fragment is cleared, recorded, and the doorbell rung"
 }
@@ -363,7 +363,7 @@ test_cleared_trace_preserves_long_fragment() {
   state="$TMP_ROOT/stray-trace/state"
   mkdir -p "$state"
   fragment='<65;77;26M<65;77;26M<65;77;26M<65;77;26M<65;77;26M<65;77;26M'
-  expected="note: cleared a stray terminal mouse-report fragment (\"$fragment\") from the composer; it was blocking delivery of a waiting instruction"
+  expected="note: observed a stray terminal mouse-report fragment before composer clear (\"$fragment\"); post-clear composer state: unknown; exact cleared content remains unverified"
   inbox_lib "$state" fm_task_inbox_note_cleared "$state" t1 "$fragment" \
     || fail "writing the cleared-fragment trace failed"
   [ "$(cat "$state/t1.status")" = "$expected" ] \
