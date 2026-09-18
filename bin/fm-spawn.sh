@@ -2845,14 +2845,14 @@ freshen_spawn_worktree_base() { # <worktree>
 # extended-regex alternations below match a `KEY=` line and nothing else; these
 # constants are the only things to edit to change the set.
 #
-# DATABASE_URL, DATABASE_URL_* and the common alternate spellings: a disposable
-# worktree takes its database from the per-worktree throwaway Postgres that
-# exists for exactly this purpose, never from a hosted one. There is routinely
-# more than one such key. A database connection is excluded when either its key
-# looks like a connection setting or its value contains a database URI scheme.
-# The key test catches values whose format is unfamiliar, while the value test
-# catches connection keys whose name is unfamiliar; neither test is complete on
-# its own.
+# DATABASE_URL, DATABASE_URL_*, common alternate spellings, and libpq's PG*
+# connection variables: a disposable worktree takes its database from the
+# per-worktree throwaway Postgres that exists for exactly this purpose, never
+# from a hosted one. There is routinely more than one such key. A database
+# connection is excluded when either its key looks like a connection setting
+# or its value contains a database URI scheme. The key test catches values whose
+# format is unfamiliar, while the value test catches connection keys whose name
+# is unfamiliar; neither test is complete on its own.
 #
 # *_PROD: these are not a stricter spelling of their non-prod siblings. A file
 # of this shape has been observed carrying, under _PROD names, a production
@@ -2864,7 +2864,7 @@ freshen_spawn_worktree_base() { # <worktree>
 # stay in the captain's own checkout. Widening this set means first answering
 # why a throwaway worktree needs a production database and a key that ignores
 # row-level security, and no convenience this path could buy is worth that.
-FM_SPAWN_ENV_EXCLUDED_KEYS='([A-Za-z0-9_]+_)?DATABASE_URL(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?POSTGRES(QL)?_URL|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_URL|([A-Za-z0-9_]+_)?DB_URL|[A-Za-z0-9_]+_DATABASE_URL|[A-Za-z0-9_]*_PROD'
+FM_SPAWN_ENV_EXCLUDED_KEYS='([A-Za-z0-9_]+_)?DATABASE_URL(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?POSTGRES(QL)?_URL|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_URL|PG(HOST|HOSTADDR|PORT|DATABASE|USER|PASSWORD|PASSFILE|SERVICE|SERVICEFILE)|([A-Za-z0-9_]+_)?DB_URL|[A-Za-z0-9_]+_DATABASE_URL|[A-Za-z0-9_]*_PROD'
 FM_SPAWN_ENV_DATABASE_SCHEMES='(postgres|postgresql|mysql|mongodb(\+srv)?|rediss?)://'
 
 # Copy the spawning project's gitignored root `.env*` files into the fresh task

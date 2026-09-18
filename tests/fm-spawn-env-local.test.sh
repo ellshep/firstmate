@@ -20,7 +20,7 @@ TMP_ROOT=$(fm_test_tmproot fm-spawn-env-local)
 # rather than read from the script, so widening bin/fm-spawn.sh's exclusion
 # constant fails a test instead of passing silently.
 KEPT_KEYS='APP_NAME SUPABASE_URL SUPABASE_SERVICE_KEY MY_PRODUCT'
-DROPPED_KEYS='DATABASE_URL DATABASE_URL_POOLED DATABASE_URL_DIRECT DATABASE_URL_PROD POSTGRES_URL INTERNAL_DB SUPABASE_SERVICE_KEY_PROD'
+DROPPED_KEYS='DATABASE_URL DATABASE_URL_POOLED DATABASE_URL_DIRECT DATABASE_URL_PROD POSTGRES_URL INTERNAL_DB PGHOST PGHOSTADDR PGPORT PGDATABASE PGUSER PGPASSWORD PGPASSFILE PGSERVICE PGSERVICEFILE SUPABASE_SERVICE_KEY_PROD'
 
 file_mode() { # <path>
   stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
@@ -95,6 +95,15 @@ export DATABASE_URL_DIRECT=postgres://hosted/direct
 DATABASE_URL_PROD=postgres://prod/app
 POSTGRES_URL=opaque-connection
 INTERNAL_DB="postgres://hosted/app"
+PGHOST=prod-db.internal
+PGHOSTADDR=10.0.0.4
+PGPORT=5432
+PGDATABASE=production
+PGUSER=production-user
+PGPASSWORD=production-password
+PGPASSFILE=/private/production/.pgpass
+PGSERVICE=production-service
+PGSERVICEFILE=/private/production/pg_service.conf
 SUPABASE_URL=https://example.supabase.co
 SUPABASE_SERVICE_KEY=service-key
 SUPABASE_SERVICE_KEY_PROD=prod-service-key
