@@ -165,6 +165,21 @@ fm_tmux_composer_state() {  # <target> -> empty|pending|pending-unproven|unknown
   printf '%s' "$verdict"
 }
 
+# fm_tmux_composer_stray_only: the stray-fragment twin of the verdict above.
+# Cursor-anchored exactly as that verdict is, so both readings select the same
+# shape; a pane whose cursor row is unreadable is refused rather than read by a
+# second rule.
+fm_tmux_composer_stray_only() {  # <target>
+  local target=$1 cy pane identity
+  cy=$(fm_tmux_composer_cursor_row "$target") || return 1
+  case "$cy" in ''|*[!0-9]*) return 1 ;; esac
+  pane=$(fm_tmux_composer_capture "$target") || return 1
+  if ! identity=$(fm_tmux_composer_identity "$target") || [ -z "$identity" ]; then
+    identity=probe-absent
+  fi
+  fm_composer_stray_only "$(fm_tmux_composer_caps)" "$pane" "$cy" "$identity"
+}
+
 # fm_tmux_pane_is_cursor: true when the pane's FOREGROUND process group contains
 # a genuine Cursor Agent CLI process. Cursor runs as a bundled node script, so
 # tmux's own #{pane_current_command} reports a bare `node`; identity therefore

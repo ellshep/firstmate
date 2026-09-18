@@ -882,6 +882,25 @@ fm_backend_composer_state() {  # <backend> <target> [expected-label] -> empty|pe
   esac
 }
 
+# fm_backend_composer_stray_only: 0, printing the fragments, when <target>'s
+# composer holds nothing but leaked SGR mouse-report fragments
+# (bin/fm-composer-lib.sh, fm_composer_stray_only). Exists for the one caller
+# that must decide WHAT is pending rather than merely that something is
+# (bin/fm-task-inbox-lib.sh's auto-clear). Same thin-adapter rule as the
+# verdict above: each adapter contributes only its capture and capability
+# descriptor, and the shared owner decides. A backend with no adapter returns
+# nonzero, which is the same refusal every other unknown produces here.
+fm_backend_composer_stray_only() {  # <backend> <target> [expected-label]
+  local backend=$1
+  shift
+  fm_backend_source "$backend" || return 1
+  case "$backend" in
+    tmux) fm_tmux_composer_stray_only "$@" ;;
+    herdr) fm_backend_herdr_composer_stray_only "$@" ;;
+    *) return 1 ;;
+  esac
+}
+
 # fm_backend_target_exists: cheap, READ-ONLY existence check - does the
 # recorded TARGET endpoint still exist on BACKEND? Never starts a server or
 # session: for herdr this deliberately queries the pane directly instead of

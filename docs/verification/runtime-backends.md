@@ -1648,6 +1648,16 @@ FM_CMUX_CLAUDE_COMPOSER_LIVE=1 bin/fm-test-run.sh tests/fm-cmux-claude-composer-
 That guard still addresses the worker by task selector, so it no longer reaches the typed submit path and is not a current refresh entry point for this guarantee.
 The portable classifier regression is `tests/fm-backend-cmux.test.sh`.
 
+### Claude composer clear key
+
+`fm_control_composer_clear_key claude` reports `C-u`, verified on 2026-09-17 against a real Claude Code composer driven from an isolated pty laboratory.
+A single Ctrl+U emptied a composer holding unsubmitted text, and Claude's own footer then read `Ctrl+Y to paste deleted text`, so the clear is undoable at the keyboard.
+A single Escape did not empty it: the footer read `Esc again to clear`.
+The same clear was confirmed on 2026-09-18 on a live Herdr pane, where `herdr pane send-keys <pane> ctrl+u` and `herdr pane send-keys <pane> backspace` both emptied the composer while `bin/fm-control.sh <id> interrupt` did not, which is why the interrupt table and the clear-key table in `bin/fm-control-lib.sh` answer different questions.
+`delete`, `C-u`, `ctrl-u`, and `C-a` are not accepted key names at the Herdr CLI and were rejected there; `bin/fm-send.sh <task-id> --key C-u` is the supported spelling, because the backend adapter normalizes `C-u` to `ctrl+u` itself.
+
+The portable regression for the detection this key serves is `tests/fm-composer-lib.test.sh` and `tests/fm-task-inbox.test.sh`.
+
 ## Codex App host tools
 
 A reusable Desktop host-tool smoke ran on 2026-07-06 against Codex Desktop bundle version 26.623.101652, build 4674, bundle id `com.openai.codex`.

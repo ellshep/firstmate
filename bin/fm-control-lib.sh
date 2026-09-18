@@ -158,9 +158,30 @@ fm_control_interrupt_repeat() {  # <harness>
 # a harness with no verified mechanics returns nonzero, matching the tables
 # above.
 fm_control_interrupt_clear_key() {  # <harness>
+  fm_control_interrupt_key "${1-}" >/dev/null || return 1
   case "${1-}" in
-    muse) printf 'C-u' ;;
-    claude|codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|rovo|agy) ;;
+    muse) fm_control_composer_clear_key "$1" ;;
+  esac
+}
+
+# The ONE per-harness composer clear key: the single press that empties a live
+# composer without submitting it. muse and claude are the two verified rows;
+# claude's Ctrl+U additionally prints `Ctrl+Y to paste deleted text`, so the
+# clear is undoable at the keyboard. Every other verified adapter has no
+# confirmed clear key and prints nothing, which is what keeps a caller from
+# improvising one; an unknown harness returns nonzero, matching the tables
+# above.
+#
+# This is deliberately a DIFFERENT question from the one the interrupt table
+# asks. `fm_control_interrupt_clear_key` answers "does the interrupt key leave
+# text behind that must then be cleared", which is true only for muse; a
+# harness answering no there may still have a perfectly good clear key, and
+# claude is exactly that case. The interrupt table reads its key from here so
+# the two facts stay separable without a second spelling of the key itself.
+fm_control_composer_clear_key() {  # <harness>
+  case "${1-}" in
+    claude|muse) printf 'C-u' ;;
+    codex|opencode|pi|pi-signed|omp|grok|kimi|cursor|gemini|rovo|agy) ;;
     *) return 1 ;;
   esac
 }
