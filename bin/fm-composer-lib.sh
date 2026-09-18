@@ -690,7 +690,7 @@ fm_composer_classify_content() {  # <bordered> <content> [idle_re] [idle_case] [
 # narrow the composer row against its own borders and the classifier would
 # rightly call the result ambiguous.
 _FM_COMPOSER_STRAY_FIELD='[0-9][0-9]?[0-9]?[0-9]?'
-FM_COMPOSER_STRAY_MOUSE_RE="<?[0-9]?[0-9]?[0-9]?[0-9]?;$_FM_COMPOSER_STRAY_FIELD(;$_FM_COMPOSER_STRAY_FIELD)?[Mm]"
+FM_COMPOSER_STRAY_MOUSE_RE="<?[0-9]?[0-9]?[0-9]?[0-9]?;$_FM_COMPOSER_STRAY_FIELD(;$_FM_COMPOSER_STRAY_FIELD)?M"
 
 # fm_composer_stray_mouse_reports: every fragment on stdin, one per line.
 fm_composer_stray_mouse_reports() {

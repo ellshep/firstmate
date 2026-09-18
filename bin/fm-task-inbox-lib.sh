@@ -328,8 +328,7 @@ fm_task_inbox_clear_stray() {  # <backend> <target> <record-path> [expected-labe
 # is why this append is not best-effort decoration: recording that firstmate
 # typed into a worker's composer on its own initiative is half the fix.
 # The fragments are quoted verbatim (their grammar admits only `<`, digits,
-# `;`, and `M`/`m`, so they carry no terminal control bytes) and bounded, so
-# one long repeated scroll gesture cannot flood the log.
+# `;`, and `M`, so they carry no terminal control bytes).
 fm_task_inbox_note_cleared() {  # <state-dir> <task-id> <fragments>
   local state=$1 task=$2 fragment=$3
   printf 'note: cleared a stray terminal mouse-report fragment ("%s") from the composer; it was blocking delivery of a waiting instruction\n' \

@@ -870,7 +870,7 @@ test_stray_only_recognizes_observed_leaks() {
   # Every fragment shape recorded from a live wedge, plus a repeated scroll
   # notch (one gesture emits several).
   for content in '3;36M' '2;35M' '<65;89;31M' ';89;31M' '5;112;35M' \
-                 '<65;77;26M<65;77;26M<65;77;26M' '<65;77;26m'; do
+                 '<65;77;26M<65;77;26M<65;77;26M'; do
     screen=$(stray_screen "$content")
     [ "$(fm_composer_classify_screen "$STRAY_CAPS" "$screen" 2)" = pending ] \
       || fail "fixture for '$content' did not read pending"
@@ -888,7 +888,7 @@ test_stray_only_refuses_human_text() {
   # a suffix with no semicolon, and a fragment with real words around it.
   for content in 'hello captain' 'fix the 2;35M thing' 'deploy at 3;36M then wait' \
                  'run ci; retry 2;35M later' 'rebase onto main; then 1;2M' \
-                 '1;2;3;4M' '12345;6;7M' 'M' '31M' '2;35Mx'; do
+                 '1;2;3;4M' '12345;6;7M' 'M' '31M' '2;35Mx' '2;35m'; do
     screen=$(stray_screen "$content")
     [ "$(fm_composer_classify_screen "$STRAY_CAPS" "$screen" 2)" = pending ] \
       || fail "fixture for '$content' did not read pending"
@@ -931,7 +931,18 @@ test_stray_strip_preserves_row_geometry() {
   pass "fm_composer_strip_stray_mouse_reports: fragments are blanked in place, never narrowed away"
 }
 
+test_stray_strip_preserves_sgr_attributes() {
+  local esc styled stripped
+  esc=$(printf '\033')
+  styled="${esc}[0;1;31mtyped text${esc}[0m"
+  stripped=$(printf '%s\n' "$styled" | fm_composer_strip_stray_mouse_reports)
+  [ "$stripped" = "$styled" ] \
+    || fail "stray stripping altered a real SGR sequence"
+  pass "fm_composer_strip_stray_mouse_reports: real SGR attributes remain byte-identical"
+}
+
 test_stray_only_recognizes_observed_leaks
 test_stray_only_refuses_human_text
 test_stray_only_requires_a_proven_pending_composer
 test_stray_strip_preserves_row_geometry
+test_stray_strip_preserves_sgr_attributes
