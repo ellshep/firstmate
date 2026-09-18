@@ -31,7 +31,8 @@
 #   Once a ship/scout worktree is verified and before the agent launches, the
 #   project's gitignored root `.env*` files are copied into it minus
 #   propagate_env_local's excluded keys, so the worker is not credential-blind.
-#   That copy is zero-configuration and never blocks a spawn; see the function.
+#   That copy is zero-configuration; ineligible sources skip, but failed
+#   eligible copies refuse the spawn; see the function.
 #        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded endpoint and worktree instead of creating either. It is
@@ -2869,6 +2870,10 @@ freshen_spawn_worktree_base() { # <worktree>
 # database URI scheme. The key test catches values whose format is unfamiliar,
 # while the value test catches connection keys whose name is unfamiliar; neither
 # test is complete on its own.
+# This matcher is a deliberate best-effort heuristic rather than a guarantee:
+# unusual vendor spellings and proprietary non-URI connection formats are
+# expected to be missed, that residual is accepted, and no further entries are
+# to be added to this enumeration.
 #
 # *_PROD: these are not a stricter spelling of their non-prod siblings. A file
 # of this shape has been observed carrying, under _PROD names, a production
@@ -2880,7 +2885,7 @@ freshen_spawn_worktree_base() { # <worktree>
 # stay in the captain's own checkout. Widening this set means first answering
 # why a throwaway worktree needs a production database and a key that ignores
 # row-level security, and no convenience this path could buy is worth that.
-FM_SPAWN_ENV_EXCLUDED_KEYS='([A-Za-z0-9_]+_)?DATABASE_URL(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?POSTGRES(QL)?_URL|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_URL|([A-Za-z0-9_]+_)?DB_URL|[A-Za-z0-9_]+_DATABASE_URL|[A-Za-z0-9_]+_(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION)(_[A-Za-z0-9_]+)*|(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION)(_[A-Za-z0-9_]+)+|PG(HOST|HOSTADDR|PORT|DATABASE|USER|PASSWORD|PASSFILE|SERVICE|SERVICEFILE)|[A-Za-z0-9_]*_PROD'
+FM_SPAWN_ENV_EXCLUDED_KEYS='([A-Za-z0-9_]+_)?DATABASE_URL(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?POSTGRES(QL)?_URL|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_URL|([A-Za-z0-9_]+_)?DB_URL|([A-Za-z0-9_]+_)?(MYSQL|MARIADB|MSSQL|SQLSERVER|COCKROACHDB|MONGODB|REDIS)_URL|[A-Za-z0-9_]+_DATABASE_URL|[A-Za-z0-9_]+_(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION)(_[A-Za-z0-9_]+)*|(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION)(_[A-Za-z0-9_]+)+|PG(HOST|HOSTADDR|PORT|DATABASE|USER|PASSWORD|PASSFILE|SERVICE|SERVICEFILE)|[A-Za-z0-9_]*_PROD'
 FM_SPAWN_ENV_DATABASE_SCHEMES='(postgres|postgresql|mysql|mariadb|mssql|sqlserver|cockroachdb|mongodb(\+srv)?|rediss?)://'
 
 fm_spawn_env_filter() { # <source> <destination> <output> <report> <source-available> <merge>

@@ -110,7 +110,7 @@ DB_PASSWORD=production-password
 MYSQL_HOST=prod-mysql.internal
 APP_DB_HOST=prod-app-db.internal
 SUPABASE_DB_CONNECTION=prod-supabase-connection
-MSSQL_URL=mssql://host/db
+MSSQL_URL=server=prod-db;database=app
 SQLSERVER_URL=sqlserver://host/db
 COCKROACH_URL=cockroachdb://host/db
 SERVICE_ENDPOINT=POSTGRES://HOST/DB
@@ -176,7 +176,7 @@ test_gitignored_env_reaches_the_worktree_without_excluded_keys() {
   assert_contains "$out" "SERVICE_ENDPOINT" \
     "the spawn should report case-insensitive URI matches"
   case "$out" in
-  *postgres://*|*POSTGRES://*|*prod-db.internal*|*service-key*)
+  *postgres://*|*POSTGRES://*|*prod-db*|*prod-db.internal*|*service-key*)
     fail "the spawn logged an excluded value: $out"
     ;;
   esac
