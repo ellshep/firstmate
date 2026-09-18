@@ -308,6 +308,22 @@ test_project_without_env_files_spawns_normally() {
   pass "a project with nothing to copy spawns normally"
 }
 
+test_fresh_spawn_refuses_unremovable_destination_env() {
+  local rec id out status
+  id='env-local-dir'
+  rec=$(make_case unremovable "$id")
+  read_case_record "$rec"
+  write_env_local "$PROJECT_DIR"
+  mkdir "$POOL_DIR/.env"
+  printf 'DATABASE_URL=postgres://stale/app\n' > "$POOL_DIR/.env/stale"
+
+  out=$(run_spawn "$id" --scout)
+  status=$?
+  expect_code 1 "$status" "a fresh spawn must refuse an unremovable destination env"$'\n'"$out"
+  [ -d "$POOL_DIR/.env" ] || fail "a failed fresh cleanup removed or replaced the unremovable destination"
+  pass "a fresh spawn refuses an unremovable destination env"
+}
+
 test_gitignored_env_reaches_the_worktree_without_excluded_keys
 test_gitignored_source_symlink_is_skipped_without_blocking_regular_copy
 test_tracked_env_schema_is_not_copied
@@ -316,5 +332,6 @@ test_fresh_spawn_replaces_pooled_destination_with_filtered_current_source
 test_dangling_symlink_destination_is_not_written_through
 test_fresh_spawn_clears_stale_unmatched_env_file
 test_project_without_env_files_spawns_normally
+test_fresh_spawn_refuses_unremovable_destination_env
 
 echo "# all fm-spawn-env-local tests passed"

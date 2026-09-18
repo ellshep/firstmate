@@ -1035,6 +1035,24 @@ test_spawn_relaunch_refuses_unremovable_destination_env() {
   pass "fm-spawn --relaunch: refuses an unremovable env destination"
 }
 
+test_spawn_relaunch_rebuilds_an_unignored_destination_env() {
+  local dir out
+  dir=$(new_case relaunchenv-unignored rl-env-unignored)
+  add_ship_task "$dir" rl-env-unignored claude
+  printf '.env*\n' > "$dir/proj/.gitignore"
+  : > "$dir/wt/.gitignore"
+  printf 'CAPTAIN_SOURCE=do-not-copy\nDATABASE_URL=postgres://captain/hosted\n' > "$dir/proj/.env"
+  printf 'WORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local\n' > "$dir/wt/.env"
+  printf 'zsh' > "$dir/fake/command"
+
+  out=$(run_spawn "$dir" rl-env-unignored --relaunch)
+  [ "$(cat "$dir/wt/.env")" = $'CAPTAIN_SOURCE=do-not-copy\nWORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local' ] \
+    || fail "a relaunch left an unignored destination env untouched: $(cat "$dir/wt/.env")"
+  assert_contains "$out" "spawned rl-env-unignored harness=claude" \
+    "the relaunch should launch after rebuilding an unignored destination env"
+  pass "fm-spawn --relaunch: rebuilds an unignored destination env"
+}
+
 test_promoted_scout_relaunch_receives_the_current_delivery_contract() {
   local dir home id brief launch out mode rule
   for mode in no-mistakes direct-PR local-only; do
@@ -1775,6 +1793,7 @@ test_spawn_relaunch_without_a_harness_reuses_the_recorded_one
 test_spawn_relaunch_sanitizes_copied_env_but_preserves_worker_values
 test_spawn_relaunch_replaces_destination_env_symlink
 test_spawn_relaunch_refuses_unremovable_destination_env
+test_spawn_relaunch_rebuilds_an_unignored_destination_env
 test_promoted_scout_relaunch_receives_the_current_delivery_contract
 test_prefixed_prior_harness_wiring_is_still_retired
 test_muse_session_binding_is_retired_on_a_harness_switch

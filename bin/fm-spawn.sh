@@ -2965,12 +2965,11 @@ fm_spawn_env_filter() { # <source> <destination> <output> <report> <source-avail
 # production-sensitive values are carried forward; a filter that leftover
 # state can bypass is not a filter.
 #
-# Fresh propagation is deliberately not fail-closed, unlike the rest of this
-# script: no such file, an unreadable one, a project that is not a git
-# repository, or a failed copy all skip and let the spawn proceed. Relaunch
-# rebuilding returns failure when an existing destination cannot be replaced.
-# A worker without credentials is survivable; a spawn that refuses to start is
-# not. Only counts and excluded key names are reported, never their values.
+# Fresh propagation skips missing or unreadable source files and failed copies;
+# destination cleanup and relaunch rebuilding return failure when an existing
+# destination cannot be replaced. A worker without credentials is survivable;
+# a spawn that can retain excluded credentials is not. Only counts and
+# excluded key names are reported, never their values.
 propagate_env_local() { # <project> <worktree>
   local project=$1 worktree=$2 src name dst copied=0 source_available tmp source_input destination_input report_tmp
   if [ "$RELAUNCH" -eq 0 ]; then
@@ -2978,13 +2977,12 @@ propagate_env_local() { # <project> <worktree>
       [ -e "$dst" ] || [ -L "$dst" ] || continue
       name=${dst##*/}
       git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null || continue
-      rm -f "$dst" 2>/dev/null || continue
+      rm -f "$dst" 2>/dev/null || return 1
     done
   else
     for dst in "$worktree"/.env*; do
       [ -e "$dst" ] || [ -L "$dst" ] || continue
       name=${dst##*/}
-      git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null || continue
       src=$project/$name
       source_available=0
       if [ ! -L "$src" ] && [ -f "$src" ] && [ -r "$src" ] \
@@ -3036,7 +3034,7 @@ propagate_env_local() { # <project> <worktree>
     git -C "$project" check-ignore -q -- "$name" 2>/dev/null || continue
     git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null || continue
     if [ "$RELAUNCH" -eq 0 ]; then
-      rm -f "$dst" 2>/dev/null || continue
+      rm -f "$dst" 2>/dev/null || return 1
     else
       [ ! -e "$dst" ] && [ ! -L "$dst" ] || continue
     fi
@@ -3798,11 +3796,7 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
 fi
 if [ "$KIND" != secondmate ]; then
-  # Fresh local environment propagation is best effort; relaunch rebuilding
-  # must refuse if an existing destination cannot be removed safely.
-  if ! propagate_env_local "$PROJ_ABS" "$WT"; then
-    [ "$RELAUNCH" -eq 0 ] || exit 1
-  fi
+  propagate_env_local "$PROJ_ABS" "$WT" || exit 1
 fi
 
 # Pre-register Claude's workspace trust for the directory this launch starts in,
