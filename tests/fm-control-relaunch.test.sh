@@ -996,6 +996,23 @@ test_spawn_relaunch_sanitizes_copied_env_but_preserves_worker_values() {
   pass "fm-spawn --relaunch: rebuilds regular env files with source and worker values"
 }
 
+test_spawn_relaunch_preserves_worker_values_when_source_is_missing() {
+  local dir out
+  dir=$(new_case relaunchenvnosource rl-env-no-source)
+  add_ship_task "$dir" rl-env-no-source claude
+  printf '.env*\n' > "$dir/proj/.gitignore"
+  printf '.env*\n' > "$dir/wt/.gitignore"
+  printf 'WORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local\nDATABASE_URL_PROD=postgres://worker/prod\n' > "$dir/wt/.env"
+  printf 'zsh' > "$dir/fake/command"
+
+  out=$(run_spawn "$dir" rl-env-no-source --relaunch)
+  [ "$(cat "$dir/wt/.env")" = $'WORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local\nDATABASE_URL_PROD=postgres://worker/prod' ] \
+    || fail "a relaunch removed worker values when the source env was absent: $(cat "$dir/wt/.env")"
+  assert_contains "$out" "spawned rl-env-no-source harness=claude" \
+    "the relaunch should launch after preserving worker values without a source env"
+  pass "fm-spawn --relaunch: preserves worker values when the source env is absent"
+}
+
 test_spawn_relaunch_replaces_destination_env_symlink() {
   local dir out
   dir=$(new_case relaunchenvlink rl-env-link)
@@ -1791,6 +1808,7 @@ test_explicit_secondmate_harness_ignores_configured_profile_axes
 test_ship_relaunch_ignores_the_crew_harness_config
 test_spawn_relaunch_without_a_harness_reuses_the_recorded_one
 test_spawn_relaunch_sanitizes_copied_env_but_preserves_worker_values
+test_spawn_relaunch_preserves_worker_values_when_source_is_missing
 test_spawn_relaunch_replaces_destination_env_symlink
 test_spawn_relaunch_refuses_unremovable_destination_env
 test_spawn_relaunch_rebuilds_an_unignored_destination_env

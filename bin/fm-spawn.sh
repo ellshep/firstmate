@@ -377,20 +377,6 @@ usage() {
   sed -n '2,${/^#/!q;p;}' "$0" | sed 's/^# \{0,1\}//'
 }
 
-fm_spawn_env_report_names() { # <report> <filename>
-  local report=$1 name=$2 excluded_names
-  [ "$report" = /dev/null ] && return 0
-  if ! excluded_names=$(cat "$report" 2>/dev/null); then
-    echo "error: could not read the temporary environment report for '$name'; refusing to launch" >&2
-    return 1
-  fi
-  if ! rm -f "$report" 2>/dev/null; then
-    echo "error: could not remove the temporary environment report for '$name'; refusing to launch" >&2
-    return 1
-  fi
-  [ -z "$excluded_names" ] || echo "note: excluded local environment key(s) for $name: $excluded_names" >&2
-}
-
 case "${1:-}" in
 -h | --help)
   usage
@@ -2891,13 +2877,13 @@ freshen_spawn_worktree_base() { # <worktree>
 FM_SPAWN_ENV_EXCLUDED_KEYS='([A-Za-z0-9_]+_)?DATABASE_URL(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?POSTGRES(QL)?_URL|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_URL|([A-Za-z0-9_]+_)?DB_URL|([A-Za-z0-9_]+_)?(MYSQL|MARIADB|MSSQL|SQLSERVER|COCKROACHDB|MONGODB|REDIS)_URL|[A-Za-z0-9_]+_DATABASE_URL|[A-Za-z0-9_]+_(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION)(_[A-Za-z0-9_]+)*|(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION)(_[A-Za-z0-9_]+)+|PG(HOST|HOSTADDR|PORT|DATABASE|USER|PASSWORD|PASSFILE|SERVICE|SERVICEFILE)|[A-Za-z0-9_]*_PROD'
 FM_SPAWN_ENV_DATABASE_SCHEMES='(postgres|postgresql|mysql|mariadb|mssql|sqlserver|cockroachdb|mongodb(\+srv)?|rediss?)://'
 
-fm_spawn_env_filter() { # <source> <destination> <output> <report> <source-available> <merge>
-  local source=$1 destination=$2 output=$3 report=$4 source_available=$5 merge=$6
+fm_spawn_env_filter() { # <source> <destination> <output> <source-available> <merge>
+  local source=$1 destination=$2 output=$3 source_available=$4 merge=$5
   FM_SPAWN_ENV_DATABASE_SCHEMES="$FM_SPAWN_ENV_DATABASE_SCHEMES" awk \
     -v excluded="$FM_SPAWN_ENV_EXCLUDED_KEYS" \
+    -v output="$output" \
     -v source_available="$source_available" \
-    -v merge="$merge" \
-    -v report="$report" '
+    -v merge="$merge" '
     BEGIN {
       schemes = tolower(ENVIRON["FM_SPAWN_ENV_DATABASE_SCHEMES"])
       excluded_lower = tolower(excluded)
@@ -2919,7 +2905,7 @@ fm_spawn_env_filter() { # <source> <destination> <output> <report> <source-avail
       return tolower(key) ~ ("^(" excluded_lower ")$") || tolower(value) ~ schemes
     }
     function report_key(key) {
-      if (key != "" && !reported[key]++) print key > report
+      if (key != "" && !reported[key]++) print key
     }
     FILENAME == ARGV[1] {
       key = key_of($0)
@@ -2932,13 +2918,13 @@ fm_spawn_env_filter() { # <source> <destination> <output> <report> <source-avail
           source_lines[++source_count] = $0
           source_keys[source_count] = key
         } else {
-          print
+          print $0 > output
         }
       } else if (merge) {
         source_lines[++source_count] = $0
         source_keys[source_count] = ""
       } else {
-        print
+        print $0 > output
       }
       next
     }
@@ -2948,7 +2934,7 @@ fm_spawn_env_filter() { # <source> <destination> <output> <report> <source-avail
       value = value_of($0)
       if (key != "") destination_keys[key] = 1
       if (key != "" && is_excluded(key, value) \
-        && (!source_available || source_values[key SUBSEP value])) {
+        && source_available && source_values[key SUBSEP value]) {
         report_key(key)
         next
       }
@@ -2957,12 +2943,12 @@ fm_spawn_env_filter() { # <source> <destination> <output> <report> <source-avail
     END {
       if (merge) {
         for (i = 1; i <= source_count; i++) {
-          if (source_keys[i] == "" || !destination_keys[source_keys[i]]) print source_lines[i]
+          if (source_keys[i] == "" || !destination_keys[source_keys[i]]) print source_lines[i] > output
         }
-        for (i = 1; i <= destination_count; i++) print destination_lines[i]
+        for (i = 1; i <= destination_count; i++) print destination_lines[i] > output
       }
     }
-  ' "$source" "$destination" > "$output"
+  ' "$source" "$destination"
 }
 
 # Copy the spawning project's gitignored root `.env*` files into the fresh task
@@ -2991,7 +2977,7 @@ fm_spawn_env_filter() { # <source> <destination> <output> <report> <source-avail
 # credentials is not. Only counts and excluded key names are reported, never
 # their values.
 propagate_env_local() { # <project> <worktree>
-  local project=$1 worktree=$2 src name dst copied=0 source_available tmp source_input destination_input report_tmp
+  local project=$1 worktree=$2 src name dst copied=0 source_available tmp source_input destination_input excluded_names
   if [ "$RELAUNCH" -eq 0 ]; then
     for dst in "$worktree"/.env*; do
       [ -e "$dst" ] || [ -L "$dst" ] || continue
@@ -3020,21 +3006,12 @@ propagate_env_local() { # <project> <worktree>
         echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
         return 1
       }
-      report_tmp=$(umask 077; mktemp "$worktree/.fm-env-local-report.XXXXXX") || {
+      excluded_names=$(fm_spawn_env_filter "$source_input" "$destination_input" "$tmp" "$source_available" 1) || {
         rm -f "$tmp" 2>/dev/null || :
-        echo "error: could not create a temporary environment report for '$name'; refusing to launch" >&2
-        return 1
-      }
-      fm_spawn_env_filter "$source_input" "$destination_input" "$tmp" "$report_tmp" "$source_available" 1 || {
-        rm -f "$tmp" 2>/dev/null || :
-        rm -f "$report_tmp" 2>/dev/null || :
         echo "error: could not filter local environment file '$name'; refusing to launch" >&2
         return 1
       }
-      fm_spawn_env_report_names "$report_tmp" "$name" || {
-        rm -f "$tmp" 2>/dev/null || :
-        return 1
-      }
+      [ -z "$excluded_names" ] || echo "note: excluded local environment key(s) for $name: $excluded_names" >&2
       chmod 600 "$tmp" 2>/dev/null || {
         rm -f "$tmp" 2>/dev/null || :
         echo "error: could not set permissions on local environment file '$name'; refusing to launch" >&2
@@ -3079,21 +3056,12 @@ propagate_env_local() { # <project> <worktree>
       echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
       return 1
     }
-    report_tmp=$(umask 077; mktemp "$worktree/.fm-env-local-report.XXXXXX") || {
+    excluded_names=$(fm_spawn_env_filter "$src" /dev/null "$tmp" 1 0) || {
       rm -f "$tmp" 2>/dev/null || :
-      echo "error: could not create a temporary environment report for '$name'; refusing to launch" >&2
-      return 1
-    }
-    fm_spawn_env_filter "$src" /dev/null "$tmp" "$report_tmp" 1 0 || {
-      rm -f "$tmp" 2>/dev/null || :
-      rm -f "$report_tmp" 2>/dev/null || :
       echo "error: could not filter local environment file '$name'; refusing to launch" >&2
       return 1
     }
-    fm_spawn_env_report_names "$report_tmp" "$name" || {
-      rm -f "$tmp" 2>/dev/null || :
-      return 1
-    }
+    [ -z "$excluded_names" ] || echo "note: excluded local environment key(s) for $name: $excluded_names" >&2
     chmod 600 "$tmp" 2>/dev/null || {
       rm -f "$tmp" 2>/dev/null || :
       echo "error: could not set permissions on local environment file '$name'; refusing to launch" >&2
