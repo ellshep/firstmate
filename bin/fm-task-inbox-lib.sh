@@ -316,7 +316,7 @@ fm_task_inbox_clear_stray() {  # <backend> <target> <record-path> [expected-labe
   fragments=$(fm_backend_composer_stray_only "$backend" "$target" "$label" 2>/dev/null) || return 1
   [ -n "$fragments" ] || return 1
   fm_backend_send_key "$backend" "$target" "$key" "$label" >/dev/null 2>&1 || return 1
-  fm_task_inbox_note_cleared "$state" "$task" "$fragments"
+  fm_task_inbox_note_cleared "$state" "$task" "$fragments" || return 1
   [ "$(fm_backend_composer_state "$backend" "$target" "$label" 2>/dev/null)" = empty ] || return 1
   return 0
 }
@@ -332,9 +332,8 @@ fm_task_inbox_clear_stray() {  # <backend> <target> <record-path> [expected-labe
 # one long repeated scroll gesture cannot flood the log.
 fm_task_inbox_note_cleared() {  # <state-dir> <task-id> <fragments>
   local state=$1 task=$2 fragment=$3
-  [ "${#fragment}" -le 80 ] || fragment="${fragment:0:77}..."
   printf 'note: cleared a stray terminal mouse-report fragment ("%s") from the composer; it was blocking delivery of a waiting instruction\n' \
-    "$fragment" >> "$state/$task.status" 2>/dev/null || true
+    "$fragment" >> "$state/$task.status" 2>/dev/null
 }
 
 # Ring the doorbell, best-effort: one endpoint-liveness pre-check, one advisory

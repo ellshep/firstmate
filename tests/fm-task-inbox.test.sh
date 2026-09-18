@@ -353,9 +353,22 @@ test_ring_clears_a_stray_fragment_and_records_it() {
   esac
   grep -qF 'Firstmate instruction waiting' "$dir/send.log" \
     || fail "the doorbell was not rung after the composer was cleared"
-  grep -q '^note: cleared a stray terminal mouse-report fragment ("3;36M")' "$dir/state/t1.status" \
-    || fail "the clear left no durable trace:"$'\n'"$(cat "$dir/state/t1.status" 2>/dev/null)"
+  [ "$(cat "$dir/state/t1.status")" = 'note: cleared a stray terminal mouse-report fragment ("3;36M") from the composer; it was blocking delivery of a waiting instruction' ] \
+    || fail "the clear left no exact durable trace:"$'\n'"$(cat "$dir/state/t1.status" 2>/dev/null)"
   pass "inbox: a stray mouse-report fragment is cleared, recorded, and the doorbell rung"
+}
+
+test_cleared_trace_preserves_long_fragment() {
+  local state fragment expected
+  state="$TMP_ROOT/stray-trace/state"
+  mkdir -p "$state"
+  fragment='<65;77;26M<65;77;26M<65;77;26M<65;77;26M<65;77;26M<65;77;26M'
+  expected="note: cleared a stray terminal mouse-report fragment (\"$fragment\") from the composer; it was blocking delivery of a waiting instruction"
+  inbox_lib "$state" fm_task_inbox_note_cleared "$state" t1 "$fragment" \
+    || fail "writing the cleared-fragment trace failed"
+  [ "$(cat "$state/t1.status")" = "$expected" ] \
+    || fail "the cleared-fragment trace was altered:"$'\n'"$(cat "$state/t1.status")"
+  pass "inbox: cleared-fragment traces preserve the complete captured content"
 }
 
 test_ring_never_clears_human_text() {
@@ -809,6 +822,7 @@ test_doorbell_is_a_shell_noop
 test_doorbell_rejects_terminal_controls
 test_ring_skips_dead_agent
 test_ring_clears_a_stray_fragment_and_records_it
+test_cleared_trace_preserves_long_fragment
 test_ring_never_clears_human_text
 test_ring_refuses_to_clear_without_a_verified_clear_key
 test_idempotent_write_dedups_exact_body
