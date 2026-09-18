@@ -915,6 +915,17 @@ test_stray_only_requires_a_proven_pending_composer() {
   pass "fm_composer_stray_only: only a proven pending composer is ever a candidate"
 }
 
+test_stray_only_preserves_adjacent_fragment_sequence() {
+  local content screen out
+  content='<65;77;26M<65;77;26M'
+  screen=$(stray_screen "$content")
+  out=$(fm_composer_stray_only "$STRAY_CAPS" "$screen" 2) \
+    || fail "an adjacent repeated fragment was not recognized"
+  [ "$out" = "$content" ] \
+    || fail "the adjacent fragment sequence was altered: '$out'"
+  pass "fm_composer_stray_only: adjacent fragments remain byte-exact"
+}
+
 test_stray_strip_preserves_row_geometry() {
   local screen stripped before after
   screen=$(stray_screen '3;36M')
@@ -944,5 +955,6 @@ test_stray_strip_preserves_sgr_attributes() {
 test_stray_only_recognizes_observed_leaks
 test_stray_only_refuses_human_text
 test_stray_only_requires_a_proven_pending_composer
+test_stray_only_preserves_adjacent_fragment_sequence
 test_stray_strip_preserves_row_geometry
 test_stray_strip_preserves_sgr_attributes

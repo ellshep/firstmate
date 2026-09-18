@@ -738,7 +738,7 @@ fm_composer_stray_only() {  # <caps> <screen> [cursor_row] [identity]
   [ -n "$fragments" ] || return 1
   stripped=$(printf '%s\n' "$screen" | fm_composer_strip_stray_mouse_reports)
   [ "$(fm_composer_classify_screen "$caps" "$stripped" "$cy" "$identity")" = empty ] || return 1
-  printf '%s' "$fragments" | LC_ALL=C tr '\n' ' ' | LC_ALL=C sed 's/ $//'
+  printf '%s' "$fragments" | LC_ALL=C tr -d '\n'
 }
 
 # --- The screen classifier ---------------------------------------------------
