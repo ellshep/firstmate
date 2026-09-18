@@ -2864,7 +2864,7 @@ freshen_spawn_worktree_base() { # <worktree>
 # stay in the captain's own checkout. Widening this set means first answering
 # why a throwaway worktree needs a production database and a key that ignores
 # row-level security, and no convenience this path could buy is worth that.
-FM_SPAWN_ENV_EXCLUDED_KEYS='([A-Za-z0-9_]+_)?DATABASE_URL(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?POSTGRES(?:QL)?_URL|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_URL|([A-Za-z0-9_]+_)?DB_URL|[A-Za-z0-9_]+_DATABASE_URL|[A-Za-z0-9_]*_PROD'
+FM_SPAWN_ENV_EXCLUDED_KEYS='([A-Za-z0-9_]+_)?DATABASE_URL(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?POSTGRES(QL)?_URL|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_URL|([A-Za-z0-9_]+_)?DB_URL|[A-Za-z0-9_]+_DATABASE_URL|[A-Za-z0-9_]*_PROD'
 FM_SPAWN_ENV_DATABASE_SCHEMES='(postgres|postgresql|mysql|mongodb(\+srv)?|rediss?)://'
 
 # Copy the spawning project's gitignored root `.env*` files into the fresh task
@@ -2926,7 +2926,7 @@ propagate_env_local() { # <project> <worktree>
       grep -Ev "^[[:space:]]*(export[[:space:]]+)?(($FM_SPAWN_ENV_EXCLUDED_KEYS)[[:space:]]*=|[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=.*($FM_SPAWN_ENV_DATABASE_SCHEMES))" "$src" > "$dst") || rc=$?
     # grep exits 1 when every line was filtered out; only above that is a failure.
     if [ "$rc" -gt 1 ]; then
-      rm -f "$dst"
+      rm -f "$dst" 2>/dev/null || :
       continue
     fi
     copied=$((copied + 1))
@@ -3668,7 +3668,9 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
 fi
 if [ "$KIND" != secondmate ]; then
-  propagate_env_local "$PROJ_ABS" "$WT"
+  # Local environment propagation is best effort: missing credentials are
+  # survivable, while refusing a spawn is not.
+  propagate_env_local "$PROJ_ABS" "$WT" || :
 fi
 
 # Pre-register Claude's workspace trust for the directory this launch starts in,
