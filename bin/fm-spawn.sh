@@ -1093,7 +1093,6 @@ parse_orca_worktree_result() {
 
 spawn_abort_cleanup() {
   local status=$? tab_id= endpoint_closed=1
-  [ "$status" -eq 0 ] && return 0
   if [ "$RELAUNCH_REPLACEMENT_PENDING" = 1 ] &&
     [ "$SPAWN_META_PUBLISH_STARTED" = 1 ] &&
     [ -n "$SPAWN_META_TMP" ] &&
@@ -1136,6 +1135,8 @@ spawn_abort_cleanup() {
     HERDR_PRESENTATION_ORDER_LOCK_HELD=0
     fm_lock_release "$HERDR_PRESENTATION_ORDER_LOCK" || true
   fi
+  # Failure-only endpoint and worktree teardown.
+  if [ "$status" -ne 0 ]; then
   if [ "$SPAWN_ORCA_ENV_ABORT_CLEANUP" = 1 ]; then
     SPAWN_ORCA_ENV_ABORT_CLEANUP=0
     ORCA_ABORT_CLEANUP=0
@@ -1215,6 +1216,8 @@ spawn_abort_cleanup() {
       SPAWN_WORKTREE_RETURNED=1
     fi
   fi
+  fi
+  # Universal lock, rollback, claim, and temporary-file cleanup.
   if [ "$SPAWN_TASK_LOCK_HELD" = 1 ]; then
     SPAWN_TASK_LOCK_HELD=0
     fm_lock_release "$SPAWN_TASK_LOCK" || true

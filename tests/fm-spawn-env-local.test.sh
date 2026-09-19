@@ -130,11 +130,15 @@ ENV
 run_spawn() { # <id> [args...]
   local id=$1
   shift
-  fm_test_run_spawn "$HOME_DIR" "$POOL_DIR" "$FAKEBIN_DIR" "$id" "$PROJECT_DIR" "$@"
+  if [ "${1:-}" = --relaunch ]; then
+    fm_test_run_spawn "$HOME_DIR" "$POOL_DIR" "$FAKEBIN_DIR" "$id" "$@"
+  else
+    fm_test_run_spawn "$HOME_DIR" "$POOL_DIR" "$FAKEBIN_DIR" "$id" "$PROJECT_DIR" "$@"
+  fi
 }
 
 test_gitignored_env_reaches_the_worktree_without_excluded_keys() {
-  local rec id out status key
+  local rec id out status key lock
   id='env-local-copy'
   rec=$(make_case copy "$id")
   read_case_record "$rec"
@@ -191,6 +195,12 @@ SH
   [ ! -s "$CASE_DIR/kill.log" ] || fail "a successful spawn closed its endpoint"
   [ ! -s "$CASE_DIR/treehouse.log" ] || fail "a successful spawn returned its worktree"
   [ -e "$POOL_DIR/.git" ] || fail "a successful spawn did not retain its worktree"
+  lock="$HOME_DIR/state/.spawn-$id.lock"
+  (
+    . "$ROOT/bin/fm-wake-lib.sh"
+    fm_lock_try_acquire "$lock" || exit 1
+    fm_lock_release "$lock"
+  ) || fail "the next operation on a successfully spawned task hit a leaked lock"
   pass "a gitignored .env reaches the task worktree at mode 600 with excluded keys filtered out"
 }
 
