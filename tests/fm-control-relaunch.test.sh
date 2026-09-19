@@ -1006,12 +1006,19 @@ test_spawn_relaunch_preserves_worker_values_when_source_is_missing() {
   add_ship_task "$dir" rl-env-no-source claude
   printf '.env*\n' > "$dir/proj/.gitignore"
   printf '.env*\n' > "$dir/wt/.gitignore"
+  printf 'CAPTAIN_LOCAL=yes\nDATABASE_URL=postgres://captain/local\n' > "$dir/proj/.env.local"
   printf 'WORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local\nDATABASE_URL_PROD=postgres://worker/prod\n' > "$dir/wt/.env"
+  printf 'STALE_SECRET=must-be-reclaimed\n' > "$dir/wt/.fm-env-local.tmp"
+  chmod 600 "$dir/wt/.fm-env-local.tmp"
   printf 'zsh' > "$dir/fake/command"
 
   out=$(run_spawn "$dir" rl-env-no-source --relaunch)
   [ "$(cat "$dir/wt/.env")" = $'WORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local\nDATABASE_URL_PROD=postgres://worker/prod' ] \
     || fail "a relaunch removed worker values when the source env was absent: $(cat "$dir/wt/.env")"
+  [ "$(cat "$dir/wt/.env.local")" = 'CAPTAIN_LOCAL=yes' ] \
+    || fail "a relaunch did not copy a source-only env file with filtering: $(cat "$dir/wt/.env.local")"
+  [ ! -e "$dir/wt/.fm-env-local.tmp" ] \
+    || fail "a source-only relaunch left a deterministic credential temp file"
   assert_contains "$out" "spawned rl-env-no-source harness=claude" \
     "the relaunch should launch after preserving worker values without a source env"
   pass "fm-spawn --relaunch: preserves worker values when the source env is absent"

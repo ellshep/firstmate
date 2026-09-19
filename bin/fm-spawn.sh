@@ -1093,6 +1093,15 @@ parse_orca_worktree_result() {
 
 spawn_abort_cleanup() {
   local status=$? tab_id= endpoint_closed=1
+  if [ "$status" -eq 0 ]; then
+    RELAUNCH_REPLACEMENT_PENDING=0
+    HERDR_PROJECTION_ABORT_CLEANUP=0
+    ORCA_ABORT_CLEANUP=0
+    SPAWN_ORCA_ENV_ABORT_CLEANUP=0
+    SPAWN_ENDPOINT_ABORT_CLEANUP=0
+    SPAWN_WORKTREE_ABORT_CLEANUP=0
+    SPAWN_FRESH_COMMIT_PENDING=0
+  fi
   if [ "$RELAUNCH_REPLACEMENT_PENDING" = 1 ] &&
     [ "$SPAWN_META_PUBLISH_STARTED" = 1 ] &&
     [ -n "$SPAWN_META_TMP" ] &&
@@ -1135,11 +1144,8 @@ spawn_abort_cleanup() {
     HERDR_PRESENTATION_ORDER_LOCK_HELD=0
     fm_lock_release "$HERDR_PRESENTATION_ORDER_LOCK" || true
   fi
-  # Failure-only endpoint and worktree teardown.
-  if [ "$status" -ne 0 ]; then
   if [ "$SPAWN_ORCA_ENV_ABORT_CLEANUP" = 1 ]; then
     SPAWN_ORCA_ENV_ABORT_CLEANUP=0
-    ORCA_ABORT_CLEANUP=0
     if [ -n "${ORCA_TERMINAL:-}" ] &&
       ! fm_backend_kill orca "$ORCA_TERMINAL" 2>/dev/null; then
       echo "error: could not close endpoint '$ORCA_TERMINAL' after the environment copy failure" >&2
@@ -1149,11 +1155,16 @@ spawn_abort_cleanup() {
     if [ -n "${ORCA_WORKTREE_ID:-}" ]; then
       if [ "$endpoint_closed" -ne 1 ]; then
         echo "error: could not remove Orca worktree '$ORCA_WORKTREE_ID' because endpoint '$ORCA_TERMINAL' remains open" >&2
+        ORCA_ABORT_CLEANUP=0
         status=1
       elif ! fm_backend_remove_worktree orca "$ORCA_WORKTREE_ID" 2>/dev/null; then
         echo "error: could not remove Orca worktree '$ORCA_WORKTREE_ID' after the environment copy failure" >&2
         status=1
+      else
+        ORCA_ABORT_CLEANUP=0
       fi
+    else
+      ORCA_ABORT_CLEANUP=0
     fi
   fi
   if [ "$ORCA_ABORT_CLEANUP" = 1 ]; then
@@ -1216,8 +1227,6 @@ spawn_abort_cleanup() {
       SPAWN_WORKTREE_RETURNED=1
     fi
   fi
-  fi
-  # Universal lock, rollback, claim, and temporary-file cleanup.
   if [ "$SPAWN_TASK_LOCK_HELD" = 1 ]; then
     SPAWN_TASK_LOCK_HELD=0
     fm_lock_release "$SPAWN_TASK_LOCK" || true
@@ -3135,10 +3144,18 @@ propagate_env_local() { # <project> <worktree>
     else
       [ ! -e "$dst" ] && [ ! -L "$dst" ] || continue
     fi
-    tmp=$(umask 077; mktemp "$worktree/.fm-env-local.XXXXXX") || {
-      echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
-      return 1
-    }
+    if [ "$RELAUNCH" -eq 1 ]; then
+      tmp=$relaunch_tmp
+      ( umask 077; : > "$tmp" ) || {
+        echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
+        return 1
+      }
+    else
+      tmp=$(umask 077; mktemp "$worktree/.fm-env-local.XXXXXX") || {
+        echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
+        return 1
+      }
+    fi
     SPAWN_ENV_TMP=$tmp
     excluded_names=$(fm_spawn_env_filter "$src" /dev/null "$tmp" 1 0) || {
       rm -f "$tmp" 2>/dev/null || :
