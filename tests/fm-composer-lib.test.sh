@@ -839,3 +839,125 @@ test_queued_enter_verdict_does_not_convert_other_states() {
 test_queued_enter_verdict_busy_pending_is_empty
 test_queued_enter_verdict_idle_pending_stays_pending
 test_queued_enter_verdict_does_not_convert_other_states
+
+# --- Stray SGR mouse-report fragments ---------------------------------------
+#
+# A leaked fragment wedges a worker: the composer PROVENLY holds pending text
+# the worker never typed, so every doorbell is skipped. fm_composer_stray_only
+# is what lets that one case be cleared, and its false-positive direction is
+# the dangerous one - clearing a human's typed line loses intent nothing can
+# recover, while declining a real fragment only leaves today's behavior. So
+# both directions are pinned here, and the refusals matter more than the
+# matches.
+
+# A claude-shaped bordered composer holding <content>, with the hint row a real
+# pane carries below the box (the reason content extraction cannot be used).
+stray_screen() {  # <content>
+  LC_ALL=C awk -v t="$1" 'BEGIN {
+    body = " > " t
+    while (length(body) < 40) body = body " "
+    rule = ""
+    for (i = 0; i < length(body); i++) rule = rule "─"
+    printf " working on it\n"
+    printf "╭%s╮\n", rule
+    printf "│%s│\n", body
+    printf "╰%s╯\n", rule
+    printf "  ? for shortcuts\n"
+  }'
+}
+
+STRAY_CAPS=$(printf 'styled=1\ncursor=1\nidentity=1\nrows=0')
+
+test_stray_only_recognizes_observed_leaks() {
+  local content screen out
+  # Every fragment shape recorded from a live wedge, plus a repeated scroll
+  # notch (one gesture emits several).
+  for content in '3;36M' '2;35M' '<65;89;31M' ';89;31M' '5;112;35M' \
+                 '<65;77;26M<65;77;26M<65;77;26M'; do
+    screen=$(stray_screen "$content")
+    [ "$(fm_composer_classify_screen "$STRAY_CAPS" "$screen" 2)" = pending ] \
+      || fail "fixture for '$content' did not read pending"
+    out=$(fm_composer_stray_only "$STRAY_CAPS" "$screen" 2) \
+      || fail "a known stray fragment was not recognized: $content"
+    [ -n "$out" ] || fail "recognizing '$content' reported no fragment to record"
+  done
+  pass "fm_composer_stray_only: every observed leak shape is recognized and named"
+}
+
+test_stray_only_refuses_human_text() {
+  local content screen
+  # Digits, semicolons and an M are ordinary in typed text; none of these may
+  # ever be cleared. The last three are near misses on purpose: a bare letter,
+  # a suffix with no semicolon, and a fragment with real words around it.
+  for content in 'hello captain' 'fix the 2;35M thing' 'deploy at 3;36M then wait' \
+                 'run ci; retry 2;35M later' 'rebase onto main; then 1;2M' \
+                 '1;2;3;4M' '12345;6;7M' 'M' '31M' '2;35Mx' '2;35m'; do
+    screen=$(stray_screen "$content")
+    [ "$(fm_composer_classify_screen "$STRAY_CAPS" "$screen" 2)" = pending ] \
+      || fail "fixture for '$content' did not read pending"
+    if fm_composer_stray_only "$STRAY_CAPS" "$screen" 2 >/dev/null; then
+      fail "human-typed content would have been cleared: $content"
+    fi
+  done
+  pass "fm_composer_stray_only: realistic typed text is never treated as a stray fragment"
+}
+
+test_stray_only_requires_a_proven_pending_composer() {
+  local screen
+  screen=$(stray_screen '')
+  [ "$(fm_composer_classify_screen "$STRAY_CAPS" "$screen" 2)" = empty ] \
+    || fail "the empty fixture did not read empty"
+  if fm_composer_stray_only "$STRAY_CAPS" "$screen" 2 >/dev/null; then
+    fail "an already-empty composer must not report a stray fragment"
+  fi
+  # A screen with no composer at all reads unknown and must stay refused.
+  screen=$(printf 'just some transcript\nand another line\n')
+  if fm_composer_stray_only "$STRAY_CAPS" "$screen" 2 >/dev/null; then
+    fail "a screen with no proven composer must not report a stray fragment"
+  fi
+  pass "fm_composer_stray_only: only a proven pending composer is ever a candidate"
+}
+
+test_stray_only_preserves_adjacent_fragment_sequence() {
+  local content screen out
+  content='<65;77;26M<65;77;26M'
+  screen=$(stray_screen "$content")
+  out=$(fm_composer_stray_only "$STRAY_CAPS" "$screen" 2) \
+    || fail "an adjacent repeated fragment was not recognized"
+  [ "$out" = "$content" ] \
+    || fail "the adjacent fragment sequence was altered: '$out'"
+  pass "fm_composer_stray_only: adjacent fragments remain byte-exact"
+}
+
+test_stray_strip_preserves_row_geometry() {
+  local screen stripped before after
+  screen=$(stray_screen '3;36M')
+  stripped=$(printf '%s\n' "$screen" | fm_composer_strip_stray_mouse_reports)
+  before=$(printf '%s\n' "$screen" | LC_ALL=C awk 'NR==3 {print length($0)}')
+  after=$(printf '%s\n' "$stripped" | LC_ALL=C awk 'NR==3 {print length($0)}')
+  [ "$before" = "$after" ] \
+    || fail "blanking a fragment changed the row's byte width ($before -> $after)"
+  [ "$(printf '%s\n' "$screen" | wc -l)" = "$(printf '%s\n' "$stripped" | wc -l)" ] \
+    || fail "blanking a fragment changed the screen's row count"
+  case "$stripped" in
+    *3\;36M*) fail "the fragment survived the strip" ;;
+  esac
+  pass "fm_composer_strip_stray_mouse_reports: fragments are blanked in place, never narrowed away"
+}
+
+test_stray_strip_preserves_sgr_attributes() {
+  local esc styled stripped
+  esc=$(printf '\033')
+  styled="${esc}[0;1;31mtyped text${esc}[0m"
+  stripped=$(printf '%s\n' "$styled" | fm_composer_strip_stray_mouse_reports)
+  [ "$stripped" = "$styled" ] \
+    || fail "stray stripping altered a real SGR sequence"
+  pass "fm_composer_strip_stray_mouse_reports: real SGR attributes remain byte-identical"
+}
+
+test_stray_only_recognizes_observed_leaks
+test_stray_only_refuses_human_text
+test_stray_only_requires_a_proven_pending_composer
+test_stray_only_preserves_adjacent_fragment_sequence
+test_stray_strip_preserves_row_geometry
+test_stray_strip_preserves_sgr_attributes

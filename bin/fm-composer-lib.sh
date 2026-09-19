@@ -659,6 +659,88 @@ fm_composer_classify_content() {  # <bordered> <content> [idle_re] [idle_case] [
   printf 'pending'; return 0
 }
 
+# --- Stray mouse-report fragments --------------------------------------------
+#
+# A terminal that is not consuming mouse reports can leak one into a live
+# composer as ordinary typed text. Claude Code turns on any-event mouse
+# tracking (?1003h) with SGR encoding (?1006h) while its composer is live, so
+# pointer movement emits `ESC [ < Cb ; Cx ; Cy M` reports; when a report's
+# introducer and its tail are separated by 50ms or more - or the introducer is
+# lost upstream - the input parser gives up on the partial sequence and inserts
+# the remainder as typed characters. The worker never typed it and never sees
+# it, but the composer now PROVENLY holds pending text, so every later doorbell
+# is skipped (bin/fm-task-inbox-lib.sh). Observed leaks: `<65;89;31M`,
+# `;89;31M`, `5;112;35M`, `2;35M`, `3;36M`, and one scroll gesture repeating
+# its notch three times.
+#
+# FM_COMPOSER_STRAY_MOUSE_RE is the ONE spelling of a leaked fragment, and it
+# is deliberately NARROWER than every real report suffix, because the two
+# failure directions cost very different things. Failing to recognize a genuine
+# fragment leaves the wedge exactly where it is today, which the re-ring ladder
+# already escalates; recognizing a human's typed line as one would destroy
+# intent nothing can recover. So a fragment must carry at least one `;` and one
+# digit, which drops the shortest suffixes (`31M`, and a bare `M`) into the
+# free false-negative direction rather than letting a lone letter qualify, and
+# it may carry at most two `;`, because a report has three parameters.
+# Content is matched after ANSI stripping, where a leaked fragment is literal
+# text, so no ESC introducer can survive to be matched.
+# The interval-free spelling is not cosmetic: the strip below must run in awk
+# so a fragment can be replaced by the SAME number of spaces, and `{n,m}` is
+# not portable across the awks in the fleet. Deleting the bytes instead would
+# narrow the composer row against its own borders and the classifier would
+# rightly call the result ambiguous.
+_FM_COMPOSER_STRAY_FIELD='[0-9][0-9]?[0-9]?[0-9]?'
+FM_COMPOSER_STRAY_MOUSE_RE="<?[0-9]?[0-9]?[0-9]?[0-9]?;$_FM_COMPOSER_STRAY_FIELD(;$_FM_COMPOSER_STRAY_FIELD)?M"
+
+# fm_composer_stray_mouse_reports: every fragment on stdin, one per line.
+fm_composer_stray_mouse_reports() {
+  LC_ALL=C grep -oE "$FM_COMPOSER_STRAY_MOUSE_RE" || true
+}
+
+# fm_composer_strip_stray_mouse_reports: stdin with every fragment blanked in
+# place. Rows are never dropped, joined, or narrowed - each fragment becomes
+# exactly as many spaces as it had bytes - so the screen keeps the geometry the
+# scanner reads it by and only the leaked characters stop counting as content.
+fm_composer_strip_stray_mouse_reports() {
+  LC_ALL=C awk -v re="$FM_COMPOSER_STRAY_MOUSE_RE" '
+    {
+      line = $0; out = ""
+      while (match(line, re)) {
+        if (RLENGTH <= 0) break
+        out = out substr(line, 1, RSTART - 1) sprintf("%*s", RLENGTH, "")
+        line = substr(line, RSTART + RLENGTH)
+      }
+      print out line
+    }
+  '
+}
+
+# fm_composer_stray_only: 0 when the composer on <screen> holds NOTHING but
+# leaked fragments, printing them; 1 in every other case. One capture answers
+# both halves, so nothing can change between them.
+#
+# The question this answers is the report's "is the entire composer content a
+# mouse-report fragment", and it answers it by removing the fragments and
+# asking the classifier again rather than by extracting the content and
+# matching it whole. That is deliberate. Content extraction is cursorless and
+# refuses whenever anything follows the composer box, which a real claude pane
+# always has (`? for shortcuts`), so it cannot see the panes this is for;
+# re-classifying keeps ONE owner of composer selection for both readings and
+# keeps the whole-content discipline exactly - anything else left in the
+# composer still reads `pending` and is refused.
+#
+# The refusals are the contract: an unproven `pending` beforehand, no fragment
+# present, or any residue afterwards all return 1 and leave the composer alone.
+fm_composer_stray_only() {  # <caps> <screen> [cursor_row] [identity]
+  local caps=$1 screen=$2 cy=${3:-} identity=${4:-} fragments stripped
+  [ "$(fm_composer_classify_screen "$caps" "$screen" "$cy" "$identity")" = pending ] || return 1
+  fragments=$(printf '%s\n' "$screen" | fm_composer_strip_ansi | fm_composer_stray_mouse_reports)
+  [ -n "$fragments" ] || return 1
+  stripped=$(printf '%s\n' "$screen" | fm_composer_strip_stray_mouse_reports)
+  [ "$(fm_composer_classify_screen "$caps" "$stripped" "$cy" "$identity")" = empty ] || return 1
+  printf '%s' "$fragments" | LC_ALL=C tr -d '\n'
+}
+
 # --- The screen classifier ---------------------------------------------------
 #
 # fm_composer_classify_screen <caps> <screen> [cursor_row] [identity]

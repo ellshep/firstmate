@@ -77,6 +77,8 @@ _FM_TASK_INBOX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_FM_TASK_INBOX_LIB_DIR/fm-wake-lib.sh"
 # shellcheck source=/dev/null
 . "$_FM_TASK_INBOX_LIB_DIR/fm-backend.sh"
+# shellcheck source=/dev/null
+. "$_FM_TASK_INBOX_LIB_DIR/fm-control-lib.sh"
 
 FM_TASK_INBOX_SCHEMA='fm-task-inbox.v1'
 FM_TASK_INBOX_GRACE_DEFAULT=90
@@ -268,6 +270,72 @@ fm_task_inbox_doorbell_line() {  # <record-path>
     "$quoted" "$quoted"
 }
 
+# fm_task_inbox_clear_stray: the one narrow resolution of the composer standoff
+# in fm_task_inbox_ring below.
+#
+# A terminal that is not consuming mouse reports can leak an SGR fragment into
+# a live composer as ordinary typed text (bin/fm-composer-lib.sh,
+# fm_composer_stray_only). The worker never typed it and never sees it, but the
+# composer now PROVENLY holds pending text, so every later doorbell is skipped
+# and a durable instruction sits unread until the re-ring ladder escalates
+# minutes later.
+#
+# The resolution is deliberately the smallest one that ends that standoff:
+# ask whether the composer holds NOTHING but leaked fragments
+# (bin/fm-composer-lib.sh, fm_composer_stray_only), and only then press the
+# harness's verified composer clear key once. Every guard here is a refusal, so
+# any unknown - an unrecorded harness, a harness with no verified clear key, a
+# backend that cannot deliver it, a backend with no stray reading, an
+# unreadable composer, a composer holding anything else at all - returns 1 and
+# the caller defers exactly as it always has.
+#
+# Enter is never sent on this path, and no text is ever typed: a clear key is
+# the only keystroke, and it is the undoable one (claude answers Ctrl+U with
+# `Ctrl+Y to paste deleted text`).
+#
+# Returns 0 only when the clear was delivered AND the composer then read empty,
+# which is the caller's licence to ring. The pre-clear observation is recorded
+# with that post-clear state, without claiming the exact bytes that were erased.
+fm_task_inbox_clear_stray() {  # <backend> <target> <record-path> [expected-label]
+  local backend=$1 target=$2 rec=$3 label=${4:-}
+  local dir base task state recorded_harness harness key fragments post_state
+  dir=${rec%/*}
+  base=${dir##*/}
+  case "$base" in
+    *.inbox) task=${base%.inbox} ;;
+    *) return 1 ;;
+  esac
+  state=${dir%/*}
+  [ -n "$task" ] && [ -n "$state" ] && [ "$state" != "$dir" ] || return 1
+  recorded_harness=$(fm_meta_get "$state/$task.meta" harness)
+  [ -n "$recorded_harness" ] || return 1
+  harness=$(fm_control_harness_family "$recorded_harness" 2>/dev/null) || return 1
+  key=$(fm_control_composer_clear_key "$harness" 2>/dev/null) || return 1
+  [ -n "$key" ] || return 1
+  fm_control_backend_supports_key "$backend" "$key" || return 1
+  fragments=$(fm_backend_composer_stray_only "$backend" "$target" "$label" 2>/dev/null) || return 1
+  [ -n "$fragments" ] || return 1
+  fm_backend_send_key "$backend" "$target" "$key" "$label" >/dev/null 2>&1 || return 1
+  post_state=$(fm_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || post_state=unknown
+  fm_task_inbox_note_cleared "$state" "$task" "$fragments" "$post_state" || return 1
+  [ "$post_state" = empty ] || return 1
+  return 0
+}
+
+# The durable trace for an auto-clear. It lands in the task's own status log,
+# the record a later reader already consults, as a `note:` line - surfaced by
+# the wake drain's unread-status section and needing no supervisor action. An
+# invisible self-heal would only replace one silent failure with another, which
+# is why this append is not best-effort decoration: recording that firstmate
+# typed into a worker's composer on its own initiative is half the fix.
+# The fragments are quoted verbatim (their grammar admits only `<`, digits,
+# `;`, and `M`, so they carry no terminal control bytes).
+fm_task_inbox_note_cleared() {  # <state-dir> <task-id> <fragments> [post-clear-state]
+  local state=$1 task=$2 fragment=$3 post_state=${4:-unknown}
+  printf 'note: observed a stray terminal mouse-report fragment before composer clear ("%s"); post-clear composer state: %s; exact cleared content remains unverified\n' \
+    "$fragment" "$post_state" >> "$state/$task.status" 2>/dev/null
+}
+
 # Ring the doorbell, best-effort: one endpoint-liveness pre-check, one advisory
 # composer pre-check, then the backend's submit machinery with a minimal retry
 # budget, verdict discarded.
@@ -277,7 +345,10 @@ fm_task_inbox_doorbell_line() {  # <record-path>
 # record). No return value is delivery proof; the acknowledgement move is the
 # only delivery signal.
 # The skip is deliberately narrow: only an exact `pending` verdict defers,
-# because there our Enter could submit someone's real half-typed content.
+# because there our Enter could submit someone's real half-typed content. That
+# one verdict first gets fm_task_inbox_clear_stray's refusal-by-default look at
+# WHAT is pending, and defers unchanged unless the composer holds nothing but a
+# leaked mouse-report fragment the worker never typed.
 # `pending-unproven` and `unknown` still ring - the worst outcome is a garbled
 # CONSTANT line the worker recovers semantically, while skipping on ambiguous
 # verdicts would starve a harness whose idle screen the classifier cannot
@@ -292,7 +363,7 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   fi
   cstate=$(fm_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || cstate=unknown
   case "$cstate" in
-    pending) return 1 ;;
+    pending) fm_task_inbox_clear_stray "$backend" "$target" "$rec" "$label" || return 1 ;;
   esac
   # Accepted residual race: terminal input and Enter are separate delivery
   # steps, so an agent exiting after the liveness check could leave a bare

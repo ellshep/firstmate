@@ -3091,6 +3091,22 @@ fm_backend_herdr_composer_state() {  # <target> -> empty|pending|pending-unprove
   printf '%s' "$verdict"
 }
 
+# fm_backend_herdr_composer_stray_only: the stray-fragment twin of the verdict
+# above. Styled capture only, with no unstyled degradation: ghost stripping is
+# what separates the harness's own placeholder from real pending text, and an
+# unstyled read could report a composer as empty-after-stripping when what it
+# actually holds is furniture.
+fm_backend_herdr_composer_stray_only() {  # <target> [expected-label]
+  local target=$1 cap caps identity
+  fm_backend_herdr_parse_target "$target" || return 1
+  cap=$(fm_backend_herdr_capture_ansi "$target" "$FM_COMPOSER_CAPTURE_LINES" 2>/dev/null) || return 1
+  caps=$(printf 'styled=1\ncursor=0\nidentity=1\nrows=%s' "$FM_COMPOSER_CAPTURE_LINES")
+  if ! identity=$(fm_backend_herdr_composer_identity "$target" 2>/dev/null) || [ -z "$identity" ]; then
+    identity=probe-absent
+  fi
+  fm_composer_stray_only "$caps" "$cap" '' "$identity"
+}
+
 # fm_backend_herdr_rendered_busy_state: busy|idle|unknown from the pane's
 # RENDERED busy footer, the same delivery-only signal bin/fm-tmux-lib.sh's
 # fm_pane_busy_state reads, scanning the same 40-line tail folded to its last

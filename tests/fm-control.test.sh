@@ -346,6 +346,36 @@ test_unverified_harness_is_refused() {
 }
 
 # --- 2. backend capability matrix -------------------------------------------
+# The composer clear key is a DIFFERENT fact from "does the interrupt key leave
+# text behind", and conflating them is what left claude with no reachable clear
+# for years while Ctrl+U demonstrably emptied its composer
+# (docs/verification/runtime-backends.md, "Claude composer clear key"). Both
+# questions are pinned here so neither can drift into the other.
+test_composer_clear_key_is_separate_from_the_interrupt_question() {
+  local harness
+  [ "$(fm_control_composer_clear_key claude)" = C-u ] \
+    || fail "claude's composer clears with Ctrl+U and the table must say so"
+  [ "$(fm_control_composer_clear_key muse)" = C-u ] \
+    || fail "muse's composer clears with Ctrl+U and the table must say so"
+  for harness in codex opencode pi pi-signed omp grok kimi cursor gemini rovo agy; do
+    [ -z "$(fm_control_composer_clear_key "$harness")" ] \
+      || fail "$harness has no verified composer clear key and must not claim one"
+  done
+  fm_control_composer_clear_key not-a-harness \
+    && fail "an unknown harness must be refused, never given an improvised clear key"
+  # muse is still the ONE adapter whose interrupt repollutes its composer, and
+  # claude having a clear key must not have changed that.
+  [ "$(fm_control_interrupt_clear_key muse)" = C-u ] \
+    || fail "muse's interrupt is incomplete without its clear key"
+  for harness in claude codex opencode pi pi-signed omp grok kimi cursor gemini rovo agy; do
+    [ -z "$(fm_control_interrupt_clear_key "$harness")" ] \
+      || fail "$harness does not repollute after an interrupt and needs no clear key there"
+  done
+  fm_control_interrupt_clear_key not-a-harness \
+    && fail "an unknown harness must be refused by the interrupt clear question too"
+  pass "fm-control-lib: the composer clear key and the interrupt clear question stay separate facts"
+}
+
 
 test_backend_key_capability_matrix() {
   local backend key
@@ -886,6 +916,7 @@ test_unverified_harness_is_refused
 test_harness_family_resolution
 test_prefixed_recorded_harness_reaches_each_control_verb
 test_backend_key_capability_matrix
+test_composer_clear_key_is_separate_from_the_interrupt_question
 test_harness_kind_capability
 test_orca_refuses_an_escape_harness_interrupt
 test_unverified_state_backends_refuse_stop_verbs

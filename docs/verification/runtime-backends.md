@@ -666,6 +666,20 @@ Two findings from the run shaped the shipped behavior: an OpenCode vendor update
 Kimi was not installed on the verification machine; its receive path is the same one-line-plus-shell contract, and the portable ladder and enqueue regressions in `tests/fm-task-inbox.test.sh` and `tests/fm-send-inbox.test.sh` cover every harness-independent half.
 This guard is the refresh command after any harness upgrade; it spends a small number of real tokens per installed harness, reports an absent harness explicitly, and refuses a run that verified nothing.
 
+On an exact `pending` composer verdict, the ring has one additional recovery step on tmux and Herdr: it asks the shared classifier whether the whole composer is only a narrow SGR mouse-report fragment, sends the recorded harness family's verified composer-clear key once, records the observed fragment verbatim with the post-clear state, and rings only after a subsequent `empty` verdict.
+That auto-clear path is intentionally limited to tmux and Herdr because they have real-backend CI coverage for live composer keystrokes; Zellij, Orca, and cmux defer the pending doorbell unchanged until their recovery path gains equivalent coverage.
+The check and clear are not atomic terminal operations, so the status note records the pre-clear observation and post-clear state without asserting that the observed bytes were exactly what the clear removed; text typed in the residual window is not recoverable from that note.
+
+### Claude composer clear key
+
+`fm_control_composer_clear_key claude` reports `C-u`, verified on 2026-09-17 against a real Claude Code composer driven from an isolated pty laboratory.
+A single Ctrl+U emptied a composer holding unsubmitted text, and Claude's own footer then read `Ctrl+Y to paste deleted text`, so the clear is undoable at the keyboard.
+A single Escape did not empty it: the footer read `Esc again to clear`.
+The same clear was confirmed on 2026-09-18 on a live Herdr pane, where `herdr pane send-keys <pane> ctrl+u` and `herdr pane send-keys <pane> backspace` both emptied the composer while `bin/fm-control.sh <id> interrupt` did not, which is why the interrupt table and the clear-key table in `bin/fm-control-lib.sh` answer different questions.
+`delete`, `C-u`, `ctrl-u`, and `C-a` are not accepted key names at the Herdr CLI and were rejected there; `bin/fm-send.sh <task-id> --key C-u` is the supported spelling, because the backend adapter normalizes `C-u` to `ctrl+u` itself.
+
+The portable regression for the detection this key serves is `tests/fm-composer-lib.test.sh` and `tests/fm-task-inbox.test.sh`.
+
 ## Gemini
 
 The Gemini crewmate adapter was verified on 2026-09-04 with gemini-cli 0.58.0 on Linux, Node v24.20.0, tmux 3.4.

@@ -79,6 +79,16 @@ case "${1:-}" in
       if [ -n "${FM_ACK_RECORD:-}" ] && [ -f "$FM_ACK_RECORD" ]; then
         mv "$FM_ACK_RECORD" "${FM_ACK_RECORD%/*}/handled/"
       fi
+    else
+      # Named keys land here. Logging them separately keeps FM_SEND_LOG the
+      # typed-text channel it has always been while making the composer clear
+      # key - and any stray Enter - observable. FM_FAKE_TMUX_CLEARED_CAPTURE
+      # models the real consequence of the clear: the pane redraws empty.
+      printf '%s\n' "${1:-}" >> "${FM_KEY_LOG:-/dev/null}"
+      if [ "${1:-}" = C-u ] && [ -n "${FM_FAKE_TMUX_CLEARED_CAPTURE:-}" ] \
+         && [ -n "${FM_FAKE_TMUX_CAPTURE:-}" ]; then
+        cat "$FM_FAKE_TMUX_CLEARED_CAPTURE" > "$FM_FAKE_TMUX_CAPTURE"
+      fi
     fi
     exit 0 ;;
   display-message)
@@ -277,6 +287,121 @@ test_ring_skips_dead_agent() {
   [ "$rc" = 0 ] || fail "an endpoint the classifier cannot see should still be rung, got $rc"
   grep -qF 'Firstmate instruction waiting' "$log" || fail "an unclassifiable endpoint did not receive the doorbell"
   pass "inbox: the ring skips dead or missing endpoints and still rings live or unclassifiable endpoints"
+}
+
+# --- The stray mouse-report auto-clear ---------------------------------------
+#
+# A terminal that is not consuming mouse reports can leak an SGR fragment into
+# a live composer as typed text. The composer then PROVENLY holds pending
+# input, the doorbell is skipped, and a durable instruction sits unread for
+# minutes while the pane looks idle and healthy. fm_task_inbox_clear_stray
+# ends that standoff, and its false-positive direction is the dangerous one:
+# clearing a human's typed line loses intent nothing can recover. So these
+# cases pin the refusals as hard as the clear, and pin that Enter is never
+# delivered while the composer still holds the fragment.
+
+# A claude-shaped bordered composer holding <content>, with the hint row a real
+# pane carries below the box. The content row is row 1, which is the cursor row
+# the tmux stub reports, so the cursor-anchored read selects this composer.
+stray_capture() {  # <content> <path>
+  LC_ALL=C awk -v t="$1" 'BEGIN {
+    body = " > " t
+    while (length(body) < 40) body = body " "
+    rule = ""
+    for (i = 0; i < length(body); i++) rule = rule "─"
+    printf "╭%s╮\n", rule
+    printf "│%s│\n", body
+    printf "╰%s╯\n", rule
+    printf "  ? for shortcuts\n"
+  }' > "$2"
+}
+
+# One ring against a composer holding <content> for a task recorded on
+# <harness>. Echoes the ring's return code; the caller inspects the logs.
+ring_with_composer() {  # <dir> <content> <harness>
+  local dir=$1 content=$2 harness=$3 state rec rc=0
+  state="$dir/state"
+  rm -rf "$dir"
+  mkdir -p "$state"
+  make_watch_stubs "$dir" >/dev/null
+  [ -z "$harness" ] || printf 'harness=%s\n' "$harness" > "$state/t1.meta"
+  stray_capture "$content" "$dir/capture"
+  stray_capture '' "$dir/capture.cleared"
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
+  : > "$dir/send.log"
+  : > "$dir/key.log"
+  PATH="$dir/fakebin:$PATH" FM_SEND_LOG="$dir/send.log" FM_KEY_LOG="$dir/key.log" \
+    FM_FAKE_TMUX_AGENT=claude FM_FAKE_TMUX_CAPTURE="$dir/capture" \
+    FM_FAKE_TMUX_CLEARED_CAPTURE="$dir/capture.cleared" \
+    inbox_lib "$state" fm_task_inbox_ring tmux sess:fm-t1 "$rec" fm-t1 || rc=$?
+  printf '%s' "$rc"
+}
+
+test_ring_clears_a_stray_fragment_and_records_it() {
+  local dir rc keys
+  dir="$TMP_ROOT/stray-clear"
+  rc=$(ring_with_composer "$dir" '3;36M' claude-wrapper)
+  [ "$rc" = 0 ] || fail "a composer holding only a stray fragment should be cleared and rung, got $rc"
+  keys=$(cat "$dir/key.log")
+  [ -n "$keys" ] || fail "no key was delivered, so the composer was never cleared"
+  [ "$(printf '%s\n' "$keys" | head -1)" = C-u ] \
+    || fail "the composer clear key must be the FIRST key delivered, got:"$'\n'"$keys"
+  # Enter is what would submit the fragment as a prompt. It may only ever
+  # appear after the clear, never before it.
+  case "$(printf '%s\n' "$keys" | awk '/^C-u$/ { exit } { print }')" in
+    *Enter*) fail "Enter reached the pane while the fragment was still present:"$'\n'"$keys" ;;
+  esac
+  grep -qF 'Firstmate instruction waiting' "$dir/send.log" \
+    || fail "the doorbell was not rung after the composer was cleared"
+  [ "$(cat "$dir/state/t1.status")" = 'note: observed a stray terminal mouse-report fragment before composer clear ("3;36M"); post-clear composer state: empty; exact cleared content remains unverified' ] \
+    || fail "the clear left no exact durable trace:"$'\n'"$(cat "$dir/state/t1.status" 2>/dev/null)"
+  pass "inbox: a stray mouse-report fragment is cleared, recorded, and the doorbell rung"
+}
+
+test_cleared_trace_preserves_long_fragment() {
+  local state fragment expected
+  state="$TMP_ROOT/stray-trace/state"
+  mkdir -p "$state"
+  fragment='<65;77;26M<65;77;26M<65;77;26M<65;77;26M<65;77;26M<65;77;26M'
+  expected="note: observed a stray terminal mouse-report fragment before composer clear (\"$fragment\"); post-clear composer state: unknown; exact cleared content remains unverified"
+  inbox_lib "$state" fm_task_inbox_note_cleared "$state" t1 "$fragment" \
+    || fail "writing the cleared-fragment trace failed"
+  [ "$(cat "$state/t1.status")" = "$expected" ] \
+    || fail "the cleared-fragment trace was altered:"$'\n'"$(cat "$state/t1.status")"
+  pass "inbox: cleared-fragment traces preserve the complete captured content"
+}
+
+test_ring_never_clears_human_text() {
+  local dir content rc
+  for content in 'hello captain' 'fix the 2;35M thing' 'run ci; retry 2;35M later' 'M'; do
+    dir="$TMP_ROOT/stray-keep"
+    rc=$(ring_with_composer "$dir" "$content" claude)
+    [ "$rc" = 1 ] || fail "typed text '$content' should still defer the doorbell, got $rc"
+    [ ! -s "$dir/key.log" ] \
+      || fail "typed text '$content' was typed over:"$'\n'"$(cat "$dir/key.log")"
+    [ ! -s "$dir/send.log" ] \
+      || fail "typed text '$content' did not stop the doorbell:"$'\n'"$(cat "$dir/send.log")"
+    [ ! -e "$dir/state/t1.status" ] \
+      || fail "typed text '$content' produced a clear record:"$'\n'"$(cat "$dir/state/t1.status")"
+  done
+  pass "inbox: a composer holding typed text is never cleared and still defers"
+}
+
+test_ring_refuses_to_clear_without_a_verified_clear_key() {
+  local dir rc
+  # codex is a verified adapter with no verified composer clear key, and an
+  # unrecorded harness is not a licence to improvise one. Both must defer with
+  # the fragment untouched, exactly as before this path existed.
+  for harness in codex '' not-a-harness; do
+    dir="$TMP_ROOT/stray-nokey"
+    rc=$(ring_with_composer "$dir" '3;36M' "$harness")
+    [ "$rc" = 1 ] || fail "harness '$harness' has no verified clear key and must defer, got $rc"
+    [ ! -s "$dir/key.log" ] \
+      || fail "harness '$harness' was sent a key anyway:"$'\n'"$(cat "$dir/key.log")"
+    [ ! -e "$dir/state/t1.status" ] \
+      || fail "harness '$harness' recorded a clear it never performed"
+  done
+  pass "inbox: no verified composer clear key means the composer is left alone"
 }
 
 test_idempotent_write_dedups_exact_body() {
@@ -696,6 +821,10 @@ test_write_is_durable_and_exact
 test_doorbell_is_a_shell_noop
 test_doorbell_rejects_terminal_controls
 test_ring_skips_dead_agent
+test_ring_clears_a_stray_fragment_and_records_it
+test_cleared_trace_preserves_long_fragment
+test_ring_never_clears_human_text
+test_ring_refuses_to_clear_without_a_verified_clear_key
 test_idempotent_write_dedups_exact_body
 test_idempotent_write_follows_concurrent_ack
 test_handled_mv_dedups_by_sequence

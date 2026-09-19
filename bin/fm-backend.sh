@@ -68,6 +68,11 @@ FM_BACKEND_CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # codex-app remains deliberately absent; see docs/codex-app-backend.md.
 FM_BACKEND_KNOWN="tmux herdr zellij orca cmux"
 FM_BACKEND_SPAWN="tmux herdr zellij orca cmux"
+# Stray-fragment auto-clear is deliberately limited to backends with a
+# real-backend CI lane. Experimental providers without that lane stay excluded
+# on purpose, not by omission; adding one requires the lane and adapter
+# evidence, not merely another dispatch case.
+FM_BACKEND_COMPOSER_STRAY_AUTOCLEAR="tmux herdr"
 
 # fm_backend_list_contains: whitespace-delimited membership without relying on
 # shell word splitting. fm-backend.sh is normally sourced by bash scripts, but
@@ -890,6 +895,26 @@ fm_backend_composer_state() {  # <backend> <target> [expected-label] -> empty|pe
     cmux) fm_backend_cmux_composer_state "$@" ;;
     zellij) fm_backend_zellij_composer_state "$@" ;;
     *) printf 'unknown' ;;
+  esac
+}
+
+# fm_backend_composer_stray_only: 0, printing the fragments, when <target>'s
+# composer holds nothing but leaked SGR mouse-report fragments
+# (bin/fm-composer-lib.sh, fm_composer_stray_only). Exists for the one caller
+# that must decide WHAT is pending rather than merely that something is
+# (bin/fm-task-inbox-lib.sh's auto-clear). Same thin-adapter rule as the
+# verdict above: each adapter contributes only its capture and capability
+# descriptor, and the shared owner decides. A backend with no adapter returns
+# nonzero, which is the same refusal every other unknown produces here.
+fm_backend_composer_stray_only() {  # <backend> <target> [expected-label]
+  local backend=$1
+  shift
+  fm_backend_list_contains "$FM_BACKEND_COMPOSER_STRAY_AUTOCLEAR" "$backend" || return 1
+  fm_backend_source "$backend" || return 1
+  case "$backend" in
+    tmux) fm_tmux_composer_stray_only "$@" ;;
+    herdr) fm_backend_herdr_composer_stray_only "$@" ;;
+    *) return 1 ;;
   esac
 }
 
