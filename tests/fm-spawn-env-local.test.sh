@@ -321,11 +321,23 @@ test_fresh_spawn_refuses_unremovable_destination_env() {
   write_env_local "$PROJECT_DIR"
   mkdir "$POOL_DIR/.env"
   printf 'DATABASE_URL=postgres://stale/app\n' > "$POOL_DIR/.env/stale"
+  export FM_FAKE_KILL_LOG="$CASE_DIR/kill.log"
+  export FM_TREEHOUSE_LOG="$CASE_DIR/treehouse.log"
+  cat > "$FAKEBIN_DIR/treehouse" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TREEHOUSE_LOG"
+exit 0
+SH
+  chmod +x "$FAKEBIN_DIR/treehouse"
 
   out=$(run_spawn "$id" --scout)
   status=$?
   expect_code 1 "$status" "a fresh spawn must refuse an unremovable destination env"$'\n'"$out"
   [ -d "$POOL_DIR/.env" ] || fail "a failed fresh cleanup removed or replaced the unremovable destination"
+  grep -Fq "kill-window" "$CASE_DIR/kill.log" \
+    || fail "an environment refusal left the spawned endpoint alive"
+  grep -Fq "return --force $POOL_DIR" "$CASE_DIR/treehouse.log" \
+    || fail "an environment refusal left the Treehouse worktree leased"
   pass "a fresh spawn refuses an unremovable destination env"
 }
 

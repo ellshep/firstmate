@@ -1043,6 +1043,8 @@ SPAWN_CONTROL_LOCK_HELD=0
 SPAWN_CONTROL_PARENT=0
 SPAWN_META_TMP=
 SPAWN_ENV_TMP=
+SPAWN_ENDPOINT_ABORT_CLEANUP=0
+SPAWN_WORKTREE_ABORT_CLEANUP=0
 SPAWN_META_LOCK=
 SPAWN_META_LOCK_HELD=0
 SPAWN_META_PUBLISH_STARTED=0
@@ -1088,7 +1090,7 @@ parse_orca_worktree_result() {
 }
 
 spawn_abort_cleanup() {
-  local status=$?
+  local status=$? tab_id=
   if [ "$RELAUNCH_REPLACEMENT_PENDING" = 1 ] &&
     [ "$SPAWN_META_PUBLISH_STARTED" = 1 ] &&
     [ -n "$SPAWN_META_TMP" ] &&
@@ -1168,6 +1170,21 @@ spawn_abort_cleanup() {
             true
         fi
       fi
+    fi
+  fi
+  if [ "$SPAWN_ENDPOINT_ABORT_CLEANUP" = 1 ]; then
+    SPAWN_ENDPOINT_ABORT_CLEANUP=0
+    [ "$BACKEND" = zellij ] && tab_id=$ZELLIJ_TAB_ID
+    if ! fm_backend_kill "$BACKEND" "$T" "$tab_id" "fm-$ID"; then
+      echo "error: could not close endpoint '$T' after the environment copy failure" >&2
+      status=1
+    fi
+  fi
+  if [ "$SPAWN_WORKTREE_ABORT_CLEANUP" = 1 ]; then
+    SPAWN_WORKTREE_ABORT_CLEANUP=0
+    if ! ( cd "$PROJ_ABS" && treehouse return --force "$WT" ); then
+      echo "error: could not return worktree '$WT' after the environment copy failure" >&2
+      status=1
     fi
   fi
   if [ "$SPAWN_TASK_LOCK_HELD" = 1 ]; then
@@ -3453,6 +3470,9 @@ EOF
     ;;
   esac
 fi
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
+  SPAWN_ENDPOINT_ABORT_CLEANUP=1
+fi
 if [ "$KIND" = secondmate ]; then
   FM_INHERITABLE_CONFIG=trace-context \
     propagate_inheritable_config "$CONFIG" "$PROJ_ABS/config" ||
@@ -3794,6 +3814,7 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   fi
 
   validate_spawn_worktree "treehouse get" "$T"
+  SPAWN_WORKTREE_ABORT_CLEANUP=1
 
   # Claim the pool slot for this task. The interactive `treehouse get` sent to
   # the pane above records only a process lease (Treehouse's durable
