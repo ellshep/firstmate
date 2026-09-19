@@ -1046,6 +1046,7 @@ SPAWN_ENV_TMP=
 SPAWN_ENDPOINT_ABORT_CLEANUP=0
 SPAWN_WORKTREE_ABORT_CLEANUP=0
 SPAWN_WORKTREE_RETURNED=0
+SPAWN_ORCA_ENV_ABORT_CLEANUP=0
 SPAWN_META_LOCK=
 SPAWN_META_LOCK_HELD=0
 SPAWN_META_PUBLISH_STARTED=0
@@ -1134,6 +1135,25 @@ spawn_abort_cleanup() {
   if [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" = 1 ]; then
     HERDR_PRESENTATION_ORDER_LOCK_HELD=0
     fm_lock_release "$HERDR_PRESENTATION_ORDER_LOCK" || true
+  fi
+  if [ "$SPAWN_ORCA_ENV_ABORT_CLEANUP" = 1 ]; then
+    SPAWN_ORCA_ENV_ABORT_CLEANUP=0
+    ORCA_ABORT_CLEANUP=0
+    if [ -n "${ORCA_TERMINAL:-}" ] &&
+      ! fm_backend_kill orca "$ORCA_TERMINAL" 2>/dev/null; then
+      echo "error: could not close endpoint '$ORCA_TERMINAL' after the environment copy failure" >&2
+      endpoint_closed=0
+      status=1
+    fi
+    if [ -n "${ORCA_WORKTREE_ID:-}" ]; then
+      if [ "$endpoint_closed" -ne 1 ]; then
+        echo "error: could not remove Orca worktree '$ORCA_WORKTREE_ID' because endpoint '$ORCA_TERMINAL' remains open" >&2
+        status=1
+      elif ! fm_backend_remove_worktree orca "$ORCA_WORKTREE_ID" 2>/dev/null; then
+        echo "error: could not remove Orca worktree '$ORCA_WORKTREE_ID' after the environment copy failure" >&2
+        status=1
+      fi
+    fi
   fi
   if [ "$ORCA_ABORT_CLEANUP" = 1 ]; then
     ORCA_ABORT_CLEANUP=0
@@ -1238,7 +1258,7 @@ spawn_abort_cleanup() {
     SPAWN_CONTROL_LOCK_HELD=0
     fm_lock_release "$SPAWN_CONTROL_LOCK" || true
   fi
-  # A hard kill skips this trap; the leftover dies with the disposable worktree.
+  # A hard kill skips this trap; relaunch reclaims its persistent temp on the next propagation.
   [ -z "$SPAWN_ENV_TMP" ] || rm -f "$SPAWN_ENV_TMP" 2>/dev/null || true
   SPAWN_ENV_TMP=
   [ -z "$SPAWN_META_TMP" ] || rm -f "$SPAWN_META_TMP" 2>/dev/null || true
@@ -3009,7 +3029,14 @@ fm_spawn_env_filter() { # <source> <destination> <output> <source-available> <mo
 # credentials is not. Only counts and excluded key names are reported, never
 # their values.
 propagate_env_local() { # <project> <worktree>
-  local project=$1 worktree=$2 src name dst copied=0 source_available destination_ignored merge_mode tmp source_input destination_input excluded_names
+  local project=$1 worktree=$2 src name dst copied=0 source_available destination_ignored merge_mode relaunch_tmp tmp source_input destination_input excluded_names
+  if [ "$RELAUNCH" -eq 1 ]; then
+    relaunch_tmp=$worktree/.fm-env-local.tmp
+    rm -f "$relaunch_tmp" 2>/dev/null || {
+      echo "error: could not remove stale temporary environment copy; refusing to launch" >&2
+      return 1
+    }
+  fi
   if [ "$RELAUNCH" -eq 0 ]; then
     for dst in "$worktree"/.env*; do
       [ -e "$dst" ] || [ -L "$dst" ] || continue
@@ -3042,10 +3069,18 @@ propagate_env_local() { # <project> <worktree>
       [ -f "$dst" ] && [ ! -L "$dst" ] && destination_input=$dst
       merge_mode=2
       [ "$destination_ignored" -eq 1 ] && merge_mode=1
-      tmp=$(umask 077; mktemp "$worktree/.fm-env-local.XXXXXX") || {
-        echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
-        return 1
-      }
+      if [ "$RELAUNCH" -eq 1 ]; then
+        tmp=$relaunch_tmp
+        ( umask 077; : > "$tmp" ) || {
+          echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
+          return 1
+        }
+      else
+        tmp=$(umask 077; mktemp "$worktree/.fm-env-local.XXXXXX") || {
+          echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
+          return 1
+        }
+      fi
       SPAWN_ENV_TMP=$tmp
       excluded_names=$(fm_spawn_env_filter "$source_input" "$destination_input" "$tmp" "$source_available" "$merge_mode") || {
         rm -f "$tmp" 2>/dev/null || :
@@ -3859,7 +3894,9 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
 fi
 if [ "$KIND" != secondmate ]; then
   if ! propagate_env_local "$PROJ_ABS" "$WT"; then
-    if [ "$RELAUNCH" -eq 0 ] && [ "$BACKEND" != orca ]; then
+    if [ "$RELAUNCH" -eq 0 ] && [ "$BACKEND" = orca ]; then
+      SPAWN_ORCA_ENV_ABORT_CLEANUP=1
+    elif [ "$RELAUNCH" -eq 0 ]; then
       SPAWN_ENDPOINT_ABORT_CLEANUP=1
       SPAWN_WORKTREE_ABORT_CLEANUP=1
     fi

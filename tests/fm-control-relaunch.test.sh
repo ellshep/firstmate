@@ -978,11 +978,15 @@ test_spawn_relaunch_sanitizes_copied_env_but_preserves_worker_values() {
   printf '.env*\n' > "$dir/wt/.gitignore"
   printf 'CAPTAIN_SOURCE=do-not-copy\nDATABASE_URL=postgres://captain/hosted\nDATABASE_URL_POOLED=postgres://captain/pool\nAPP_DB_HOST=prod-app-db.internal\nSUPABASE_DB_CONNECTION=prod-supabase-connection\nMSSQL_URL=mssql://host/db\n' > "$dir/proj/.env"
   printf 'WORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local\nDATABASE_URL_POOLED=postgres://captain/pool\nAPP_DB_HOST=prod-app-db.internal\nSUPABASE_DB_CONNECTION=prod-supabase-connection\nMSSQL_URL=mssql://host/db\nDATABASE_URL_PROD=postgres://worker/prod\n' > "$dir/wt/.env"
+  printf 'STALE_SECRET=must-be-reclaimed\n' > "$dir/wt/.fm-env-local.tmp"
+  chmod 600 "$dir/wt/.fm-env-local.tmp"
   printf 'zsh' > "$dir/fake/command"
 
   out=$(run_spawn "$dir" rl-env --relaunch)
   [ "$(cat "$dir/wt/.env")" = $'CAPTAIN_SOURCE=do-not-copy\nWORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local\nDATABASE_URL_PROD=postgres://worker/prod' ] \
     || fail "a relaunch did not sanitize copied values while preserving worker values: $(cat "$dir/wt/.env")"
+  [ ! -e "$dir/wt/.fm-env-local.tmp" ] \
+    || fail "a relaunch left a stale credential-bearing environment temp file"
   assert_contains "$out" "APP_DB_HOST" \
     "the relaunch should report multi-segment excluded key names"
   assert_contains "$out" "MSSQL_URL" \
