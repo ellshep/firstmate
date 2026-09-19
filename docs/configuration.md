@@ -28,7 +28,8 @@ Ordinary dead-direct-report recovery is owned by `stuck-crewmate-recovery`, whil
 
 ## Calm preference (config/calm)
 
-The Pi Calm extension and the Claude Code Calm mod share the captain's home-local presentation choice in gitignored `config/calm` under the effective Firstmate home, so one `/calm` choice applies on either harness.
+The Pi Calm extension, the Claude Code Calm mod, and the Claude Code marker filter `bin/fm-claude-calm-display.sh` all read the captain's home-local presentation choice in gitignored `config/calm` under the effective Firstmate home, so one `/calm` choice applies on either harness.
+The marker filter reads that file with no further flag, while the mod additionally requires its own environment flag, so the same choice can leave one live and the other dormant ([`calm.md`](calm.md#claude-code)).
 Both resolve that home from `FM_HOME`, then `FM_ROOT_OVERRIDE`, then the tracked code root derived from their own path under it, or use `FM_CONFIG_OVERRIDE` as the config directory outright when that test and specialized-setup override is present.
 The values they write are `on` and `off`, each followed by one newline; an absent, unreadable, or unrecognized value defaults to off.
 `max` is the legacy value written by a removed third presentation level whose behavior is now ordinary Calm, and it is still read as `on`, so a home upgraded from it keeps Calm on rather than dropping to off.

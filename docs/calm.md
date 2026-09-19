@@ -65,9 +65,21 @@ FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh
 
 ## Claude Code
 
-Calm on Claude Code is the `firstmate-calm` mod under `.claude/mods/firstmate-calm`: a Claude Code plugin whose whole behavior lives in one function-hooks module.
+Claude Code carries two independent Calm presentations with different policies, not two versions of one design.
+`bin/fm-claude-calm-display.sh` hides only the lines Firstmate explicitly marked, while the `firstmate-calm` mod under `.claude/mods/firstmate-calm` hides by classification.
+They share no code and each has its own activation gate, so either can be live while the other is dormant.
+The marker filter is the presentation that is live today; the mod stays dormant until a captain sets the environment flag below, which Firstmate never sets for them.
+
+The marker filter is registered in the tracked `.claude/settings.json` as a `MessageDisplay` command hook, and it runs whenever `config/calm` reads `on` or `max`, with no other flag involved.
+Calm through that filter is inverted relative to Pi: nothing is hidden unless Firstmate marked it with U+2062 INVISIBLE TIMES at the start of a narration line.
+A flush whose lines are all marked renders empty, a mixed flush keeps its unmarked lines exactly and in order, and a flush with no marked line is left byte-identical rather than re-encoded.
+Its safety property is that an unmarked line always displays, so a missed marker degrades to a stray visible narration line rather than a swallowed captain-facing answer.
+Every failure path, including Calm off, an unreadable preference, an absent `jq`, or an altered seam, shows the original text, and the filter never reads or writes session data.
+[`bin/fm-claude-calm-display.sh`](../bin/fm-claude-calm-display.sh) owns the marker bytes and the filter, with regression coverage in [`tests/fm-claude-calm-display.test.sh`](../tests/fm-claude-calm-display.test.sh).
+
+The `firstmate-calm` mod is a Claude Code plugin whose whole behavior lives in one function-hooks module.
 Claude Code's early-access function-hooks surface is off by default and can load modules through its rollout flag or per session with `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`; the mod independently requires that environment variable to equal `1` before doing anything.
-Firstmate never sets that flag in any project or user settings; enabling it is each captain's own explicit opt-in, and without that exact value the mod is a complete no-op even if Claude Code's rollout flag loads the module: there is no `/calm` command, no preference or transcript read, no timer, and every drawing stays exactly as Claude Code draws it, whatever `config/calm` says.
+Firstmate never sets that flag in any project or user settings; enabling it is each captain's own explicit opt-in, and without that exact value the mod is a complete no-op even if Claude Code's rollout flag loads the module: there is no `/calm` command, no preference or transcript read, no timer, and the mod changes no drawing of its own, whatever `config/calm` says.
 The trusted project auto-loads the mod through the `.claude/skills/firstmate-calm` entry (a symlink into `.claude/mods`), so no `--plugin-dir` or marketplace install is needed.
 
 With the flag on, the mod registers `/calm`, which toggles the same per-home preference Pi's `/calm` uses, so one choice applies on both harnesses.
@@ -80,6 +92,11 @@ A user row whose text the canonical operational-input parser recognizes, a First
 Assistant text follows the shared per-block preservation rule above, including when `claude --continue` restores the transcript.
 Toggling Calm redraws every hooked row already on screen, so rows drawn before the toggle hide or restore retroactively, and the preference is read before the first row draws.
 Nothing is rewritten: hidden rows remain in the message, model context, session storage, and exports, and the mod never touches tool execution, prompts, or the stored transcript.
+
+When both presentations are active, their hiding composes and neither consumes the other.
+The mod classifies the message's own text while the filter rewrites only the displayed flush, so no text is transformed twice, and a row the mod draws at zero height ignores whatever the filter returned for it.
+The combination does narrow the marker filter's safety property: unmarked mid-turn assistant text that is single-line and below the shared per-block preservation threshold is hidden by the mod, where the filter alone would have shown it.
+That is the only case in which the two policies disagree about hiding, and no regression currently exercises the two together.
 
 Bounds of the Claude Code support, each recorded with evidence in [`calm-mode-feasibility.md`](calm-mode-feasibility.md#2026-09-15-claude-code-21272-mods-feasibility-and-the-shipped-mod):
 
