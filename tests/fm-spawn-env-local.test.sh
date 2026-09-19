@@ -20,7 +20,21 @@ TMP_ROOT=$(fm_test_tmproot fm-spawn-env-local)
 # rather than read from the script, so widening bin/fm-spawn.sh's exclusion
 # constant fails a test instead of passing silently.
 KEPT_KEYS='APP_NAME SUPABASE_URL SUPABASE_SERVICE_KEY MY_PRODUCT USER PORT user port PUBLIC_URL API_PORT SMTP_HOST SMTP_USER SMTP_PASSWORD WEB_HOST ADMIN_USER SENTRY_DSN NEXT_PUBLIC_API_HOST STRIPE_SECRET_KEY'
-DROPPED_KEYS='DATABASE_URL DATABASE_URI DATABASE_URL_POOLED DATABASE_URL_DIRECT DATABASE_URL_PROD POSTGRES_URL INTERNAL_DB DB_HOST DB_USER DB_PASSWORD MYSQL_HOST PGHOST PGHOSTADDR PGPORT PGDATABASE PGUSER PGPASSWORD PGPASSFILE PGSERVICE PGSERVICEFILE APP_DB_HOST SUPABASE_DB_CONNECTION MSSQL_URL MSSQL_SERVER SQLSERVER_URL COCKROACH_URL SERVICE_CONNECTION SERVICE_ENDPOINT SUPABASE_SERVICE_KEY_PROD'
+DROPPED_KEYS='DATABASE_URL DATABASE_URI DATABASE_URL_POOLED DATABASE_URL_DIRECT DATABASE_URL_PROD POSTGRES_URL POSTGRESQL_URL INTERNAL_DB DB_HOST DB_USER DB_PASSWORD MYSQL_HOST PGHOST PGHOSTADDR PGPORT PGDATABASE PGUSER PGPASSWORD PGPASSFILE PGSERVICE PGSERVICEFILE APP_DB_HOST SUPABASE_DB_CONNECTION MSSQL_URL SQLSERVER_URL COCKROACH_URL SERVICE_CONNECTION SERVICE_ENDPOINT SUPABASE_SERVICE_KEY_PROD'
+VENDOR_TOKENS='MYSQL MARIADB MSSQL SQLSERVER COCKROACHDB MONGODB REDIS POSTGRES POSTGRESQL'
+VENDOR_DIMENSIONS='HOST HOSTADDR PORT USER USERNAME PASSWORD PASSWD DATABASE DBNAME DSN CONN CONNECTION SERVER'
+ORDINARY_PREFIXES='API SMTP WEB ADMIN SENTRY NEXT_PUBLIC'
+ORDINARY_DIMENSIONS='HOST HOSTADDR PORT USER USERNAME PASSWORD PASSWD DSN CONN CONNECTION SERVER'
+for vendor in $VENDOR_TOKENS; do
+  for dimension in $VENDOR_DIMENSIONS; do
+    DROPPED_KEYS+=" ${vendor}_${dimension}"
+  done
+done
+for prefix in $ORDINARY_PREFIXES; do
+  for dimension in $ORDINARY_DIMENSIONS; do
+    KEPT_KEYS+=" ${prefix}_${dimension}"
+  done
+done
 
 file_mode() { # <path>
   stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
@@ -86,6 +100,7 @@ EOF
 }
 
 write_env_local() { # <project>
+  local vendor dimension prefix
   cat > "$1/.env" <<'ENV'
 # local credentials
 APP_NAME=firstmate
@@ -95,6 +110,7 @@ DATABASE_URL_POOLED=postgres://hosted/pool
 export DATABASE_URL_DIRECT=postgres://hosted/direct
 DATABASE_URL_PROD=postgres://prod/app
 POSTGRES_URL=opaque-connection
+POSTGRESQL_URL=opaque-connection
 INTERNAL_DB="postgres://hosted/app"
 PGHOST=prod-db.internal
 PGHOSTADDR=10.0.0.4
@@ -112,7 +128,6 @@ MYSQL_HOST=prod-mysql.internal
 APP_DB_HOST=prod-app-db.internal
 SUPABASE_DB_CONNECTION=prod-supabase-connection
 MSSQL_URL=server=prod-db;database=app
-MSSQL_SERVER=prod-db.internal
 SQLSERVER_URL=sqlserver://host/db
 COCKROACH_URL=cockroachdb://host/db
 SERVICE_ENDPOINT=POSTGRES://HOST/DB
@@ -136,6 +151,16 @@ NEXT_PUBLIC_API_HOST=https://api.example.test
 STRIPE_SECRET_KEY=stripe-secret
 SERVICE_CONNECTION=ambiguous-connection
 ENV
+  for vendor in $VENDOR_TOKENS; do
+    for dimension in $VENDOR_DIMENSIONS; do
+      printf '%s_%s=hosted-db-value\n' "$vendor" "$dimension" >> "$1/.env"
+    done
+  done
+  for prefix in $ORDINARY_PREFIXES; do
+    for dimension in $ORDINARY_DIMENSIONS; do
+      printf '%s_%s=ordinary-config-value\n' "$prefix" "$dimension" >> "$1/.env"
+    done
+  done
 }
 
 run_spawn() { # <id> [args...]
