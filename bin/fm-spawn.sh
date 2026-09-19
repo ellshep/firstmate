@@ -28,6 +28,11 @@
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
 #   secondmate's charter.
+#   Once a ship/scout worktree is verified and before the agent launches, the
+#   project's gitignored root `.env*` files are copied into it minus
+#   propagate_env_local's excluded keys, so the worker is not credential-blind.
+#   That copy is zero-configuration; ineligible sources skip, but failed
+#   eligible copies refuse the spawn; see the function.
 #        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded endpoint and worktree instead of creating either. It is
@@ -1051,6 +1056,11 @@ SPAWN_CONTROL_LOCK=
 SPAWN_CONTROL_LOCK_HELD=0
 SPAWN_CONTROL_PARENT=0
 SPAWN_META_TMP=
+SPAWN_ENV_TMP=
+SPAWN_ENDPOINT_ABORT_CLEANUP=0
+SPAWN_WORKTREE_ABORT_CLEANUP=0
+SPAWN_WORKTREE_RETURNED=0
+SPAWN_ORCA_ENV_ABORT_CLEANUP=0
 SPAWN_META_LOCK=
 SPAWN_META_LOCK_HELD=0
 SPAWN_META_PUBLISH_STARTED=0
@@ -1096,7 +1106,16 @@ parse_orca_worktree_result() {
 }
 
 spawn_abort_cleanup() {
-  local status=$?
+  local status=$? tab_id='' endpoint_closed=1
+  if [ "$status" -eq 0 ]; then
+    RELAUNCH_REPLACEMENT_PENDING=0
+    HERDR_PROJECTION_ABORT_CLEANUP=0
+    ORCA_ABORT_CLEANUP=0
+    SPAWN_ORCA_ENV_ABORT_CLEANUP=0
+    SPAWN_ENDPOINT_ABORT_CLEANUP=0
+    SPAWN_WORKTREE_ABORT_CLEANUP=0
+    SPAWN_FRESH_COMMIT_PENDING=0
+  fi
   if [ "$RELAUNCH_REPLACEMENT_PENDING" = 1 ] &&
     [ "$SPAWN_META_PUBLISH_STARTED" = 1 ] &&
     [ -n "$SPAWN_META_TMP" ] &&
@@ -1139,6 +1158,56 @@ spawn_abort_cleanup() {
     HERDR_PRESENTATION_ORDER_LOCK_HELD=0
     fm_lock_release "$HERDR_PRESENTATION_ORDER_LOCK" || true
   fi
+  if [ "$SPAWN_ORCA_ENV_ABORT_CLEANUP" = 1 ]; then
+    SPAWN_ORCA_ENV_ABORT_CLEANUP=0
+    if [ -n "${ORCA_TERMINAL:-}" ] &&
+      ! fm_backend_kill orca "$ORCA_TERMINAL" 2>/dev/null; then
+      echo "error: could not close endpoint '$ORCA_TERMINAL' after the environment copy failure" >&2
+      endpoint_closed=0
+      status=1
+    fi
+    if [ -n "${ORCA_WORKTREE_ID:-}" ]; then
+      if [ "$endpoint_closed" -ne 1 ]; then
+        echo "error: could not remove Orca worktree '$ORCA_WORKTREE_ID' because endpoint '$ORCA_TERMINAL' remains open" >&2
+        ORCA_ABORT_CLEANUP=0
+        status=1
+        if ! mkdir -p "$STATE" 2>/dev/null; then
+          echo "error: could not publish Orca recovery metadata for '$ID'" >&2
+        else
+          SPAWN_META_TMP="$STATE/.$ID.meta.orca-recovery.${BASHPID:-$$}"
+          if {
+            echo "window=$W"
+            echo "endpoint_task_id=$ID"
+            echo "cleanup_recovery=orca"
+            echo "worktree=${WT:-}"
+            echo "project=$PROJ_ABS"
+            echo "harness=$HARNESS"
+            echo "kind=$KIND"
+            [ -z "${MODE:-}" ] || echo "mode=$MODE"
+            [ -z "${YOLO:-}" ] || echo "yolo=$YOLO"
+            echo "tasktmp=${TASK_TMP:-}"
+            echo "model=${MODEL:-default}"
+            echo "effort=${EFFORT:-default}"
+            echo "backend=orca"
+            echo "orca_worktree_id=$ORCA_WORKTREE_ID"
+            [ -z "${ORCA_TERMINAL:-}" ] || echo "terminal=$ORCA_TERMINAL"
+          } >"$SPAWN_META_TMP" 2>/dev/null &&
+            fm_backlog_atomic_transition publish "$SPAWN_META_TMP" "$STATE/$ID.meta" "task record" "$STATE"; then
+            :
+          else
+            echo "error: could not publish Orca recovery metadata for '$ID'" >&2
+          fi
+        fi
+      elif ! fm_backend_remove_worktree orca "$ORCA_WORKTREE_ID" 2>/dev/null; then
+        echo "error: could not remove Orca worktree '$ORCA_WORKTREE_ID' after the environment copy failure" >&2
+        status=1
+      else
+        ORCA_ABORT_CLEANUP=0
+      fi
+    else
+      ORCA_ABORT_CLEANUP=0
+    fi
+  fi
   if [ "$ORCA_ABORT_CLEANUP" = 1 ]; then
     ORCA_ABORT_CLEANUP=0
     if [ -n "${ORCA_TERMINAL:-}" ]; then
@@ -1178,6 +1247,28 @@ spawn_abort_cleanup() {
       fi
     fi
   fi
+  # A non-Orca environment-propagation refusal leaves no durable recovery record; a live orphaned endpoint remains discoverable, and closing that gap needs shared spawn lifecycle machinery deliberately not added here.
+  if [ "$SPAWN_ENDPOINT_ABORT_CLEANUP" = 1 ]; then
+    SPAWN_ENDPOINT_ABORT_CLEANUP=0
+    [ "$BACKEND" = zellij ] && tab_id=$ZELLIJ_TAB_ID
+    if ! fm_backend_kill "$BACKEND" "$T" "$tab_id" "fm-$ID"; then
+      echo "error: could not close endpoint '$T' after the environment copy failure" >&2
+      endpoint_closed=0
+      status=1
+    fi
+  fi
+  if [ "$SPAWN_WORKTREE_ABORT_CLEANUP" = 1 ]; then
+    if [ "$endpoint_closed" -ne 1 ]; then
+      echo "error: could not return worktree '$WT' because endpoint '$T' remains open" >&2
+      status=1
+    elif ! ( cd "$PROJ_ABS" && treehouse return --force "$WT" ); then
+      echo "error: could not return worktree '$WT' after the environment copy failure" >&2
+      status=1
+    else
+      SPAWN_WORKTREE_ABORT_CLEANUP=0
+      SPAWN_WORKTREE_RETURNED=1
+    fi
+  fi
   if [ "$SPAWN_TASK_LOCK_HELD" = 1 ]; then
     SPAWN_TASK_LOCK_HELD=0
     fm_lock_release "$SPAWN_TASK_LOCK" || true
@@ -1200,6 +1291,7 @@ spawn_abort_cleanup() {
   # another task's claim.
   if [ "$SPAWN_SLOT_CLAIMED" = 1 ] && [ -n "${WT:-}" ] &&
     [ ! -e "$STATE/$ID.meta" ] && [ ! -L "$STATE/$ID.meta" ] &&
+    { [ "$SPAWN_WORKTREE_ABORT_CLEANUP" != 1 ] || [ "$SPAWN_WORKTREE_RETURNED" = 1 ]; } &&
     fm_treehouse_pool_slot "$PROJ_ABS" "$WT"; then
     SPAWN_SLOT_CLAIMED=0
     if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
@@ -1220,6 +1312,9 @@ spawn_abort_cleanup() {
     SPAWN_CONTROL_LOCK_HELD=0
     fm_lock_release "$SPAWN_CONTROL_LOCK" || true
   fi
+  # A hard kill skips this trap; relaunch reclaims its persistent temp on the next propagation.
+  [ -z "$SPAWN_ENV_TMP" ] || rm -f "$SPAWN_ENV_TMP" 2>/dev/null || true
+  SPAWN_ENV_TMP=
   [ -z "$SPAWN_META_TMP" ] || rm -f "$SPAWN_META_TMP" 2>/dev/null || true
   if [ "$CONFIG_INHERIT_LOCK_HELD" = 1 ]; then
     CONFIG_INHERIT_LOCK_HELD=0
@@ -2812,6 +2907,10 @@ spawn_worktree_has_origin_config() { # <worktree>
 
 freshen_spawn_worktree_base() { # <worktree>
   local worktree=$1 default target expected actual status
+  rm -f "$worktree/.fm-env-local.tmp" 2>/dev/null || {
+    echo "error: could not remove stale temporary environment copy; refusing to launch" >&2
+    return 1
+  }
   status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) || {
     echo "error: could not inspect pooled worktree '$worktree' before refreshing its base" >&2
     return 1
@@ -2857,6 +2956,270 @@ freshen_spawn_worktree_base() { # <worktree>
     echo "error: pooled worktree '$worktree' is at '${actual:-unknown}', not current '$target' ('$expected'); refusing to launch" >&2
     return 1
   fi
+}
+
+# Keys never copied into a task worktree's inherited environment file. The
+# extended-regex alternations below match a `KEY=` line and nothing else; these
+# constants are the only things to edit to change the set.
+#
+# Database URL spellings, libpq's PG* connection variables, and
+# database-qualified compound keys containing a whole connection component
+# such as HOST, USER, or DATABASE: a disposable worktree takes its database
+# from the per-worktree throwaway Postgres that exists for exactly this
+# purpose, never from a hosted one. Bare generic names such as USER and PORT,
+# and ordinary compound names such as SMTP_HOST, are not connection keys by
+# themselves; an ambiguous compound name is excluded. A database connection
+# is excluded when either its key looks like a connection setting or its value
+# contains a database URI scheme. The key test catches values whose format is
+# unfamiliar, while the value test catches connection keys whose name is
+# unfamiliar; neither test is complete on its own.
+# This boundary has two deliberate exclusions with different rationales:
+# database connection names and URI values are withheld so a disposable copy
+# uses the per-worktree throwaway Postgres already provided for it; *_PROD
+# entries are withheld as an absolute security boundary because production
+# secrets are the captain's own business. Key spellings outside both categories,
+# including keyword-pair or ADO.NET-style connection strings carrying no URI
+# scheme, were never in scope; widening or narrowing either boundary requires
+# answering that rationale.
+#
+# *_PROD: these are not a stricter spelling of their non-prod siblings. A file
+# of this shape has been observed carrying, under _PROD names, a production
+# database connection and a production service-role key - the kind of key that
+# bypasses row-level security, so anything holding it can read and write every
+# row of every tenant. Copying them would fan both into every disposable worker
+# copy, on every spawn, unasked. Excluding them by construction is the captain's
+# own standing decision, not a default to be traded off: production credentials
+# stay in the captain's own checkout. Widening this set means first answering
+# why a throwaway worktree needs a production database and a key that ignores
+# row-level security, and no convenience this path could buy is worth that.
+FM_SPAWN_ENV_DATABASE_VENDORS='MYSQL|MARIADB|MSSQL|SQLSERVER|SQLSRV|COCKROACHDB|COCKROACH|CRDB|MONGODB|MONGO|REDIS|VALKEY|POSTGRES|POSTGRESQL'
+FM_SPAWN_ENV_EXCLUDED_KEYS="([A-Za-z0-9_]+_)?DATABASE_(URL|URI)(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?(${FM_SPAWN_ENV_DATABASE_VENDORS})_(URL|URI)|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_(URL|URI)|([A-Za-z0-9_]+_)?DB_(URL|URI)|[A-Za-z0-9_]+_DATABASE_(URL|URI)|([A-Za-z0-9_]+_)?(DATABASE|DB)(_[A-Za-z0-9_]+)*|[A-Za-z0-9_]*(${FM_SPAWN_ENV_DATABASE_VENDORS})[A-Za-z0-9_]*_(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION|SERVER)(_[A-Za-z0-9_]+)*|PG(HOST|HOSTADDR|PORT|DATABASE|USER|PASSWORD|PASSFILE|SERVICE|SERVICEFILE)|SERVICE_(CONNECTION|ENDPOINT)|[A-Za-z0-9_]*_PROD"
+# This value match stays unanchored intentionally: merely mentioning a supported database scheme is withheld.
+FM_SPAWN_ENV_DATABASE_SCHEMES="[[:space:]]*[\"']?(postgres|postgresql|mysql|mariadb|mssql|sqlserver|sqlsrv|cockroachdb|cockroach|crdb|mongodb|mongo|redis|rediss|valkey)(\\+[A-Za-z0-9_]+)?://"
+
+fm_spawn_env_filter() { # <source> <destination> <output> <source-available> <mode>
+  local source=$1 destination=$2 output=$3 source_available=$4 mode=$5
+  FM_SPAWN_ENV_DATABASE_SCHEMES="$FM_SPAWN_ENV_DATABASE_SCHEMES" awk \
+    -v excluded="$FM_SPAWN_ENV_EXCLUDED_KEYS" \
+    -v output="$output" \
+    -v source_available="$source_available" \
+    -v mode="$mode" '
+    BEGIN {
+      schemes = tolower(ENVIRON["FM_SPAWN_ENV_DATABASE_SCHEMES"])
+      excluded_lower = tolower(excluded)
+    }
+    function key_of(line, text) {
+      if (line !~ /^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/) return ""
+      text = line
+      sub(/^[[:space:]]*/, "", text)
+      sub(/^export[[:space:]]+/, "", text)
+      sub(/[[:space:]]*=.*/, "", text)
+      return text
+    }
+    function value_of(line, text) {
+      text = line
+      sub(/^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/, "", text)
+      return text
+    }
+    function is_excluded(key, value) {
+      return tolower(key) ~ ("^(" excluded_lower ")$") || tolower(value) ~ schemes
+    }
+    function report_key(key) {
+      if (key != "" && !reported[key]++) print key
+    }
+    FILENAME == ARGV[1] {
+      key = key_of($0)
+      value = value_of($0)
+      if (key != "") {
+        source_values[key SUBSEP value] = 1
+        if (is_excluded(key, value)) {
+          report_key(key)
+        } else if (mode == 1) {
+          source_lines[++source_count] = $0
+          source_keys[source_count] = key
+        } else if (mode == 0) {
+          print $0 > output
+        }
+      } else if (mode == 1) {
+        source_lines[++source_count] = $0
+        source_keys[source_count] = ""
+      } else if (mode == 0) {
+        print $0 > output
+      }
+      next
+    }
+    {
+      if (mode == 0) next
+      key = key_of($0)
+      value = value_of($0)
+      if (key != "") destination_keys[key] = 1
+      # A matching excluded destination value is worker-authored; filtering governs copied source, not worktree contents.
+      if (key != "" && is_excluded(key, value) \
+        && source_available && source_values[key SUBSEP value]) {
+        report_key(key)
+        next
+      }
+      destination_lines[++destination_count] = $0
+    }
+    END {
+      if (mode == 1) {
+        for (i = 1; i <= source_count; i++) {
+          if (source_keys[i] == "" || !destination_keys[source_keys[i]]) print source_lines[i] > output
+        }
+      }
+      if (mode != 0) for (i = 1; i <= destination_count; i++) print destination_lines[i] > output
+    }
+  ' "$source" "$destination"
+}
+
+# Copy the spawning project's gitignored root `.env*` files into the fresh task
+# worktree, minus the excluded keys above, so the worker's very first command
+# sees the credentials the captain's own checkout has. Gitignored is exactly why
+# they never arrive with the worktree, and `git check-ignore` is the whole
+# selection test: a tracked file such as `.env.schema` is excluded by it, so no
+# filename list, flag, or per-project setting is needed. The destination is
+# checked too, because a file the worktree would NOT ignore is one a worker
+# could commit. On relaunch, sanitize every existing destination, but merge
+# source values only when the destination is ignored.
+# Fresh pooled slots are recycled between tasks, and `git clean -fd` does not
+# remove ignored files (`-x` is required), so an ignored env file can survive
+# the reset. A source-driven pass cannot see a name the current project lacks;
+# fresh spawns therefore clear eligible destination `.env*` entries before
+# copying current sources. Otherwise the filter is bypassed and stale or
+# production-sensitive values are carried forward; a filter that leftover
+# state can bypass is not a filter.
+#
+# Fresh propagation is deliberately not fail-closed for preconditions: a
+# missing or unreadable source, a source symlink, a non-git project, or a name
+# not ignored on either side skips. Relaunch sanitizes an existing destination
+# regardless of its ignore status; source values are withheld unless it is
+# ignored.
+# Once a source is eligible to copy, failed temp creation, filtering,
+# permission changes, cleanup, or installation refuses the spawn. A worker
+# without credentials is survivable; a spawn that can retain excluded
+# credentials is not. Only counts and excluded key names are reported, never
+# their values.
+propagate_env_local() { # <project> <worktree>
+  local project=$1 worktree=$2 src name dst copied=0 source_available destination_ignored merge_mode relaunch_tmp tmp source_input destination_input excluded_names
+  relaunch_tmp=$worktree/.fm-env-local.tmp
+  rm -f "$relaunch_tmp" 2>/dev/null || {
+    echo "error: could not remove stale temporary environment copy; refusing to launch" >&2
+    return 1
+  }
+  if [ "$RELAUNCH" -eq 0 ]; then
+    for dst in "$worktree"/.env*; do
+      [ -e "$dst" ] || [ -L "$dst" ] || continue
+      name=${dst##*/}
+      git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null || continue
+      rm -f "$dst" 2>/dev/null || {
+        echo "error: could not remove existing local environment file '$name'; refusing to launch" >&2
+        return 1
+      }
+    done
+  else
+    for dst in "$worktree"/.env*; do
+      [ -e "$dst" ] || [ -L "$dst" ] || continue
+      name=${dst##*/}
+      src=$project/$name
+      source_available=0
+      if [ ! -L "$src" ] && [ -f "$src" ] && [ -r "$src" ] \
+        && git -C "$project" check-ignore -q -- "$name" 2>/dev/null; then
+        source_available=1
+      fi
+      destination_ignored=0
+      git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null && destination_ignored=1
+      if [ -L "$dst" ] && [ "$source_available" -eq 0 ]; then
+        echo "error: cannot preserve symlinked local environment file '$name' without a readable source; refusing to relaunch" >&2
+        return 1
+      fi
+      source_input=/dev/null
+      [ "$source_available" -eq 1 ] && source_input=$src
+      destination_input=/dev/null
+      [ -f "$dst" ] && [ ! -L "$dst" ] && destination_input=$dst
+      merge_mode=2
+      [ "$destination_ignored" -eq 1 ] && merge_mode=1
+      tmp=$relaunch_tmp
+      ( umask 077; : > "$tmp" ) || {
+        echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
+        return 1
+      }
+      SPAWN_ENV_TMP=$tmp
+      excluded_names=$(fm_spawn_env_filter "$source_input" "$destination_input" "$tmp" "$source_available" "$merge_mode") || {
+        rm -f "$tmp" 2>/dev/null || :
+        echo "error: could not filter local environment file '$name'; refusing to launch" >&2
+        return 1
+      }
+      [ -z "$excluded_names" ] || echo "note: excluded local environment key(s) for $name: $excluded_names" >&2
+      if [ "$source_available" -eq 1 ] && [ "$destination_ignored" -ne 1 ]; then
+        echo "note: withheld local environment credentials for $name because the destination is not ignored" >&2
+      fi
+      chmod 600 "$tmp" 2>/dev/null || {
+        rm -f "$tmp" 2>/dev/null || :
+        echo "error: could not set permissions on local environment file '$name'; refusing to launch" >&2
+        return 1
+      }
+      rm -f "$dst" 2>/dev/null || {
+        rm -f "$tmp" 2>/dev/null || :
+        echo "error: could not replace local environment file '$name'; refusing to launch" >&2
+        return 1
+      }
+      mv "$tmp" "$dst" 2>/dev/null || {
+        rm -f "$tmp" 2>/dev/null || :
+        echo "error: could not install local environment file '$name'; refusing to launch" >&2
+        return 1
+      }
+      SPAWN_ENV_TMP=
+      copied=$((copied + 1))
+    done
+  fi
+  for src in "$project"/.env*; do
+    # Do not follow source symlinks: the project-local exclusion filter only
+    # constrains bytes from a file owned by this project, not an arbitrary file
+    # elsewhere on the machine. Missing credentials are survivable; silently
+    # copying an outside file is not.
+    if [ -L "$src" ]; then
+      echo "note: skipped '$src' because it is a symlink" >&2
+      continue
+    fi
+    [ -f "$src" ] && [ -r "$src" ] || continue
+    name=${src##*/}
+    dst=$worktree/$name
+    git -C "$project" check-ignore -q -- "$name" 2>/dev/null || continue
+    git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null || continue
+    if [ "$RELAUNCH" -eq 0 ]; then
+      rm -f "$dst" 2>/dev/null || {
+        echo "error: could not remove existing local environment file '$name'; refusing to launch" >&2
+        return 1
+      }
+    else
+      [ ! -e "$dst" ] && [ ! -L "$dst" ] || continue
+    fi
+    tmp=$relaunch_tmp
+    ( umask 077; : > "$tmp" ) || {
+      echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
+      return 1
+    }
+    SPAWN_ENV_TMP=$tmp
+    excluded_names=$(fm_spawn_env_filter "$src" /dev/null "$tmp" 1 0) || {
+      rm -f "$tmp" 2>/dev/null || :
+      echo "error: could not filter local environment file '$name'; refusing to launch" >&2
+      return 1
+    }
+    [ -z "$excluded_names" ] || echo "note: excluded local environment key(s) for $name: $excluded_names" >&2
+    chmod 600 "$tmp" 2>/dev/null || {
+      rm -f "$tmp" 2>/dev/null || :
+      echo "error: could not set permissions on local environment file '$name'; refusing to launch" >&2
+      return 1
+    }
+    mv "$tmp" "$dst" 2>/dev/null || {
+      rm -f "$tmp" 2>/dev/null || :
+      echo "error: could not install local environment file '$name'; refusing to launch" >&2
+      return 1
+    }
+    SPAWN_ENV_TMP=
+    copied=$((copied + 1))
+  done
+  [ "$copied" -eq 0 ] || echo "note: copied $copied local environment file(s) into the task worktree" >&2
 }
 
 herdr_projection_meta_field_exact() { # <meta> <key>
@@ -3691,7 +4054,22 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   fi
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
-  freshen_spawn_worktree_base "$WT" || exit 1
+  if ! freshen_spawn_worktree_base "$WT"; then
+    SPAWN_ENDPOINT_ABORT_CLEANUP=1
+    SPAWN_WORKTREE_ABORT_CLEANUP=1
+    exit 1
+  fi
+fi
+if [ "$KIND" != secondmate ]; then
+  if ! propagate_env_local "$PROJ_ABS" "$WT"; then
+    if [ "$RELAUNCH" -eq 0 ] && [ "$BACKEND" = orca ]; then
+      SPAWN_ORCA_ENV_ABORT_CLEANUP=1
+    elif [ "$RELAUNCH" -eq 0 ]; then
+      SPAWN_ENDPOINT_ABORT_CLEANUP=1
+      SPAWN_WORKTREE_ABORT_CLEANUP=1
+    fi
+    exit 1
+  fi
 fi
 
 # Pre-register Claude's workspace trust for the directory this launch starts in,

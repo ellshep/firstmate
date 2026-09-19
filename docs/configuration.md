@@ -421,6 +421,17 @@ This applies only to agents Firstmate launches; the captain's own primary Firstm
 
 Every claude launch's inline `--settings` JSON also carries `"attribution":{"commit":"","pr":"","sessionUrl":false}`, so a spawned worker never writes a Co-Authored-By trailer, Claude-Session link, or generated-with line into a commit or PR body regardless of which settings scopes end up loaded.
 
+## Local project environment files (.env*)
+
+Before a ship or scout worker launches, `fm-spawn.sh` copies readable, regular, gitignored `.env*` files from the project's checkout root into the task worktree, including when an existing task is relaunched.
+This propagation is separate from `config/launch-env-allowlist`, which filters the ambient process environment rather than project files.
+Fresh pooled worktrees have eligible existing `.env*` files refreshed, and relaunches sanitize existing destination files before merging current source values only when the destination is also gitignored.
+Files that are tracked, not ignored by the destination, symlinks, unreadable, or absent are not used as credential sources.
+An eligible source is filtered before installation, and the resulting file is mode `0600`; an eligible copy failure refuses the spawn instead of launching with an unsafe or partially propagated file.
+The filter copies ordinary configuration while excluding every recognized database connection key and every key ending in `_PROD` by construction, because disposable worktrees must use their throwaway local database and must not receive production credentials.
+The exact key and URI classification, including intentionally ambiguous database forms, is owned by the [`fm-spawn.sh` header](../bin/fm-spawn.sh), and the propagation regression suite is [`tests/fm-spawn-env-local.test.sh`](../tests/fm-spawn-env-local.test.sh).
+Secondmate home inheritance remains governed by the [`secondmate-provisioning` skill](../.agents/skills/secondmate-provisioning/SKILL.md); this project-file copy is for ship and scout task worktrees.
+
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
