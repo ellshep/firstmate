@@ -1231,6 +1231,7 @@ spawn_abort_cleanup() {
       fi
     fi
   fi
+  # A non-Orca environment-propagation refusal leaves no durable recovery record; a live orphaned endpoint remains discoverable, and closing that gap needs shared spawn lifecycle machinery deliberately not added here.
   if [ "$SPAWN_ENDPOINT_ABORT_CLEANUP" = 1 ]; then
     SPAWN_ENDPOINT_ABORT_CLEANUP=0
     [ "$BACKEND" = zellij ] && tab_id=$ZELLIJ_TAB_ID
@@ -2968,7 +2969,8 @@ freshen_spawn_worktree_base() { # <worktree>
 # row-level security, and no convenience this path could buy is worth that.
 FM_SPAWN_ENV_DATABASE_VENDORS='MYSQL|MARIADB|MSSQL|SQLSERVER|SQLSRV|COCKROACHDB|COCKROACH|CRDB|MONGODB|MONGO|REDIS|VALKEY|POSTGRES|POSTGRESQL'
 FM_SPAWN_ENV_EXCLUDED_KEYS="([A-Za-z0-9_]+_)?DATABASE_(URL|URI)(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?(${FM_SPAWN_ENV_DATABASE_VENDORS})_(URL|URI)|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_(URL|URI)|([A-Za-z0-9_]+_)?DB_(URL|URI)|[A-Za-z0-9_]+_DATABASE_(URL|URI)|([A-Za-z0-9_]+_)?(DATABASE|DB)(_[A-Za-z0-9_]+)*|[A-Za-z0-9_]*(${FM_SPAWN_ENV_DATABASE_VENDORS})[A-Za-z0-9_]*_(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION|SERVER)(_[A-Za-z0-9_]+)*|PG(HOST|HOSTADDR|PORT|DATABASE|USER|PASSWORD|PASSFILE|SERVICE|SERVICEFILE)|SERVICE_(CONNECTION|ENDPOINT)|[A-Za-z0-9_]*_PROD"
-FM_SPAWN_ENV_DATABASE_SCHEMES="^[[:space:]]*[\"']?(postgres|postgresql|mysql|mariadb|mssql|sqlserver|sqlsrv|cockroachdb|cockroach|crdb|mongodb|mongo|redis|rediss|valkey)(\\+[A-Za-z0-9_]+)?://"
+# This value match stays unanchored intentionally: merely mentioning a supported database scheme is withheld.
+FM_SPAWN_ENV_DATABASE_SCHEMES="[[:space:]]*[\"']?(postgres|postgresql|mysql|mariadb|mssql|sqlserver|sqlsrv|cockroachdb|cockroach|crdb|mongodb|mongo|redis|rediss|valkey)(\\+[A-Za-z0-9_]+)?://"
 
 fm_spawn_env_filter() { # <source> <destination> <output> <source-available> <mode>
   local source=$1 destination=$2 output=$3 source_available=$4 mode=$5
