@@ -230,7 +230,7 @@ SH
   assert_contains "$out" "SERVICE_ENDPOINT" \
     "the spawn should report case-insensitive URI matches"
   case "$out" in
-  *postgres://*|*POSTGRES://*|*prod-db*|*prod-db.internal*|*service-key*)
+  *postgres://*|*POSTGRES://*|*prod-db*|*service-key*)
     fail "the spawn logged an excluded value: $out"
     ;;
   esac

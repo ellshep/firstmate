@@ -1092,7 +1092,7 @@ parse_orca_worktree_result() {
 }
 
 spawn_abort_cleanup() {
-  local status=$? tab_id= endpoint_closed=1
+  local status=$? tab_id='' endpoint_closed=1
   if [ "$status" -eq 0 ]; then
     RELAUNCH_REPLACEMENT_PENDING=0
     HERDR_PROJECTION_ABORT_CLEANUP=0
@@ -1161,7 +1161,7 @@ spawn_abort_cleanup() {
           echo "error: could not publish Orca recovery metadata for '$ID'" >&2
         else
           SPAWN_META_TMP="$STATE/.$ID.meta.orca-recovery.${BASHPID:-$$}"
-          {
+          if {
             echo "window=$W"
             echo "endpoint_task_id=$ID"
             echo "cleanup_recovery=orca"
@@ -1178,9 +1178,11 @@ spawn_abort_cleanup() {
             echo "orca_worktree_id=$ORCA_WORKTREE_ID"
             [ -z "${ORCA_TERMINAL:-}" ] || echo "terminal=$ORCA_TERMINAL"
           } >"$SPAWN_META_TMP" 2>/dev/null &&
-            fm_backlog_atomic_transition publish "$SPAWN_META_TMP" "$STATE/$ID.meta" "task record" "$STATE" || {
-              echo "error: could not publish Orca recovery metadata for '$ID'" >&2
-            }
+            fm_backlog_atomic_transition publish "$SPAWN_META_TMP" "$STATE/$ID.meta" "task record" "$STATE"; then
+            :
+          else
+            echo "error: could not publish Orca recovery metadata for '$ID'" >&2
+          fi
         fi
       elif ! fm_backend_remove_worktree orca "$ORCA_WORKTREE_ID" 2>/dev/null; then
         echo "error: could not remove Orca worktree '$ORCA_WORKTREE_ID' after the environment copy failure" >&2
