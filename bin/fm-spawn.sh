@@ -1157,6 +1157,31 @@ spawn_abort_cleanup() {
         echo "error: could not remove Orca worktree '$ORCA_WORKTREE_ID' because endpoint '$ORCA_TERMINAL' remains open" >&2
         ORCA_ABORT_CLEANUP=0
         status=1
+        if ! mkdir -p "$STATE" 2>/dev/null; then
+          echo "error: could not publish Orca recovery metadata for '$ID'" >&2
+        else
+          SPAWN_META_TMP="$STATE/.$ID.meta.orca-recovery.${BASHPID:-$$}"
+          {
+            echo "window=$W"
+            echo "endpoint_task_id=$ID"
+            echo "cleanup_recovery=orca"
+            echo "worktree=${WT:-}"
+            echo "project=$PROJ_ABS"
+            echo "harness=$HARNESS"
+            echo "kind=$KIND"
+            [ -z "${MODE:-}" ] || echo "mode=$MODE"
+            [ -z "${YOLO:-}" ] || echo "yolo=$YOLO"
+            echo "tasktmp=${TASK_TMP:-}"
+            echo "model=${MODEL:-default}"
+            echo "effort=${EFFORT:-default}"
+            echo "backend=orca"
+            echo "orca_worktree_id=$ORCA_WORKTREE_ID"
+            [ -z "${ORCA_TERMINAL:-}" ] || echo "terminal=$ORCA_TERMINAL"
+          } >"$SPAWN_META_TMP" 2>/dev/null &&
+            fm_backlog_atomic_transition publish "$SPAWN_META_TMP" "$STATE/$ID.meta" "task record" "$STATE" || {
+              echo "error: could not publish Orca recovery metadata for '$ID'" >&2
+            }
+        fi
       elif ! fm_backend_remove_worktree orca "$ORCA_WORKTREE_ID" 2>/dev/null; then
         echo "error: could not remove Orca worktree '$ORCA_WORKTREE_ID' after the environment copy failure" >&2
         status=1
@@ -2995,6 +3020,7 @@ fm_spawn_env_filter() { # <source> <destination> <output> <source-available> <mo
       key = key_of($0)
       value = value_of($0)
       if (key != "") destination_keys[key] = 1
+      # A matching excluded destination value is worker-authored; filtering governs copied source, not worktree contents.
       if (key != "" && is_excluded(key, value) \
         && source_available && source_values[key SUBSEP value]) {
         report_key(key)
