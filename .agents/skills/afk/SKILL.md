@@ -168,7 +168,8 @@ Classify each wake this way:
 - `check` -> always escalate. Check scripts print only when firstmate should wake.
 - `stale` with a terminal status or bare legacy captain-relevant line -> escalate.
   Nonterminal progress remains transient even when its prose contains a legacy free-text token or its seen-status marker already matches, so record a marker and self-handle.
-  If the pane is still idle past `FM_STALE_ESCALATE_SECS` (default 240s), housekeeping escalates it as a possible wedge.
+  If the pane is still idle past `FM_STALE_ESCALATE_SECS` (default 240s) without a declared wait or open keyed decision diverting it, housekeeping escalates it as a possible wedge.
+  Housekeeping refreshes the stale marker while the decision remains open, so a later `resolved` or `captain-held` close starts a fresh `FM_STALE_ESCALATE_SECS` window and then restores ordinary wedge detection.
   This bounds wedge-detection latency to the threshold plus a tick: a delay, never a loss.
   Healthy crewmates are autonomous and do not wait on firstmate mid-task.
 - `heartbeat` -> self-handle.

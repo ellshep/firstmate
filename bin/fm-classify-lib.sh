@@ -604,6 +604,19 @@ status_open_decisions() {  # <status-file> [<kind>]
   printf '%s' "$open"
 }
 
+# 0 when <status-file> currently has at least one unanswered keyed decision per
+# status_open_decisions above. A pane parked on that decision is waiting for
+# firstmate, so wedge suppression consults this fold rather than last_status_line:
+# a later working/done/paused line does not close the decision, and a leftover
+# needs-decision that has already been resolved must not keep suppressing a
+# genuine stall. Cheap: a pure status-file fold, never a crew-state read.
+# Disjoint from the declared-wait predicates above by verb: those read the newest
+# line for `paused`/`captain-held`, while a verified captain-held transfer for a
+# key CLOSES that key in this fold, so the two never both claim the same pane.
+status_has_open_decision() {  # <status-file>
+  [ -n "$(status_open_decisions "$1")" ]
+}
+
 # Resolve the log's current declaration at one boundary for crew-state consumers.
 # Any decision the fold still holds open wins over unrelated events, and the
 # fold's most recently opened record supplies it; the latest recognized event

@@ -49,7 +49,11 @@
 #     fm-classify-lib.sh's combined predicate - instead gets its own longer
 #     PAUSE_RESURFACE_SECS recheck, never a wedge escalation, whether its pane
 #     reads idle or busy; only a status append that stops declaring the wait
-#     ends that routing. A captain-held transfer is not rechecked at all while
+#     ends that routing. An unanswered keyed decision, per fm-classify-lib.sh's
+#     status_has_open_decision fold, likewise is not a wedge: the pane is
+#     waiting for firstmate, so housekeeping refreshes the stale marker until
+#     the fold shows the decision closed, and a later close starts a fresh
+#     window. A captain-held transfer is not rechecked at all while
 #     the away-posture record (state/.afk-contract) exists: nobody is there to
 #     answer it, and the return brief lists it.
 #     Crewmates are autonomous, so a delayed stale response does not stall a
@@ -485,6 +489,12 @@ stale_marker_record() {  # <window> <state>  — create if absent
   key=$(_stale_key "$(window_to_task "$win" "$state")")
   marker="$state/.subsuper-stale-$key"
   [ -e "$marker" ] || _now > "$marker"
+}
+
+stale_marker_refresh() {  # <window> <state>
+  local win=$1 state=$2 key
+  key=$(_stale_key "$(window_to_task "$win" "$state")")
+  _now > "$state/.subsuper-stale-$key"
 }
 
 stale_marker_remove() {  # <window> <state>
@@ -1071,6 +1081,14 @@ housekeeping() {  # <state>
       reconcile_pause_tracking "$win" "$state" "$last"
       continue
     fi
+    if status_has_open_decision "$state/$task.status"; then
+      # Parked on an unanswered keyed decision: waiting for firstmate, not wedged.
+      # Refresh the marker timestamp so a later close starts a fresh window.
+      # Deleting it here leaves no daemon marker to age after the answer when
+      # the watcher still suppresses duplicate stale wakes for the same pane.
+      stale_marker_refresh "$win" "$state"
+      continue
+    fi
     age=$(( now - $(cat "$marker" 2>/dev/null || echo "$now") ))
     [ "$age" -ge "${FM_STALE_ESCALATE_SECS:-$STALE_ESCALATE_SECS_DEFAULT}" ] || continue
     stale_window_is_busy "$win" "$state"
@@ -1398,6 +1416,7 @@ handle_wake() {  # <reason> <state>
                      idle\ *s,\ possible\ wedge,\ escalation\ *)
                        last=$(last_status_line "$state/$task.status")
                        status_is_paused_or_captain_held "$last" \
+                         || status_has_open_decision "$state/$task.status" \
                          || decision="escalate|${reason#stale: }"
                        ;;
                    esac ;;
@@ -1460,7 +1479,13 @@ handle_wake() {  # <reason> <state>
             esac
           fi
         fi
-        if [ "$_clear_wedge" = 1 ]; then
+        if status_has_open_decision "$state/$task.status"; then
+          # An open keyed decision outranks the terminal-looking line above: the
+          # pane is waiting for firstmate, so keep a marker and start its window
+          # fresh rather than clearing the aging entirely.
+          pause_marker_remove "$arg" "$state"
+          stale_marker_refresh "$arg" "$state"
+        elif [ "$_clear_wedge" = 1 ]; then
           stale_marker_remove "$arg" "$state"
         else
           pause_marker_remove "$arg" "$state"

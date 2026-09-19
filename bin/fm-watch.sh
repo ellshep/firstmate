@@ -43,7 +43,13 @@
 #                          whose worker declared why it is quiet - a `paused:`
 #                          external wait or a verified `captain-held` transfer -
 #                          is deferred to that same long recheck cadence instead
-#                          (wedge_wait_evidence), and a pane whose own task
+#                          (wedge_wait_evidence). A pane parked on an unanswered
+#                          keyed decision is deferred the same way
+#                          (status_has_open_decision), because that pane is waiting
+#                          for firstmate rather than stalled; the fold is read
+#                          instead of the newest line, so a decision still open
+#                          under a later working: line is still seen, and closing it
+#                          restores the unchanged schedule. A pane whose own task
 #                          worktree was written during the quiet window is
 #                          deferred rather than escalated (wedge_defer_writing),
 #                          because files appearing there are liveness the pane and
@@ -1129,6 +1135,21 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
       if [ "$age" -ge "$STALE_ESCALATE_SECS" ]; then
         if evidence=$(wedge_wait_evidence "$task"); then
           wedge_defer_wait "$win" "$task" "$since_file" "$label" "$age" "$evidence"
+          return 0
+        fi
+        # An unanswered keyed decision is the same class of fact as the declared
+        # wait above, and is consulted right after it: that fold already knows the
+        # pane is waiting for firstmate, so firing a possible-wedge would be a false
+        # stall. Ordered second because a pane that declared BOTH is better served by
+        # wedge_defer_wait's recheck, which names the human who owes the wait; the two
+        # are disjoint by verb anyway, and a captain-held transfer closes this fold's
+        # key rather than opening it. The idle window restarts instead of escalating,
+        # and a later resolved/captain-held close for that key restores this
+        # function's ordinary schedule. Not a second source of decision state, a new
+        # marker, or a timeout heuristic.
+        if status_has_open_decision "$STATE/$task.status"; then
+          date +%s > "$since_file"
+          triage_log "absorbed $label (open keyed decision, idle ${age}s): $win"
           return 0
         fi
         if crew_worktree_written_since "$task" "$STATE" "$since_file"; then
