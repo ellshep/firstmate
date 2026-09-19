@@ -19,8 +19,8 @@ TMP_ROOT=$(fm_test_tmproot fm-spawn-env-local)
 # The keys this suite expects to survive and to be dropped, spelled out here
 # rather than read from the script, so widening bin/fm-spawn.sh's exclusion
 # constant fails a test instead of passing silently.
-KEPT_KEYS='APP_NAME SUPABASE_URL SUPABASE_SERVICE_KEY MY_PRODUCT USER PORT user port PUBLIC_URL'
-DROPPED_KEYS='DATABASE_URL DATABASE_URL_POOLED DATABASE_URL_DIRECT DATABASE_URL_PROD POSTGRES_URL INTERNAL_DB DB_HOST DB_USER DB_PASSWORD MYSQL_HOST PGHOST PGHOSTADDR PGPORT PGDATABASE PGUSER PGPASSWORD PGPASSFILE PGSERVICE PGSERVICEFILE APP_DB_HOST SUPABASE_DB_CONNECTION MSSQL_URL SQLSERVER_URL COCKROACH_URL SERVICE_CONNECTION SERVICE_ENDPOINT SUPABASE_SERVICE_KEY_PROD'
+KEPT_KEYS='APP_NAME SUPABASE_URL SUPABASE_SERVICE_KEY MY_PRODUCT USER PORT user port PUBLIC_URL API_PORT SMTP_HOST SMTP_USER SMTP_PASSWORD WEB_HOST ADMIN_USER SENTRY_DSN NEXT_PUBLIC_API_HOST STRIPE_SECRET_KEY'
+DROPPED_KEYS='DATABASE_URL DATABASE_URI DATABASE_URL_POOLED DATABASE_URL_DIRECT DATABASE_URL_PROD POSTGRES_URL INTERNAL_DB DB_HOST DB_USER DB_PASSWORD MYSQL_HOST PGHOST PGHOSTADDR PGPORT PGDATABASE PGUSER PGPASSWORD PGPASSFILE PGSERVICE PGSERVICEFILE APP_DB_HOST SUPABASE_DB_CONNECTION MSSQL_URL MSSQL_SERVER SQLSERVER_URL COCKROACH_URL SERVICE_CONNECTION SERVICE_ENDPOINT SUPABASE_SERVICE_KEY_PROD'
 
 file_mode() { # <path>
   stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
@@ -90,6 +90,7 @@ write_env_local() { # <project>
 # local credentials
 APP_NAME=firstmate
 DATABASE_URL=postgres://hosted/app
+DATABASE_URI=jdbc:postgresql://hosted/app
 DATABASE_URL_POOLED=postgres://hosted/pool
 export DATABASE_URL_DIRECT=postgres://hosted/direct
 DATABASE_URL_PROD=postgres://prod/app
@@ -111,6 +112,7 @@ MYSQL_HOST=prod-mysql.internal
 APP_DB_HOST=prod-app-db.internal
 SUPABASE_DB_CONNECTION=prod-supabase-connection
 MSSQL_URL=server=prod-db;database=app
+MSSQL_SERVER=prod-db.internal
 SQLSERVER_URL=sqlserver://host/db
 COCKROACH_URL=cockroachdb://host/db
 SERVICE_ENDPOINT=POSTGRES://HOST/DB
@@ -123,6 +125,15 @@ PORT=443
 user=lowercase-user
 port=8443
 PUBLIC_URL=https://example.com
+API_PORT=3000
+SMTP_HOST=smtp.example.test
+SMTP_USER=mailer
+SMTP_PASSWORD=mailer-password
+WEB_HOST=web.example.test
+ADMIN_USER=admin
+SENTRY_DSN=https://sentry.example.test/123
+NEXT_PUBLIC_API_HOST=https://api.example.test
+STRIPE_SECRET_KEY=stripe-secret
 SERVICE_CONNECTION=ambiguous-connection
 ENV
 }
@@ -269,6 +280,8 @@ test_fresh_spawn_replaces_pooled_destination_with_filtered_current_source() {
   read_case_record "$rec"
   write_env_local "$PROJECT_DIR"
   printf 'STALE_WORKER_KEY=stale\nDATABASE_URL=postgres://stale/app\n' > "$POOL_DIR/.env"
+  printf 'STALE_SECRET=must-be-reclaimed\n' > "$POOL_DIR/.fm-env-local.tmp"
+  chmod 600 "$POOL_DIR/.fm-env-local.tmp"
 
   out=$(run_spawn "$id" --scout)
   status=$?
@@ -279,6 +292,8 @@ test_fresh_spawn_replaces_pooled_destination_with_filtered_current_source() {
     || fail "a fresh spawn did not copy an ordinary key from the current source"
   ! has_key "$POOL_DIR/.env" STALE_WORKER_KEY \
     || fail "a fresh spawn inherited stale worker state from the pool slot"
+  [ ! -e "$POOL_DIR/.fm-env-local.tmp" ] \
+    || fail "a fresh spawn left a stale credential-bearing environment temp file"
   pass "a fresh spawn refreshes a recycled pool destination through the env filter"
 }
 

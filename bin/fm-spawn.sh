@@ -2882,6 +2882,10 @@ spawn_worktree_has_origin_config() { # <worktree>
 
 freshen_spawn_worktree_base() { # <worktree>
   local worktree=$1 default target expected actual status
+  rm -f "$worktree/.fm-env-local.tmp" 2>/dev/null || {
+    echo "error: could not remove stale temporary environment copy; refusing to launch" >&2
+    return 1
+  }
   status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) || {
     echo "error: could not inspect pooled worktree '$worktree' before refreshing its base" >&2
     return 1
@@ -2933,16 +2937,17 @@ freshen_spawn_worktree_base() { # <worktree>
 # extended-regex alternations below match a `KEY=` line and nothing else; these
 # constants are the only things to edit to change the set.
 #
-# Database URL spellings, libpq's PG* connection variables, and compound keys
-# containing a whole connection component such as HOST, USER, or DATABASE: a
-# disposable worktree takes its database from the per-worktree throwaway
-# Postgres that exists for exactly this purpose, never from a hosted one. Bare
-# generic names such as USER and PORT are not connection keys by themselves;
-# an ambiguous compound name is excluded. A database connection is excluded
-# when either its key looks like a connection setting or its value contains a
-# database URI scheme. The key test catches values whose format is unfamiliar,
-# while the value test catches connection keys whose name is unfamiliar; neither
-# test is complete on its own.
+# Database URL spellings, libpq's PG* connection variables, and
+# database-qualified compound keys containing a whole connection component
+# such as HOST, USER, or DATABASE: a disposable worktree takes its database
+# from the per-worktree throwaway Postgres that exists for exactly this
+# purpose, never from a hosted one. Bare generic names such as USER and PORT,
+# and ordinary compound names such as SMTP_HOST, are not connection keys by
+# themselves; an ambiguous compound name is excluded. A database connection
+# is excluded when either its key looks like a connection setting or its value
+# contains a database URI scheme. The key test catches values whose format is
+# unfamiliar, while the value test catches connection keys whose name is
+# unfamiliar; neither test is complete on its own.
 # This boundary has two deliberate exclusions with different rationales:
 # database connection names and URI values are withheld so a disposable copy
 # uses the per-worktree throwaway Postgres already provided for it; *_PROD
@@ -2961,7 +2966,7 @@ freshen_spawn_worktree_base() { # <worktree>
 # stay in the captain's own checkout. Widening this set means first answering
 # why a throwaway worktree needs a production database and a key that ignores
 # row-level security, and no convenience this path could buy is worth that.
-FM_SPAWN_ENV_EXCLUDED_KEYS='([A-Za-z0-9_]+_)?DATABASE_URL(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?POSTGRES(QL)?_URL|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_URL|([A-Za-z0-9_]+_)?DB_URL|([A-Za-z0-9_]+_)?(MYSQL|MARIADB|MSSQL|SQLSERVER|COCKROACHDB|MONGODB|REDIS)_URL|[A-Za-z0-9_]+_DATABASE_URL|[A-Za-z0-9_]+_(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION)(_[A-Za-z0-9_]+)*|(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION)(_[A-Za-z0-9_]+)+|PG(HOST|HOSTADDR|PORT|DATABASE|USER|PASSWORD|PASSFILE|SERVICE|SERVICEFILE)|[A-Za-z0-9_]*_PROD'
+FM_SPAWN_ENV_EXCLUDED_KEYS='([A-Za-z0-9_]+_)?DATABASE_(URL|URI)(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?POSTGRES(QL)?_(URL|URI)|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_(URL|URI)|([A-Za-z0-9_]+_)?DB_(URL|URI)|([A-Za-z0-9_]+_)?(MYSQL|MARIADB|MSSQL|SQLSERVER|COCKROACHDB|MONGODB|REDIS)_(URL|URI)|[A-Za-z0-9_]+_DATABASE_(URL|URI)|([A-Za-z0-9_]+_)?(DATABASE|DB)(_[A-Za-z0-9_]+)*|[A-Za-z0-9_]*(MYSQL|MARIADB|MSSQL|SQLSERVER|COCKROACHDB|MONGODB|REDIS)[A-Za-z0-9_]*_(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION|SERVER)(_[A-Za-z0-9_]+)*|PG(HOST|HOSTADDR|PORT|DATABASE|USER|PASSWORD|PASSFILE|SERVICE|SERVICEFILE)|SERVICE_(CONNECTION|ENDPOINT)|[A-Za-z0-9_]*_PROD'
 FM_SPAWN_ENV_DATABASE_SCHEMES='(postgres|postgresql|mysql|mariadb|mssql|sqlserver|cockroachdb|mongodb(\+srv)?|rediss?)://'
 
 fm_spawn_env_filter() { # <source> <destination> <output> <source-available> <mode>
@@ -3068,13 +3073,11 @@ fm_spawn_env_filter() { # <source> <destination> <output> <source-available> <mo
 # their values.
 propagate_env_local() { # <project> <worktree>
   local project=$1 worktree=$2 src name dst copied=0 source_available destination_ignored merge_mode relaunch_tmp tmp source_input destination_input excluded_names
-  if [ "$RELAUNCH" -eq 1 ]; then
-    relaunch_tmp=$worktree/.fm-env-local.tmp
-    rm -f "$relaunch_tmp" 2>/dev/null || {
-      echo "error: could not remove stale temporary environment copy; refusing to launch" >&2
-      return 1
-    }
-  fi
+  relaunch_tmp=$worktree/.fm-env-local.tmp
+  rm -f "$relaunch_tmp" 2>/dev/null || {
+    echo "error: could not remove stale temporary environment copy; refusing to launch" >&2
+    return 1
+  }
   if [ "$RELAUNCH" -eq 0 ]; then
     for dst in "$worktree"/.env*; do
       [ -e "$dst" ] || [ -L "$dst" ] || continue
@@ -3107,18 +3110,11 @@ propagate_env_local() { # <project> <worktree>
       [ -f "$dst" ] && [ ! -L "$dst" ] && destination_input=$dst
       merge_mode=2
       [ "$destination_ignored" -eq 1 ] && merge_mode=1
-      if [ "$RELAUNCH" -eq 1 ]; then
-        tmp=$relaunch_tmp
-        ( umask 077; : > "$tmp" ) || {
-          echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
-          return 1
-        }
-      else
-        tmp=$(umask 077; mktemp "$worktree/.fm-env-local.XXXXXX") || {
-          echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
-          return 1
-        }
-      fi
+      tmp=$relaunch_tmp
+      ( umask 077; : > "$tmp" ) || {
+        echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
+        return 1
+      }
       SPAWN_ENV_TMP=$tmp
       excluded_names=$(fm_spawn_env_filter "$source_input" "$destination_input" "$tmp" "$source_available" "$merge_mode") || {
         rm -f "$tmp" 2>/dev/null || :
@@ -3170,18 +3166,11 @@ propagate_env_local() { # <project> <worktree>
     else
       [ ! -e "$dst" ] && [ ! -L "$dst" ] || continue
     fi
-    if [ "$RELAUNCH" -eq 1 ]; then
-      tmp=$relaunch_tmp
-      ( umask 077; : > "$tmp" ) || {
-        echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
-        return 1
-      }
-    else
-      tmp=$(umask 077; mktemp "$worktree/.fm-env-local.XXXXXX") || {
-        echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
-        return 1
-      }
-    fi
+    tmp=$relaunch_tmp
+    ( umask 077; : > "$tmp" ) || {
+      echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
+      return 1
+    }
     SPAWN_ENV_TMP=$tmp
     excluded_names=$(fm_spawn_env_filter "$src" /dev/null "$tmp" 1 0) || {
       rm -f "$tmp" 2>/dev/null || :
