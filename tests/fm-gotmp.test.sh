@@ -49,9 +49,11 @@ TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-gotmp-tests.XXXXXX")
 # whole script - reporting exit status 0 - the moment a `.` target is missing, so one
 # unlisted transitive dependency silently skipped the cleanup this suite asserts.
 # Executables teardown shells out to stay stubbed, so linking libraries wholesale
-# never puts live fleet state in reach. The real tmux adapter stays linked so the
-# abort-midway case can still reach a missing transitive source after the EXIT trap
-# is installed; the fixture's fake session name never addresses a live pane.
+# never puts live fleet state in reach. The real tmux adapter is linked by default so
+# the abort-midway case can still reach a missing transitive source after the EXIT trap
+# is installed; the fixture's fake session name never addresses a live pane. Every case
+# that only needs the endpoint close to SUCCEED calls stub_tmux_backend below instead,
+# because the real adapter shells out to tmux and tmux need not exist on this host.
 link_fake_bin() {
   local fake=$1 f
   mkdir -p "$fake/bin/backends" "$fake/state" "$fake/data"
@@ -84,6 +86,16 @@ fm_backlog_backend_manual() { return 1; }
 SH
 }
 
+# Upstream's tmux stub, for the cases that assert temp-dir cleanup rather than
+# adapter behaviour: they need only that the endpoint close succeeds, and the real
+# adapter cannot do that where tmux is absent. The abort-midway case deliberately
+# does NOT call this, because what it proves is a missing transitive source reached
+# THROUGH the real adapter.
+stub_tmux_backend() {  # <fake-root>
+  rm -f "$1/bin/backends/tmux.sh"
+  printf 'fm_backend_tmux_kill() { return 0; }\n' > "$1/bin/backends/tmux.sh"
+}
+
 make_fake_root() {
   local id=$1 tasktmp=$2
   local fake="$TMP_ROOT/$id"
@@ -111,6 +123,7 @@ test_teardown_removes_tasktmp_dir() {
   printf 'leftover\n' > "$task_tmp/gotmp/build-artifact"
   local fake
   fake=$(make_fake_root "$id" "$task_tmp")
+  stub_tmux_backend "$fake"
   # Sanity: dir + contents exist before teardown.
   [ -d "$task_tmp/gotmp" ] || fail "precondition: gotmp missing before teardown"
   # Run the REAL teardown against the fake root.
@@ -127,6 +140,7 @@ test_teardown_skips_gracefully_without_tasktmp() {
   local id=td-absent-z3
   local fake="$TMP_ROOT/$id-root"
   link_fake_bin "$fake"
+  stub_tmux_backend "$fake"
   # No tasktmp= line at all.
   cat > "$fake/state/$id.meta" <<META
 window=fakeses:fm-$id
@@ -150,6 +164,7 @@ test_teardown_skips_gracefully_when_dir_missing() {
   [ ! -e "$task_tmp" ] || fail "precondition: task_tmp should not exist yet"
   local fake
   fake=$(make_fake_root "$id" "$task_tmp")
+  stub_tmux_backend "$fake"
   FM_HOME="$fake" bash "$fake/bin/fm-teardown.sh" "$id" >/dev/null 2>&1 \
     || fail "teardown exited non-zero when tasktmp dir was missing"
   [ ! -e "$task_tmp" ] || fail "teardown created/left the tasktmp dir unexpectedly"
