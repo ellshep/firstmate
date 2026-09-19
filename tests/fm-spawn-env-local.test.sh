@@ -140,6 +140,14 @@ test_gitignored_env_reaches_the_worktree_without_excluded_keys() {
   read_case_record "$rec"
   write_env_local "$PROJECT_DIR"
   printf 'SECOND_FILE_KEY=second\nDATABASE_URL=postgres://hosted/second\n' > "$PROJECT_DIR/.env.local"
+  export FM_FAKE_KILL_LOG="$CASE_DIR/kill.log"
+  export FM_TREEHOUSE_LOG="$CASE_DIR/treehouse.log"
+  cat > "$FAKEBIN_DIR/treehouse" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TREEHOUSE_LOG"
+exit 0
+SH
+  chmod +x "$FAKEBIN_DIR/treehouse"
 
   out=$(run_spawn "$id" --scout)
   status=$?
@@ -180,6 +188,9 @@ test_gitignored_env_reaches_the_worktree_without_excluded_keys() {
     fail "the spawn logged an excluded value: $out"
     ;;
   esac
+  [ ! -s "$CASE_DIR/kill.log" ] || fail "a successful spawn closed its endpoint"
+  [ ! -s "$CASE_DIR/treehouse.log" ] || fail "a successful spawn returned its worktree"
+  [ -e "$POOL_DIR/.git" ] || fail "a successful spawn did not retain its worktree"
   pass "a gitignored .env reaches the task worktree at mode 600 with excluded keys filtered out"
 }
 

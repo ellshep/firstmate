@@ -1013,6 +1013,28 @@ test_spawn_relaunch_preserves_worker_values_when_source_is_missing() {
   pass "fm-spawn --relaunch: preserves worker values when the source env is absent"
 }
 
+test_spawn_relaunch_refuses_symlink_destination_when_source_is_missing() {
+  local dir out rc
+  dir=$(new_case relaunchenvlinknosource rl-env-link-no-source)
+  add_ship_task "$dir" rl-env-link-no-source claude
+  printf '.env*\n' > "$dir/proj/.gitignore"
+  printf '.env*\n' > "$dir/wt/.gitignore"
+  printf 'WORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local\n' > "$dir/outside.env"
+  ln -s "$dir/outside.env" "$dir/wt/.env"
+  printf 'zsh' > "$dir/fake/command"
+
+  out=$(run_spawn "$dir" rl-env-link-no-source --relaunch); rc=$?
+  expect_code 1 "$rc" "a relaunch must refuse an env symlink without a readable source"
+  [ -L "$dir/wt/.env" ] || fail "a missing-source relaunch replaced the env symlink"
+  [ "$(cat "$dir/outside.env")" = $'WORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local' ] \
+    || fail "a missing-source relaunch modified the env symlink target"
+  [ "$(cat "$dir/fake/command")" = zsh ] \
+    || fail "a missing-source env symlink refusal launched the replacement"
+  assert_contains "$out" "without a readable source" \
+    "the missing-source env symlink refusal did not explain the cause"
+  pass "fm-spawn --relaunch: refuses a symlinked env without a source"
+}
+
 test_spawn_relaunch_replaces_destination_env_symlink() {
   local dir out
   dir=$(new_case relaunchenvlink rl-env-link)
@@ -1063,8 +1085,14 @@ test_spawn_relaunch_rebuilds_an_unignored_destination_env() {
   printf 'zsh' > "$dir/fake/command"
 
   out=$(run_spawn "$dir" rl-env-unignored --relaunch)
-  [ "$(cat "$dir/wt/.env")" = $'CAPTAIN_SOURCE=do-not-copy\nWORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local' ] \
-    || fail "a relaunch left an unignored destination env untouched: $(cat "$dir/wt/.env")"
+  [ "$(cat "$dir/wt/.env")" = $'WORKER_EDITED=yes\nDATABASE_URL=postgres://worker/local' ] \
+    || fail "a relaunch merged credentials into an unignored destination env: $(cat "$dir/wt/.env")"
+  assert_not_contains "$out" "CAPTAIN_SOURCE=do-not-copy" \
+    "an unignored destination relaunch reported a source value"
+  assert_contains "$out" "withheld local environment credentials" \
+    "an unignored destination relaunch did not report withheld credentials"
+  assert_contains "$out" "DATABASE_URL" \
+    "an unignored destination relaunch did not report withheld excluded names"
   assert_contains "$out" "spawned rl-env-unignored harness=claude" \
     "the relaunch should launch after rebuilding an unignored destination env"
   pass "fm-spawn --relaunch: rebuilds an unignored destination env"
@@ -1809,6 +1837,7 @@ test_ship_relaunch_ignores_the_crew_harness_config
 test_spawn_relaunch_without_a_harness_reuses_the_recorded_one
 test_spawn_relaunch_sanitizes_copied_env_but_preserves_worker_values
 test_spawn_relaunch_preserves_worker_values_when_source_is_missing
+test_spawn_relaunch_refuses_symlink_destination_when_source_is_missing
 test_spawn_relaunch_replaces_destination_env_symlink
 test_spawn_relaunch_refuses_unremovable_destination_env
 test_spawn_relaunch_rebuilds_an_unignored_destination_env

@@ -1045,6 +1045,7 @@ SPAWN_META_TMP=
 SPAWN_ENV_TMP=
 SPAWN_ENDPOINT_ABORT_CLEANUP=0
 SPAWN_WORKTREE_ABORT_CLEANUP=0
+SPAWN_WORKTREE_RETURNED=0
 SPAWN_META_LOCK=
 SPAWN_META_LOCK_HELD=0
 SPAWN_META_PUBLISH_STARTED=0
@@ -1090,7 +1091,8 @@ parse_orca_worktree_result() {
 }
 
 spawn_abort_cleanup() {
-  local status=$? tab_id=
+  local status=$? tab_id= endpoint_closed=1
+  [ "$status" -eq 0 ] && return 0
   if [ "$RELAUNCH_REPLACEMENT_PENDING" = 1 ] &&
     [ "$SPAWN_META_PUBLISH_STARTED" = 1 ] &&
     [ -n "$SPAWN_META_TMP" ] &&
@@ -1177,14 +1179,20 @@ spawn_abort_cleanup() {
     [ "$BACKEND" = zellij ] && tab_id=$ZELLIJ_TAB_ID
     if ! fm_backend_kill "$BACKEND" "$T" "$tab_id" "fm-$ID"; then
       echo "error: could not close endpoint '$T' after the environment copy failure" >&2
+      endpoint_closed=0
       status=1
     fi
   fi
   if [ "$SPAWN_WORKTREE_ABORT_CLEANUP" = 1 ]; then
-    SPAWN_WORKTREE_ABORT_CLEANUP=0
-    if ! ( cd "$PROJ_ABS" && treehouse return --force "$WT" ); then
+    if [ "$endpoint_closed" -ne 1 ]; then
+      echo "error: could not return worktree '$WT' because endpoint '$T' remains open" >&2
+      status=1
+    elif ! ( cd "$PROJ_ABS" && treehouse return --force "$WT" ); then
       echo "error: could not return worktree '$WT' after the environment copy failure" >&2
       status=1
+    else
+      SPAWN_WORKTREE_ABORT_CLEANUP=0
+      SPAWN_WORKTREE_RETURNED=1
     fi
   fi
   if [ "$SPAWN_TASK_LOCK_HELD" = 1 ]; then
@@ -1209,6 +1217,7 @@ spawn_abort_cleanup() {
   # another task's claim.
   if [ "$SPAWN_SLOT_CLAIMED" = 1 ] && [ -n "${WT:-}" ] &&
     [ ! -e "$STATE/$ID.meta" ] && [ ! -L "$STATE/$ID.meta" ] &&
+    { [ "$SPAWN_WORKTREE_ABORT_CLEANUP" != 1 ] || [ "$SPAWN_WORKTREE_RETURNED" = 1 ]; } &&
     fm_treehouse_pool_slot "$PROJ_ABS" "$WT"; then
     SPAWN_SLOT_CLAIMED=0
     if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
@@ -2898,13 +2907,13 @@ freshen_spawn_worktree_base() { # <worktree>
 FM_SPAWN_ENV_EXCLUDED_KEYS='([A-Za-z0-9_]+_)?DATABASE_URL(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?POSTGRES(QL)?_URL|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_URL|([A-Za-z0-9_]+_)?DB_URL|([A-Za-z0-9_]+_)?(MYSQL|MARIADB|MSSQL|SQLSERVER|COCKROACHDB|MONGODB|REDIS)_URL|[A-Za-z0-9_]+_DATABASE_URL|[A-Za-z0-9_]+_(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION)(_[A-Za-z0-9_]+)*|(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION)(_[A-Za-z0-9_]+)+|PG(HOST|HOSTADDR|PORT|DATABASE|USER|PASSWORD|PASSFILE|SERVICE|SERVICEFILE)|[A-Za-z0-9_]*_PROD'
 FM_SPAWN_ENV_DATABASE_SCHEMES='(postgres|postgresql|mysql|mariadb|mssql|sqlserver|cockroachdb|mongodb(\+srv)?|rediss?)://'
 
-fm_spawn_env_filter() { # <source> <destination> <output> <source-available> <merge>
-  local source=$1 destination=$2 output=$3 source_available=$4 merge=$5
+fm_spawn_env_filter() { # <source> <destination> <output> <source-available> <mode>
+  local source=$1 destination=$2 output=$3 source_available=$4 mode=$5
   FM_SPAWN_ENV_DATABASE_SCHEMES="$FM_SPAWN_ENV_DATABASE_SCHEMES" awk \
     -v excluded="$FM_SPAWN_ENV_EXCLUDED_KEYS" \
     -v output="$output" \
     -v source_available="$source_available" \
-    -v merge="$merge" '
+    -v mode="$mode" '
     BEGIN {
       schemes = tolower(ENVIRON["FM_SPAWN_ENV_DATABASE_SCHEMES"])
       excluded_lower = tolower(excluded)
@@ -2935,22 +2944,22 @@ fm_spawn_env_filter() { # <source> <destination> <output> <source-available> <me
         source_values[key SUBSEP value] = 1
         if (is_excluded(key, value)) {
           report_key(key)
-        } else if (merge) {
+        } else if (mode == 1) {
           source_lines[++source_count] = $0
           source_keys[source_count] = key
-        } else {
+        } else if (mode == 0) {
           print $0 > output
         }
-      } else if (merge) {
+      } else if (mode == 1) {
         source_lines[++source_count] = $0
         source_keys[source_count] = ""
-      } else {
+      } else if (mode == 0) {
         print $0 > output
       }
       next
     }
     {
-      if (!merge) next
+      if (mode == 0) next
       key = key_of($0)
       value = value_of($0)
       if (key != "") destination_keys[key] = 1
@@ -2962,12 +2971,12 @@ fm_spawn_env_filter() { # <source> <destination> <output> <source-available> <me
       destination_lines[++destination_count] = $0
     }
     END {
-      if (merge) {
+      if (mode == 1) {
         for (i = 1; i <= source_count; i++) {
           if (source_keys[i] == "" || !destination_keys[source_keys[i]]) print source_lines[i] > output
         }
-        for (i = 1; i <= destination_count; i++) print destination_lines[i] > output
       }
+      if (mode != 0) for (i = 1; i <= destination_count; i++) print destination_lines[i] > output
     }
   ' "$source" "$destination"
 }
@@ -2979,8 +2988,8 @@ fm_spawn_env_filter() { # <source> <destination> <output> <source-available> <me
 # selection test: a tracked file such as `.env.schema` is excluded by it, so no
 # filename list, flag, or per-project setting is needed. The destination is
 # checked too, because a file the worktree would NOT ignore is one a worker
-# could commit. On relaunch, rebuild an existing destination from the filtered
-# source and worker-owned values.
+# could commit. On relaunch, sanitize every existing destination, but merge
+# source values only when the destination is ignored.
 # Fresh pooled slots are recycled between tasks, and `git clean -fd` does not
 # remove ignored files (`-x` is required), so an ignored env file can survive
 # the reset. A source-driven pass cannot see a name the current project lacks;
@@ -2990,15 +2999,17 @@ fm_spawn_env_filter() { # <source> <destination> <output> <source-available> <me
 # state can bypass is not a filter.
 #
 # Fresh propagation is deliberately not fail-closed for preconditions: a
-# missing or unreadable source, a source symlink, a non-git project, an already
-# present relaunch destination, or a name not ignored on either side skips.
+# missing or unreadable source, a source symlink, a non-git project, or a name
+# not ignored on either side skips. Relaunch sanitizes an existing destination
+# regardless of its ignore status; source values are withheld unless it is
+# ignored.
 # Once a source is eligible to copy, failed temp creation, filtering,
 # permission changes, cleanup, or installation refuses the spawn. A worker
 # without credentials is survivable; a spawn that can retain excluded
 # credentials is not. Only counts and excluded key names are reported, never
 # their values.
 propagate_env_local() { # <project> <worktree>
-  local project=$1 worktree=$2 src name dst copied=0 source_available tmp source_input destination_input excluded_names
+  local project=$1 worktree=$2 src name dst copied=0 source_available destination_ignored merge_mode tmp source_input destination_input excluded_names
   if [ "$RELAUNCH" -eq 0 ]; then
     for dst in "$worktree"/.env*; do
       [ -e "$dst" ] || [ -L "$dst" ] || continue
@@ -3019,21 +3030,32 @@ propagate_env_local() { # <project> <worktree>
         && git -C "$project" check-ignore -q -- "$name" 2>/dev/null; then
         source_available=1
       fi
+      destination_ignored=0
+      git -C "$worktree" check-ignore -q -- "$name" 2>/dev/null && destination_ignored=1
+      if [ -L "$dst" ] && [ "$source_available" -eq 0 ]; then
+        echo "error: cannot preserve symlinked local environment file '$name' without a readable source; refusing to relaunch" >&2
+        return 1
+      fi
       source_input=/dev/null
       [ "$source_available" -eq 1 ] && source_input=$src
       destination_input=/dev/null
       [ -f "$dst" ] && [ ! -L "$dst" ] && destination_input=$dst
+      merge_mode=2
+      [ "$destination_ignored" -eq 1 ] && merge_mode=1
       tmp=$(umask 077; mktemp "$worktree/.fm-env-local.XXXXXX") || {
         echo "error: could not create a temporary environment copy for '$name'; refusing to launch" >&2
         return 1
       }
       SPAWN_ENV_TMP=$tmp
-      excluded_names=$(fm_spawn_env_filter "$source_input" "$destination_input" "$tmp" "$source_available" 1) || {
+      excluded_names=$(fm_spawn_env_filter "$source_input" "$destination_input" "$tmp" "$source_available" "$merge_mode") || {
         rm -f "$tmp" 2>/dev/null || :
         echo "error: could not filter local environment file '$name'; refusing to launch" >&2
         return 1
       }
       [ -z "$excluded_names" ] || echo "note: excluded local environment key(s) for $name: $excluded_names" >&2
+      if [ "$source_available" -eq 1 ] && [ "$destination_ignored" -ne 1 ]; then
+        echo "note: withheld local environment credentials for $name because the destination is not ignored" >&2
+      fi
       chmod 600 "$tmp" 2>/dev/null || {
         rm -f "$tmp" 2>/dev/null || :
         echo "error: could not set permissions on local environment file '$name'; refusing to launch" >&2
@@ -3470,9 +3492,6 @@ EOF
     ;;
   esac
 fi
-if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
-  SPAWN_ENDPOINT_ABORT_CLEANUP=1
-fi
 if [ "$KIND" = secondmate ]; then
   FM_INHERITABLE_CONFIG=trace-context \
     propagate_inheritable_config "$CONFIG" "$PROJ_ABS/config" ||
@@ -3814,7 +3833,6 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   fi
 
   validate_spawn_worktree "treehouse get" "$T"
-  SPAWN_WORKTREE_ABORT_CLEANUP=1
 
   # Claim the pool slot for this task. The interactive `treehouse get` sent to
   # the pane above records only a process lease (Treehouse's durable
@@ -3840,7 +3858,13 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
 fi
 if [ "$KIND" != secondmate ]; then
-  propagate_env_local "$PROJ_ABS" "$WT" || exit 1
+  if ! propagate_env_local "$PROJ_ABS" "$WT"; then
+    if [ "$RELAUNCH" -eq 0 ] && [ "$BACKEND" != orca ]; then
+      SPAWN_ENDPOINT_ABORT_CLEANUP=1
+      SPAWN_WORKTREE_ABORT_CLEANUP=1
+    fi
+    exit 1
+  fi
 fi
 
 # Pre-register Claude's workspace trust for the directory this launch starts in,
