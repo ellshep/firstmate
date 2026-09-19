@@ -2953,9 +2953,10 @@ freshen_spawn_worktree_base() { # <worktree>
 # database connection names and URI values are withheld so a disposable copy
 # uses the per-worktree throwaway Postgres already provided for it; *_PROD
 # entries are withheld as an absolute security boundary because production
-# secrets are the captain's own business. Key spellings outside both categories
-# were never in scope; widening or narrowing either boundary requires answering
-# that rationale.
+# secrets are the captain's own business. Key spellings outside both categories,
+# including keyword-pair or ADO.NET-style connection strings carrying no URI
+# scheme, were never in scope; widening or narrowing either boundary requires
+# answering that rationale.
 #
 # *_PROD: these are not a stricter spelling of their non-prod siblings. A file
 # of this shape has been observed carrying, under _PROD names, a production
@@ -3928,7 +3929,11 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   fi
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
-  freshen_spawn_worktree_base "$WT" || exit 1
+  if ! freshen_spawn_worktree_base "$WT"; then
+    SPAWN_ENDPOINT_ABORT_CLEANUP=1
+    SPAWN_WORKTREE_ABORT_CLEANUP=1
+    exit 1
+  fi
 fi
 if [ "$KIND" != secondmate ]; then
   if ! propagate_env_local "$PROJ_ABS" "$WT"; then
