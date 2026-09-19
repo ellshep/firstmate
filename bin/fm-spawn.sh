@@ -2966,9 +2966,9 @@ freshen_spawn_worktree_base() { # <worktree>
 # stay in the captain's own checkout. Widening this set means first answering
 # why a throwaway worktree needs a production database and a key that ignores
 # row-level security, and no convenience this path could buy is worth that.
-FM_SPAWN_ENV_DATABASE_VENDORS='MYSQL|MARIADB|MSSQL|SQLSERVER|COCKROACHDB|MONGODB|REDIS|POSTGRES|POSTGRESQL'
+FM_SPAWN_ENV_DATABASE_VENDORS='MYSQL|MARIADB|MSSQL|SQLSERVER|SQLSRV|COCKROACHDB|COCKROACH|CRDB|MONGODB|MONGO|REDIS|VALKEY|POSTGRES|POSTGRESQL'
 FM_SPAWN_ENV_EXCLUDED_KEYS="([A-Za-z0-9_]+_)?DATABASE_(URL|URI)(_[A-Za-z0-9_]*)?|([A-Za-z0-9_]+_)?(${FM_SPAWN_ENV_DATABASE_VENDORS})_(URL|URI)|([A-Za-z0-9_]+_)?PG[A-Za-z0-9_]*_(URL|URI)|([A-Za-z0-9_]+_)?DB_(URL|URI)|[A-Za-z0-9_]+_DATABASE_(URL|URI)|([A-Za-z0-9_]+_)?(DATABASE|DB)(_[A-Za-z0-9_]+)*|[A-Za-z0-9_]*(${FM_SPAWN_ENV_DATABASE_VENDORS})[A-Za-z0-9_]*_(HOST|HOSTADDR|PORT|USER|USERNAME|PASSWORD|PASSWD|DATABASE|DBNAME|DSN|CONN|CONNECTION|SERVER)(_[A-Za-z0-9_]+)*|PG(HOST|HOSTADDR|PORT|DATABASE|USER|PASSWORD|PASSFILE|SERVICE|SERVICEFILE)|SERVICE_(CONNECTION|ENDPOINT)|[A-Za-z0-9_]*_PROD"
-FM_SPAWN_ENV_DATABASE_SCHEMES='(postgres|postgresql|mysql|mariadb|mssql|sqlserver|cockroachdb|mongodb(\+srv)?|rediss?)://'
+FM_SPAWN_ENV_DATABASE_SCHEMES="^[[:space:]]*[\"']?(postgres|postgresql|mysql|mariadb|mssql|sqlserver|sqlsrv|cockroachdb|cockroach|crdb|mongodb|mongo|redis|rediss|valkey)(\\+[A-Za-z0-9_]+)?://"
 
 fm_spawn_env_filter() { # <source> <destination> <output> <source-available> <mode>
   local source=$1 destination=$2 output=$3 source_available=$4 mode=$5
