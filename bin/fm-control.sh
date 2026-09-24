@@ -123,6 +123,7 @@ fi
 }
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 [ -d "$STATE" ] || {
   echo "error: state dir '$STATE' is missing; fm-control cannot resolve tasks for FM_HOME '$FM_HOME'" >&2
   exit 1
@@ -138,6 +139,10 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-tasks-axi-lib.sh
+. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-backlog-transition-lib.sh
+. "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
 
 POLL=${FM_CONTROL_POLL:-0.5}
 SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
@@ -800,7 +805,7 @@ record_note() {
 }
 
 do_relaunch() {
-  local exit_result state note_line
+  local exit_result state note_line backlog_status
   local -a spawn_args
 
   require_state_verified_backend relaunch
@@ -823,6 +828,25 @@ do_relaunch() {
       die "task $ID records kind '$KIND', which has no defined relaunch shape"
       ;;
   esac
+
+  # Spawn repeats this gate at publication time. Check it here as well, while
+  # the existing agent is still running and before recording a progress note.
+  if fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
+    if fm_backlog_row_probe "$DATA" "$ID"; then
+      if ! fm_backlog_row_dispatchable "$FM_BACKLOG_ROW_STATE"; then
+        die "this home's backlog item $ID is not dispatchable in state $FM_BACKLOG_ROW_STATE; refusing before creating its endpoint or local copy"
+      fi
+    elif [ "$FM_BACKLOG_ROW_RESULT" = not_found ]; then
+      die "task $ID has no backlog item in this home, so dispatching it would leave a worker no record owns; add it first (bin/fm-tasks-axi.sh add $ID '<title>' --kind $KIND) and re-run"
+    else
+      die "task $ID's backlog item could not be read before dispatch ($FM_BACKLOG_ROW_ERROR)"
+    fi
+  else
+    backlog_status=$?
+    if [ "$backlog_status" -eq 2 ]; then
+      die "task $ID cannot be dispatched because its backlog data directory is inaccessible: $DATA ($FM_BACKLOG_TRANSITION_ERROR)"
+    fi
+  fi
 
   if [ -n "$NOTE" ]; then
     note_line="note_file=$NOTE_FILE"

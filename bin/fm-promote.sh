@@ -24,7 +24,9 @@
 # read the scout's report (AGENTS.md section 7); data/projects.md holds the
 # captain's standing posture as context, and this script never looks it up.
 # no-mistakes-prod-only is a registry policy rather than a task mode and is refused.
-# Usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off>
+# When this home has an automatic backlog, --title supplies the ship row's
+# current work title; promotion retains the scout's id and In-flight ownership.
+# Usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--title <ship-title>]
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,6 +34,7 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 
 # shellcheck source=bin/fm-dod-lib.sh
 . "$SCRIPT_DIR/fm-dod-lib.sh"
@@ -52,6 +55,7 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 
 MODE=
 YOLO=
+TITLE=
 MODE_SET=0
 YOLO_SET=0
 POS=()
@@ -64,6 +68,7 @@ for a in "$@"; do
     case "$want_value" in
       mode) MODE=$a; MODE_SET=1 ;;
       yolo) YOLO=$a; YOLO_SET=1 ;;
+      title) TITLE=$a ;;
     esac
     want_value=
     continue
@@ -73,11 +78,13 @@ for a in "$@"; do
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
     --yolo) want_value=yolo ;;
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
+    --title) want_value=title ;;
+    --title=*) TITLE=${a#--title=} ;;
     *) POS+=("$a") ;;
   esac
 done
 [ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
-[ "${#POS[@]}" -ge 1 ] || { echo "usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off>" >&2; exit 1; }
+[ "${#POS[@]}" -ge 1 ] || { echo "usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--title <ship-title>]" >&2; exit 1; }
 [ "$MODE_SET" -eq 1 ] || {
   echo "error: promotion requires --mode <no-mistakes|direct-PR|local-only>; decide it now from the scout's findings and the project's registered posture in data/projects.md" >&2
   exit 1
@@ -143,6 +150,26 @@ if ! fm_backlog_record_present "$META" "task record" "$STATE"; then
   exit 1
 fi
 grep -qx 'kind=scout' "$META" || { echo "error: task $ID is not a scout task (kind=scout not in meta)" >&2; exit 1; }
+
+PROMOTE_BACKLOG=0
+if fm_backlog_transition_applies "$CONFIG" "$DATA" scout; then
+  PROMOTE_BACKLOG=1
+  [ -n "$TITLE" ] || { echo "error: promotion requires --title <ship-title> to convert the scout's backlog row" >&2; exit 1; }
+  if ! fm_backlog_row_probe "$DATA" "$ID"; then
+    echo "error: scout $ID's backlog item could not be read before promotion ($FM_BACKLOG_ROW_ERROR)" >&2
+    exit 1
+  fi
+  [ "$FM_BACKLOG_ROW_STATE" = 'in_flight no no' ] || {
+    echo "error: scout $ID's backlog item must be unheld and In flight before promotion (found $FM_BACKLOG_ROW_STATE)" >&2
+    exit 1
+  }
+else
+  PROMOTE_BACKLOG_STATUS=$?
+  [ "$PROMOTE_BACKLOG_STATUS" -ne 2 ] || {
+    echo "error: scout $ID's backlog cannot be checked before promotion ($FM_BACKLOG_TRANSITION_ERROR)" >&2
+    exit 1
+  }
+fi
 
 SCOUT_BRIEF="$DATA/$ID/brief.md"
 if fm_brief_task_placeholders_present "$SCOUT_BRIEF"; then
@@ -256,6 +283,13 @@ if ! mv "$BRIEF_REPLACEMENT" "$SCOUT_BRIEF"; then
   exit 1
 fi
 BRIEF_REPLACEMENT=
+
+if [ "$PROMOTE_BACKLOG" = 1 ]; then
+  if ! fm_backlog_mutate "$DATA" update "$ID" --title "$TITLE" --kind ship; then
+    echo "error: could not convert scout $ID's backlog item to ship ($FM_BACKLOG_TRANSITION_ERROR)" >&2
+    exit 1
+  fi
+fi
 
 TMP="$STATE/.$ID.meta.promote.${BASHPID:-$$}"
 grep -v -e '^kind=' -e '^mode=' -e '^yolo=' "$META" > "$TMP"

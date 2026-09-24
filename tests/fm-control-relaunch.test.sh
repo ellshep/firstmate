@@ -276,10 +276,10 @@ SH
 # Give a case home a real backlog carrying <id>, so the relaunch path's paired
 # backlog transition (bin/fm-backlog-transition-lib.sh) is live rather than
 # skipped for want of a backlog file.
-seed_backlog() {  # <case-dir> <id> <queued|in_flight>
-  local dir=$1 id=$2 want=$3 file="$1/home/data/backlog.md"
+seed_backlog() {  # <case-dir> <id> <queued|in_flight> [kind]
+  local dir=$1 id=$2 want=$3 kind=${4:-ship} file="$1/home/data/backlog.md"
   printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done' > "$file"
-  tasks-axi add "$id" "relaunch fixture task" --kind ship --file "$file" >/dev/null
+  tasks-axi add "$id" "relaunch fixture task" --kind "$kind" --file "$file" >/dev/null
   [ "$want" != in_flight ] || tasks-axi start "$id" --file "$file" >/dev/null
 }
 
@@ -1820,6 +1820,63 @@ test_relaunch_moves_a_drifted_item_back_in_flight() {
   pass "relaunch heals an item that drifted out of In flight while the task stayed live"
 }
 
+test_closed_backlog_refuses_relaunch_without_stopping_agent() {
+  local dir out rc=0 before
+  dir=$(new_case closed-row rl45)
+  add_ship_task "$dir" rl45 claude
+  seed_backlog "$dir" rl45 in_flight
+  tasks-axi 'done' rl45 --file "$dir/home/data/backlog.md" >/dev/null
+  before=$(cat "$dir/home/state/rl45.meta")
+
+  out=$(run_control "$dir" rl45 relaunch --note "continue") || rc=$?
+  expect_code 1 "$rc" "a closed row must refuse relaunch"
+  assert_contains "$out" "backlog item rl45 is not dispatchable in state done no no" \
+    "the refusal should keep the spawn gate's diagnostic"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "the backlog refusal stopped the agent"
+  [ ! -s "$dir/fake/literal" ] || fail "the backlog refusal delivered lifecycle input"
+  [ "$before" = "$(cat "$dir/home/state/rl45.meta")" ] || fail "the backlog refusal changed metadata"
+  [ ! -e "$dir/home/state/rl45.control-relaunch" ] || fail "the backlog refusal created a journal"
+  pass "fm-control relaunch: closed backlog row refuses before agent exit"
+}
+
+test_promotion_keeps_the_same_backlog_row_dispatchable() {
+  local dir home id brief out rc=0 row
+  id=rl46
+  dir=$(new_case promote-row "$id")
+  home="$dir/home"
+  fm_git_worktree "$dir/proj" "$dir/wt" "task-$id"
+  FM_HOME="$home" "$BRIEF" "$id" firstmate --scout >/dev/null
+  brief="$home/data/$id/brief.md"
+  sed 's/{TASK}/Investigate the relaunch gap./; s/{FIRSTMATE_SPEC}/Preserve the current work./' \
+    "$brief" > "$brief.filled"
+  mv "$brief.filled" "$brief"
+  {
+    echo "window=fmses:fm-$id"
+    echo "endpoint_task_id=$id"
+    echo "worktree=$dir/wt"
+    echo "project=$dir/proj"
+    echo "harness=claude"
+    echo "kind=scout"
+    echo "tasktmp=/tmp/fm-$id"
+    echo "model=default"
+    echo "effort=default"
+  } > "$home/state/$id.meta"
+  printf '%s' "$dir/wt" > "$dir/fake/cwd"
+  seed_backlog "$dir" "$id" in_flight scout
+
+  out=$(FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+    "$PROMOTE" "$id" --mode local-only --yolo off --title "Fix the relaunch gap" 2>&1) || rc=$?
+  expect_code 0 "$rc" "promotion should convert the existing row: $out"
+  row=$(tasks-axi show "$id" --file "$home/data/backlog.md")
+  assert_contains "$row" "Fix the relaunch gap" "promotion did not set the ship title"
+  assert_contains "$row" "kind: ship" "promotion did not set the ship kind"
+  [ "$(backlog_state "$dir" "$id")" = in_flight ] || fail "promotion closed the scout row"
+
+  out=$(run_control "$dir" "$id" relaunch --note "continue the fix") || rc=$?
+  expect_code 0 "$rc" "the promoted ship should pass relaunch's backlog gate: $out"
+  pass "fm-promote/fm-control: promotion retains the scout id as an In-flight ship row"
+}
+
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven
@@ -1882,3 +1939,5 @@ test_spawn_relaunch_refuses_an_unrecorded_task
 test_spawn_relaunch_refuses_a_pane_outside_the_worktree
 test_relaunch_reverifies_an_already_in_flight_item_instead_of_rewriting_it
 test_relaunch_moves_a_drifted_item_back_in_flight
+test_closed_backlog_refuses_relaunch_without_stopping_agent
+test_promotion_keeps_the_same_backlog_row_dispatchable
