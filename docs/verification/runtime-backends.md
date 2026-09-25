@@ -1007,21 +1007,26 @@ ok - live Herdr submit confirm: Claude Code (2.1.236 (Claude Code)) on herdr 0.8
 ```
 
 The same live guard was extended and run on 2026-09-25 with Claude Code 2.1.282 and Herdr 0.9.1 in a guarded named lab session.
-It now starts separate Claude panes with a normal styled suggestion, an unstyled `NO_COLOR=1` suggestion, and suggestions disabled, then checks the shared Herdr composer verdict and a real typed draft.
+It checks normal styled, unstyled `NO_COLOR=1`, and disabled suggestions, a real typed draft, a submitted prompt, and the detailed transcript view.
 
 ```sh
-FM_HERDR_SUBMIT_CONFIRM_LIVE=1 bin/fm-test-run.sh tests/fm-herdr-submit-confirm-live-e2e.test.sh
+HERDR_LAB_HELPER='/Users/ellingtonshephard/code_projects/firstmate/bin/fm-herdr-lab.sh' FM_HERDR_SUBMIT_CONFIRM_LIVE=1 bin/fm-test-run.sh tests/fm-herdr-submit-confirm-live-e2e.test.sh
 ```
 
 ```text
 ok - live Herdr Claude suggestion: no-color stays unsafe, styled idle is empty, typed draft is pending
-FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=23323
+ok - live Herdr Claude transcript: unknown toggles to empty; a hidden draft toggles back to pending
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=23776
 ```
 
 The no-color pane's `--format ansi` capture contained zero ESC bytes and its idle `Try "..."` suggestion read `pending`; the styled pane carried SGR-2 on the suggestion and read `empty`.
 Disabling suggestions also read `empty` under `NO_COLOR=1` in the same lab.
 The guard also confirmed the submitted prompt by observing Claude's requested reply.
 That divergence is a rendering limitation, not evidence that the no-color pane contains a typed draft; the guard deliberately cannot use the suggestion's wording as proof of emptiness.
+
+Claude's detailed transcript view with color enabled rendered `Showing detailed transcript · ctrl+o to toggle ... ? for shortcuts ... verbose`, hid the composer, and yielded `unknown` while the native agent was alive and idle.
+After the daemon's guarded Ctrl+O, the normal composer read `empty`; repeating with an unsubmitted draft restored `pending` and left the draft intact.
+`tests/fm-daemon.test.sh` pins the daemon's gate through `inject_msg`: a live Claude transcript can be revealed and submitted only after an empty verdict, while pending input, a dead agent, a different agent, or a different footer cannot submit.
 
 ### Prune and respawn
 

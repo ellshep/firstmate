@@ -273,6 +273,10 @@ Launch a Claude primary that will receive away-mode injections with `CLAUDE_CODE
 A bare shell prompt is never an empty agent composer.
 Away-mode injection proceeds only on an affirmative `empty` result, never on unknown.
 This prevents a dead agent pane from receiving and possibly executing an escalation as shell input.
+Claude's detailed transcript view hides its composer and correctly reads `unknown`.
+When that exact view is visible in a Herdr pane with a live, idle Claude agent, the away daemon sends Ctrl+O to reveal the composer, then repeats the busy and composer guards before injection.
+A restored draft remains `pending` and keeps the escalation buffered; every other unknown view still defers.
+The guarded real-Claude regression is `tests/fm-herdr-submit-confirm-live-e2e.test.sh`.
 
 The current operational envelope starts with U+2063 and `FIRSTMATE_OP: `.
 The separate routed-request carrier uses `[fm-from-firstmate]` plus U+2063.

@@ -12,6 +12,9 @@
 # upgrade, and before trusting a refreshed docs/verification/runtime-backends.md
 # "Herdr submit confirmation" entry.
 # Every Herdr call, including adapter calls, is routed through bin/fm-herdr-lab.sh.
+# It also guards the daemon's Claude detailed-transcript recovery against the
+# real harness: a hidden composer reads unknown, and revealing a draft stays
+# pending rather than licensing an injection.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -177,5 +180,69 @@ done
 [ "$landed" = 1 ] \
   || fail "Claude Code ($VERSION) on $HERDR_VER: submit reported '$verdict' but the expected reply never rendered"
 pass "live Herdr submit confirm: Claude Code ($VERSION) on $HERDR_VER reports empty and renders the requested reply in isolated session $SESSION"
+
+# shellcheck source=bin/fm-supervise-daemon.sh
+. "$ROOT/bin/fm-supervise-daemon.sh"
+FM_DAEMON_PRIMARY_HARNESS=claude
+i=0
+while [ "$i" -lt 45 ]; do
+  identity=$(fm_backend_herdr_composer_identity "$TARGET" || true)
+  [ "$identity" = $'claude\tidle' ] && break
+  i=$((i + 1))
+  sleep 1
+done
+[ "$identity" = $'claude\tidle' ] || fail "Claude Code ($VERSION) on $HERDR_VER did not become idle after replying"
+lab pane send-keys "$PANE" ctrl+o >/dev/null || fail "could not open Claude's detailed transcript"
+i=0
+while [ "$i" -lt 20 ]; do
+  verdict=$(fm_backend_herdr_composer_state "$TARGET")
+  [ "$verdict" = unknown ] && break
+  i=$((i + 1))
+  sleep 0.25
+done
+[ "$verdict" = unknown ] || fail "Claude Code ($VERSION) on $HERDR_VER: detailed transcript read '$verdict', expected unknown"
+if ! reveal_herdr_claude_composer "$TARGET"; then
+  agent_state=$(fm_backend_agent_state herdr "$TARGET")
+  identity=$(fm_backend_herdr_composer_identity "$TARGET" || true)
+  footer=$(fm_backend_visible_capture herdr "$TARGET" | tail -n 1)
+  fail "daemon could not reveal Claude Code ($VERSION) on $HERDR_VER: agent=$agent_state identity=$identity footer=$footer"
+fi
+i=0
+while [ "$i" -lt 20 ]; do
+  verdict=$(fm_backend_herdr_composer_state "$TARGET")
+  [ "$verdict" = empty ] && break
+  i=$((i + 1))
+  sleep 0.25
+done
+[ "$verdict" = empty ] || fail "Claude Code ($VERSION) on $HERDR_VER: revealed composer read '$verdict', expected empty"
+
+lab pane send-text "$PANE" 'unsubmitted draft must survive transcript toggle' >/dev/null || fail "could not type a safety draft"
+i=0
+while [ "$i" -lt 20 ]; do
+  verdict=$(fm_backend_herdr_composer_state "$TARGET")
+  [ "$verdict" = pending ] && break
+  i=$((i + 1))
+  sleep 0.25
+done
+[ "$verdict" = pending ] || fail "Claude Code ($VERSION) on $HERDR_VER: draft read '$verdict', expected pending"
+lab pane send-keys "$PANE" ctrl+o >/dev/null || fail "could not reopen Claude's detailed transcript"
+i=0
+while [ "$i" -lt 20 ]; do
+  verdict=$(fm_backend_herdr_composer_state "$TARGET")
+  [ "$verdict" = unknown ] && break
+  i=$((i + 1))
+  sleep 0.25
+done
+[ "$verdict" = unknown ] || fail "Claude Code ($VERSION) on $HERDR_VER: draft-hidden transcript read '$verdict', expected unknown"
+reveal_herdr_claude_composer "$TARGET" || fail "daemon could not reveal the Claude draft"
+i=0
+while [ "$i" -lt 20 ]; do
+  verdict=$(fm_backend_herdr_composer_state "$TARGET")
+  [ "$verdict" = pending ] && break
+  i=$((i + 1))
+  sleep 0.25
+done
+[ "$verdict" = pending ] || fail "Claude Code ($VERSION) on $HERDR_VER: restored draft read '$verdict', expected pending"
+pass "live Herdr Claude transcript: unknown toggles to empty; a hidden draft toggles back to pending"
 
 [ "$CHECKED" -gt 0 ] || fail "FM_HERDR_SUBMIT_CONFIRM_LIVE=1 checked no harness"

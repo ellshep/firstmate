@@ -2877,6 +2877,53 @@ test_inject_msg_defers_on_dead_shell_unknown() {
   pass "inject_msg: defers on a dead-shell/unreadable composer (unknown), never typing the escalation into a shell"
 }
 
+test_inject_msg_reveals_herdr_claude_transcript_only_with_live_identity() {
+  local dir state mode
+  dir=$(make_supercase inject-herdr-transcript)
+  state="$dir/state"
+  afk_enter "$state"
+  for mode in empty pending wrong-footer dead-agent wrong-agent; do
+    (
+      local marker="$dir/$mode.toggled" submitted="$dir/$mode.submitted"
+      fm_backend_target_exists() { return 0; }
+      pane_is_busy() { return 1; }
+      fm_backend_composer_state() {
+        if [ -e "$marker" ]; then
+          case "$mode" in pending) printf 'pending' ;; *) printf 'empty' ;; esac
+        else
+          printf 'unknown'
+        fi
+      }
+      fm_backend_agent_state() {
+        case "$mode" in dead-agent) printf 'dead' ;; *) printf 'alive' ;; esac
+      }
+      fm_backend_source() { return 0; }
+      fm_backend_herdr_composer_identity() {
+        case "$mode" in wrong-agent) printf 'other\tidle' ;; *) printf 'claude\tidle' ;; esac
+      }
+      fm_backend_visible_capture() {
+        case "$mode" in
+          wrong-footer) printf 'some other fullscreen view\n' ;;
+          *) printf 'history\n  Showing detailed transcript · ctrl+o to toggle · ? for shortcuts   verbose\n' ;;
+        esac
+      }
+      fm_backend_send_key() { [ "$3" = ctrl+o ] || fail "unexpected reveal key: $3"; : > "$marker"; }
+      fm_backend_send_text_submit() { : > "$submitted"; printf 'empty'; }
+      if FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="default:w1:p2" inject_msg "hello" "$state"; then
+        [ "$mode" = empty ] || fail "inject_msg submitted in unsafe $mode mode"
+      else
+        [ "$mode" != empty ] || fail "inject_msg did not submit after a proven empty composer"
+      fi
+      case "$mode" in
+        empty) [ -e "$marker" ] && [ -e "$submitted" ] || fail "live transcript was not revealed and submitted" ;;
+        pending) [ -e "$marker" ] && [ ! -e "$submitted" ] || fail "draft was not preserved after reveal" ;;
+        *) [ ! -e "$marker" ] && [ ! -e "$submitted" ] || fail "unsafe $mode mode was toggled or submitted" ;;
+      esac
+    ) || fail "Herdr Claude transcript $mode subshell failed"
+  done
+  pass "inject_msg reveals only a live Claude detailed transcript and still defers on a restored draft"
+}
+
 test_inject_msg_defers_on_unrecognized_composer_state() {
   local dir state
   dir=$(make_supercase inject-future-composer-state)
@@ -3022,4 +3069,5 @@ test_inject_msg_herdr_composer_guard_defers
 test_inject_msg_herdr_pane_gone_defers
 test_inject_msg_herdr_submits_through_backend_dispatch
 test_inject_msg_defers_on_dead_shell_unknown
+test_inject_msg_reveals_herdr_claude_transcript_only_with_live_identity
 test_inject_msg_defers_on_unrecognized_composer_state

@@ -1277,8 +1277,28 @@ window_for_task() {  # <task-key> [state]
 #     after dim/faint ghost text and borders are ignored (a human's half-typed
 #     line, or a previous injection's unsent text), defer entirely - injecting
 #     would merge with the human's text.
+reveal_herdr_claude_composer() {  # <target>
+  local target=$1 identity visible footer
+  [ "$(fm_daemon_primary_harness)" = claude ] || return 1
+  [ "$(fm_backend_agent_state herdr "$target" 2>/dev/null)" = alive ] || return 1
+  fm_backend_source herdr || return 1
+  identity=$(fm_backend_herdr_composer_identity "$target" 2>/dev/null) || return 1
+  [ "$identity" = $'claude\tidle' ] || return 1
+  visible=$(fm_backend_visible_capture herdr "$target" 2>/dev/null) || return 1
+  footer=${visible##*$'\n'}
+  # Claude's detailed transcript replaces the composer. Only this exact live
+  # footer licenses a toggle; a shell, draft, or unreadable pane stays closed.
+  case "$footer" in
+    *'Showing detailed transcript'*'ctrl+o to toggle'*'? for shortcuts'*verbose*) ;;
+    *) return 1 ;;
+  esac
+  fm_backend_send_key herdr "$target" ctrl+o || return 1
+  log "revealed Herdr Claude composer from detailed transcript view"
+  return 0
+}
+
 inject_msg() {  # <message> [state]
-  local msg=$1 state target backend retries sleep_s verdict composer encoded
+  local msg=$1 state target backend retries sleep_s verdict composer encoded attempt
   state="${2:-$(_state_root)}"
   # (1) Presence-gate: inject ONLY when afk is active. When afk is off, the
   # daemon self-handles and stays quiet; firstmate drives the normal always-on
@@ -1314,6 +1334,16 @@ inject_msg() {  # <message> [state]
   #      on anything that is not affirmatively 'empty'. A deferred escalation
   #      stays buffered for the next cycle or the catch-up flush.
   composer=$(fm_backend_composer_state "$backend" "$target" 2>/dev/null)
+  if [ "$backend" = herdr ] && [ "$composer" = unknown ] && reveal_herdr_claude_composer "$target"; then
+    # Herdr's read may briefly return the pre-toggle frame. Never promote an
+    # unknown verdict: wait only for the normal classifier to prove a composer.
+    for attempt in 1 2 3 4 5; do
+      pane_is_busy "$target" "$backend" && break
+      composer=$(fm_backend_composer_state "$backend" "$target" 2>/dev/null)
+      [ "$composer" != unknown ] && break
+      sleep 0.1
+    done
+  fi
   if [ "$composer" != empty ]; then
     log "inject deferred: supervisor composer not confirmed-empty (state=${composer:-unknown}: pending input, dead-shell prompt, or unreadable pane)"
     return 1
