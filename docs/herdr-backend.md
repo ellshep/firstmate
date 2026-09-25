@@ -266,6 +266,9 @@ Identity stays a lazy second read, consulted only when a separator pair could ch
 ANSI capture preserves de-emphasized placeholder style.
 `bin/fm-composer-lib.sh` is the fleet-wide owner that strips dim or faint runs and dark truecolor placeholders while retaining bright typed input.
 If the ANSI capture ever fails, the plain fallback declares itself unstyled and the classifier degrades a glyph row carrying trailing text to `unknown` instead of misreading ghost suggestions as typed input, which safely defers injection and eventually raises the wedge alarm.
+When Claude Code starts with `NO_COLOR=1` and prompt suggestions enabled, even a successful Herdr ANSI capture carries no styling for the idle suggestion.
+That suggestion is indistinguishable from a draft containing the same words, so the classifier must defer injection.
+Launch a Claude primary that will receive away-mode injections with `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false` or with normal ANSI color enabled.
 
 A bare shell prompt is never an empty agent composer.
 Away-mode injection proceeds only on an affirmative `empty` result, never on unknown.

@@ -546,4 +546,7 @@ Observed output:
 {"id":"cli:notification:show","result":{"reason":"shown","shown":true,"type":"notification_show"}}
 ```
 
+On 2026-09-25, Herdr 0.9.1 returned the same `shown=true` result for `notification show` in a guarded non-default lab session using `bin/fm-herdr-lab.sh run <session> notification show 'FIRSTMATE LAB WEDGE TEST' --body 'Isolated lab notification channel check' --sound request`.
+The portable `tests/fm-daemon.test.sh` regression now requires `auto` to select Herdr's notification channel for a Herdr primary and to retain Notification Center as the second channel on macOS.
+
 The safe command-channel contract is covered without a notification by `tests/fm-daemon.test.sh`: the summary reaches both `$1` and stdin, every channel is process-group bounded, and a failed channel falls through.

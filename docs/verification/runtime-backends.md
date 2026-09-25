@@ -1006,6 +1006,23 @@ Observed 2026-08-19:
 ok - live Herdr submit confirm: Claude Code (2.1.236 (Claude Code)) on herdr 0.8.0 reports empty for a landed idle steer
 ```
 
+The same live guard was extended and run on 2026-09-25 with Claude Code 2.1.282 and Herdr 0.9.1 in a guarded named lab session.
+It now starts separate Claude panes with a normal styled suggestion, an unstyled `NO_COLOR=1` suggestion, and suggestions disabled, then checks the shared Herdr composer verdict and a real typed draft.
+
+```sh
+FM_HERDR_SUBMIT_CONFIRM_LIVE=1 bin/fm-test-run.sh tests/fm-herdr-submit-confirm-live-e2e.test.sh
+```
+
+```text
+ok - live Herdr Claude suggestion: no-color stays unsafe, styled idle is empty, typed draft is pending
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=23323
+```
+
+The no-color pane's `--format ansi` capture contained zero ESC bytes and its idle `Try "..."` suggestion read `pending`; the styled pane carried SGR-2 on the suggestion and read `empty`.
+Disabling suggestions also read `empty` under `NO_COLOR=1` in the same lab.
+The guard also confirmed the submitted prompt by observing Claude's requested reply.
+That divergence is a rendering limitation, not evidence that the no-color pane contains a typed draft; the guard deliberately cannot use the suggestion's wording as proof of emptiness.
+
 ### Prune and respawn
 
 The real label-collision reproduction is owned by:

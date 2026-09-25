@@ -775,13 +775,18 @@ wedge_alarm_configured_channels() {
   [ -n "$found" ] || printf 'auto\n'
 }
 
-# Resolve the platform's default OS-level channel for `auto`. macOS reaches the
-# captain via an osascript Notification Center banner; other platforms have no
-# built-in OS channel (the captain wires a command: directive), so this prints
-# nothing and wedge_alarm_notify logs that the marker is the only signal.
+# Resolve the default active-alert channels for `auto`. A Herdr primary gets a
+# notification in Herdr itself; macOS also gets a Notification Center banner.
+# This matters when the OS accepts an osascript notification without actually
+# displaying a banner in the captain's Herdr window. Other backends on non-macOS
+# platforms have no built-in channel, so the marker is their only signal.
 wedge_alarm_platform_default() {
+  if [ "${FM_SUPERVISOR_BACKEND:-$FM_SUPERVISOR_BACKEND_DEFAULT}" = herdr ] \
+     && command -v herdr >/dev/null 2>&1; then
+    printf 'herdr\n'
+  fi
   case "$(uname)" in
-    Darwin) command -v osascript >/dev/null 2>&1 && printf 'osascript' ;;
+    Darwin) command -v osascript >/dev/null 2>&1 && printf 'osascript\n' ;;
     *) : ;;
   esac
 }
@@ -935,7 +940,7 @@ wedge_alarm_emit() {  # <channel> <summary>
 # `auto` (no OS channel on this platform) logs that the durable marker is the
 # only signal. Every notifier routes through the test-forced recorder seam.
 wedge_alarm_notify() {  # <summary> <marker>
-  local summary=$1 marker=$2 ch
+  local summary=$1 marker=$2 ch resolved
   local -a channels=()
   while IFS= read -r ch; do
     [ -n "$ch" ] || continue
@@ -945,9 +950,21 @@ wedge_alarm_notify() {  # <summary> <marker>
     [ "$ch" = off ] && return 0
   done
   for ch in "${channels[@]}"; do
-    case "$ch" in auto|default) ch=$(wedge_alarm_platform_default) ;; esac
     case "$ch" in
-      '') log "wedge alarm: no OS-level alert channel on $(uname); durable marker $marker is the only signal - set config/wedge-alarm (e.g. a command: directive)" ;;
+      auto|default)
+        resolved=$(wedge_alarm_platform_default)
+        if [ -z "$resolved" ]; then
+          log "wedge alarm: no active alert channel on $(uname); durable marker $marker is the only signal - set config/wedge-alarm (e.g. a command: directive)"
+        else
+          while IFS= read -r ch; do
+            [ -n "$ch" ] || continue
+            wedge_alarm_emit "$ch" "$summary" || true
+          done <<< "$resolved"
+        fi
+        continue
+        ;;
+    esac
+    case "$ch" in
       osascript|herdr) wedge_alarm_emit "$ch" "$summary" || true ;;
       command:*) wedge_alarm_emit command "$summary" "${ch#command:}" || true ;;
       *) log "wedge alarm: unrecognized active-alert channel directive (redacted); marker still written" ;;

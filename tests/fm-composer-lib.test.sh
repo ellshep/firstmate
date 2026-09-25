@@ -189,6 +189,25 @@ test_matrix_claude_bare_nbsp_row() {
   pass "matrix: claude's ❯+NBSP row reads empty on every profile in both locales (#1988)"
 }
 
+test_matrix_claude_unstyled_suggestion_refuses_injection() {
+  # Captured from idle Claude Code 2.1.282 on Herdr 0.9.1. NO_COLOR=1
+  # removes the SGR-2 proof that this "Try" text is a ghost suggestion.
+  # A human can type these exact bytes, so their plain rendering must never
+  # become an empty verdict merely because it matches suggestion wording.
+  local prefix plain styled disabled typed
+  prefix=$'────────────────────────────────────────────────────────\n❯'"$NBSP"
+  plain="$prefix"$'Try "write a test for herdr.sh"\n────────────────────────────────────────────────────────'
+  styled="$prefix""${ESC}[0m${ESC}[2m"'Try "write a test for herdr.sh"'"${ESC}[0m"$'\n────────────────────────────────────────────────────────'
+  disabled="$prefix"$'\n────────────────────────────────────────────────────────'
+  typed="$prefix"'Try "write a test for herdr.sh"'"${ESC}[0m"$'\n────────────────────────────────────────────────────────'
+  assert_screen "claude dim suggestion on herdr" empty "$CAPS_STYLED" "$styled" '' $'claude\tidle'
+  assert_screen "claude unstyled suggestion on herdr" pending "$CAPS_STYLED" "$plain" '' $'claude\tidle'
+  assert_screen "claude plain fallback suggestion" unknown "$CAPS_PLAIN" "$plain"
+  assert_screen "claude typed suggestion words" pending "$CAPS_STYLED" "$typed" '' $'claude\tidle'
+  assert_screen "claude suggestion disabled" empty "$CAPS_STYLED" "$disabled" '' $'claude\tidle'
+  pass "matrix: unstyled Claude suggestions cannot authorize injection, while dim or disabled suggestions read empty"
+}
+
 test_matrix_codex_dim_hint_row() {
   # Real idle codex: bold `›`, reset, then an SGR-2 dim hint. Styled captures
   # strip the ghost and prove empty; plain captures must defer as unknown -
@@ -786,6 +805,7 @@ test_idle_placeholder_is_empty
 test_idle_placeholder_case_mode_is_explicit
 test_real_text_is_pending
 test_matrix_claude_bare_nbsp_row
+test_matrix_claude_unstyled_suggestion_refuses_injection
 test_matrix_codex_dim_hint_row
 test_matrix_muse_truecolor_glyph_survives_signal_loss
 test_matrix_cursor_reverse_video_placeholder_remnant

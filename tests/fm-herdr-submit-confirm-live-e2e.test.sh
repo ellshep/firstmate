@@ -93,6 +93,65 @@ while [ "$i" -lt 45 ]; do
 done
 [ "$idle" = 1 ] || fail "Claude Code ($VERSION) on $HERDR_VER never registered an idle agent in the lab pane"
 
+# The away daemon shares this adapter. A Claude prompt suggestion under
+# NO_COLOR has no ghost styling in Herdr's ANSI read, so it cannot be
+# distinguished from a draft containing the same words. Keep that verdict
+# unsafe; color or disabling suggestions must restore a proven empty read.
+probe_suggestion() {  # <no-color|color> <wanted-verdict>
+  local mode=$1 want=$2 ws pane target command status capture verdict i esc
+  ws=$(lab workspace create --cwd "$ROOT" --label "fm-suggestion-$mode" --no-focus) \
+    || fail "could not create the $mode suggestion probe workspace"
+  pane=$(printf '%s' "$ws" | jq -er '.result.root_pane.pane_id') \
+    || fail "$mode suggestion probe did not return a pane id"
+  target="$SESSION:$pane"
+  case "$mode" in
+    no-color) command='env -u CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION NO_COLOR=1 claude --dangerously-skip-permissions' ;;
+    color) command='env -u CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION -u NO_COLOR claude --dangerously-skip-permissions' ;;
+  esac
+  lab pane run "$pane" "$command" >/dev/null \
+    || fail "could not launch Claude Code ($VERSION) $mode suggestion probe"
+  i=0
+  while [ "$i" -lt 45 ]; do
+    status=$(lab agent get "$pane" 2>/dev/null | jq -r '.result.agent.agent_status // empty')
+    capture=$(fm_backend_herdr_capture_ansi "$target" "$FM_COMPOSER_CAPTURE_LINES" 2>/dev/null || true)
+    if [ "$status" = idle ] && printf '%s' "$capture" | grep -F 'Try "' >/dev/null; then
+      break
+    fi
+    i=$((i + 1))
+    sleep 1
+  done
+  [ "$i" -lt 45 ] || fail "Claude Code ($VERSION) on $HERDR_VER did not render an idle $mode suggestion"
+  esc=$(printf '\033')
+  case "$mode" in
+    no-color)
+      case "$capture" in *"$esc"*) fail "$mode suggestion unexpectedly carried ANSI styling" ;; esac
+      ;;
+    color)
+      case "$capture" in *"$esc"*) : ;; *) fail "$mode suggestion had no ANSI styling" ;; esac
+      ;;
+  esac
+  verdict=$(fm_backend_herdr_composer_state "$target")
+  [ "$verdict" = "$want" ] \
+    || fail "Claude Code ($VERSION) on $HERDR_VER: idle $mode suggestion read '$verdict', expected '$want'"
+  if [ "$mode" = color ]; then
+    lab pane send-text "$pane" 'unsubmitted draft stays pending' >/dev/null \
+      || fail "could not type the $mode safety draft"
+    i=0
+    while [ "$i" -lt 20 ]; do
+      verdict=$(fm_backend_herdr_composer_state "$target")
+      [ "$verdict" = pending ] && break
+      i=$((i + 1))
+      sleep 0.25
+    done
+    [ "$verdict" = pending ] \
+      || fail "Claude Code ($VERSION) on $HERDR_VER: typed draft read '$verdict', expected pending"
+  fi
+}
+
+probe_suggestion no-color pending
+probe_suggestion color empty
+pass "live Herdr Claude suggestion: no-color stays unsafe, styled idle is empty, typed draft is pending"
+
 TOKEN="FMHERDRPONG$$_$RANDOM"
 verdict=$(fm_backend_herdr_send_text_submit "$TARGET" "Reply with exactly $TOKEN and nothing else." 3 0.4 0.4) \
   || fail "send_text_submit failed to run against Claude Code ($VERSION) on $HERDR_VER"

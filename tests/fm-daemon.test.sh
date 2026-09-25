@@ -2448,16 +2448,33 @@ test_wedge_alarm_off_disables_active_alert_regardless_of_position() {
 test_wedge_alarm_auto_darwin_selects_osascript() {
   local dir log
   dir=$(make_wedge_case wedge-auto-darwin); log="$dir/alert.log"
-  PATH="$dir/fakebin:$PATH" FM_WEDGE_ALARM_LOG="$log" FM_FAKE_UNAME=Darwin FM_WEDGE_ALARM_CHANNEL=auto \
+  PATH="$dir/fakebin:$PATH" FM_WEDGE_ALARM_LOG="$log" FM_FAKE_UNAME=Darwin FM_WEDGE_ALARM_CHANNEL=auto FM_SUPERVISOR_BACKEND=tmux \
     wedge_alarm_notify "away-mode WEDGED 900s" "/s/.marker"
   grep -F 'osascript' "$log" >/dev/null || fail "auto did not resolve to osascript on Darwin: $(cat "$log")"
-  pass "auto resolves to the macOS osascript notifier on Darwin (default-on)"
+  ! grep -F 'herdr' "$log" >/dev/null || fail "tmux auto alarm unexpectedly selected Herdr: $(cat "$log")"
+  pass "auto resolves to only the macOS osascript notifier for tmux on Darwin"
+}
+
+test_wedge_alarm_auto_herdr_uses_pane_independent_channels() {
+  local dir log
+  dir=$(make_wedge_case wedge-auto-herdr); log="$dir/alert.log"
+  PATH="$dir/fakebin:$PATH" FM_WEDGE_ALARM_LOG="$log" FM_FAKE_UNAME=Darwin FM_WEDGE_ALARM_CHANNEL=auto FM_SUPERVISOR_BACKEND=herdr \
+    wedge_alarm_notify "away-mode WEDGED 900s" "/s/.marker"
+  [ "$(wc -l < "$log" | tr -d ' ')" -eq 2 ] || fail "Herdr auto alarm must use both channels: $(cat "$log")"
+  [ "$(sed -n '1p' "$log" | cut -f1)" = herdr ] || fail "Herdr notification was not attempted first: $(cat "$log")"
+  [ "$(sed -n '2p' "$log" | cut -f1)" = osascript ] || fail "macOS notification was not attempted second: $(cat "$log")"
+  : > "$log"
+  PATH="$dir/fakebin:$PATH" FM_WEDGE_ALARM_LOG="$log" FM_FAKE_UNAME=Linux FM_WEDGE_ALARM_CHANNEL=auto FM_SUPERVISOR_BACKEND=herdr \
+    wedge_alarm_notify "away-mode WEDGED 900s" "/s/.marker"
+  [ "$(wc -l < "$log" | tr -d ' ')" -eq 1 ] || fail "non-macOS Herdr auto alarm must use one channel: $(cat "$log")"
+  [ "$(cut -f1 < "$log")" = herdr ] || fail "non-macOS Herdr auto alarm did not use Herdr: $(cat "$log")"
+  pass "auto alerts a Herdr primary inside Herdr and also through Notification Center on macOS"
 }
 
 test_wedge_alarm_auto_non_darwin_has_no_os_channel() {
   local dir log
   dir=$(make_wedge_case wedge-auto-linux); log="$dir/alert.log"
-  PATH="$dir/fakebin:$PATH" FM_WEDGE_ALARM_LOG="$log" FM_FAKE_UNAME=Linux FM_WEDGE_ALARM_CHANNEL=auto \
+  PATH="$dir/fakebin:$PATH" FM_WEDGE_ALARM_LOG="$log" FM_FAKE_UNAME=Linux FM_WEDGE_ALARM_CHANNEL=auto FM_SUPERVISOR_BACKEND=tmux \
     wedge_alarm_notify "away-mode WEDGED 900s" "/s/.marker"
   [ ! -s "$log" ] || fail "auto selected a built-in OS channel on a non-macOS platform: $(cat "$log")"
   pass "auto on a non-macOS platform selects no built-in OS channel (the marker or a configured command carries it)"
@@ -2981,6 +2998,7 @@ test_wedge_alarm_command_failure_hides_configured_command
 test_wedge_alarm_unknown_channel_hides_configured_directive
 test_wedge_alarm_off_disables_active_alert_regardless_of_position
 test_wedge_alarm_auto_darwin_selects_osascript
+test_wedge_alarm_auto_herdr_uses_pane_independent_channels
 test_wedge_alarm_auto_non_darwin_has_no_os_channel
 test_wedge_alarm_config_file_multi_channel
 test_wedge_alarm_failing_channel_degrades_gracefully
