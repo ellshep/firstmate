@@ -30,6 +30,8 @@ PF_TEST_LOCK_HOLDER=
 
 write_promotion_brief() {  # <home> <id>
   local home=$1 id=$2
+  tasks_in "$home" add "$id" "Scout $id" --kind scout >/dev/null || fail "could not seed scout row"
+  tasks_in "$home" start "$id" >/dev/null || fail "could not start scout row"
   mkdir -p "$home/data/$id"
   cat > "$home/data/$id/brief.md" <<'EOF'
 # Task
@@ -1570,7 +1572,12 @@ SH
   ')
   assert_contains "$command" "--outcome-text" \
     "the exact rechain command must remain continuous through outcome text"
-  command=${command/"$ROOT/bin/fm-public-followup-emit.sh"/"$parent/fakebin/record-emit"}
+  command=${command#  }
+  case "$command" in
+    "$ROOT/bin/fm-public-followup-emit.sh"*) ;;
+    *) fail "the rechain command must start with this checkout's emit script" ;;
+  esac
+  command="$parent/fakebin/record-emit${command#"$ROOT/bin/fm-public-followup-emit.sh"}"
   command=${command//<value>/https://github.com/example/repo/pull/99}
   RECORD_ARGS="$command_log" bash -c "$command" \
     || fail "the exact rechain command must execute after filling its deliverable value"
@@ -2319,7 +2326,7 @@ test_secondmate_promotion_uses_teardown_parent_resolution() {
   write_promotion_brief "$child" promote-conflict
   out=$(PATH="$child/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$child" \
     FM_STATE_OVERRIDE="$child/state" FM_PUBLIC_FOLLOWUP_PRIMARY_HOME="$parent" \
-    "$PROMOTE" promote-conflict --mode local-only --yolo off 2>&1) \
+    "$PROMOTE" promote-conflict --mode local-only --yolo off --title "Ship promote-conflict" 2>&1) \
     || fail "promotion must not block on conflicting parent bindings: $out"
   assert_contains "$out" "promoted promote-conflict to ship" \
     "parent-resolution trouble must never refuse the kind flip"
@@ -2334,7 +2341,7 @@ test_secondmate_promotion_uses_teardown_parent_resolution() {
   write_promotion_brief "$child" promote-legacy
   out=$(PATH="$child/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$child" \
     FM_STATE_OVERRIDE="$child/state" FM_PUBLIC_FOLLOWUP_PRIMARY_HOME="$parent" \
-    "$PROMOTE" promote-legacy --mode local-only --yolo off 2>&1) \
+    "$PROMOTE" promote-legacy --mode local-only --yolo off --title "Ship promote-legacy" 2>&1) \
     || fail "legacy parent recovery must not block promotion: $out"
   assert_contains "$out" "next: FM_HOME=" \
     "a recovered legacy parent must identify the consent-holding home"
@@ -2351,7 +2358,7 @@ test_secondmate_promotion_uses_teardown_parent_resolution() {
   write_promotion_brief "$remote_child" promote-remote
   out=$(PATH="$remote_child/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$remote_child" \
     FM_STATE_OVERRIDE="$remote_child/state" \
-    "$PROMOTE" promote-remote --mode local-only --yolo off 2>&1) \
+    "$PROMOTE" promote-remote --mode local-only --yolo off --title "Ship promote-remote" 2>&1) \
     || fail "a remote parent route must not block promotion: $out"
   assert_contains "$out" "promoted promote-remote to ship" \
     "an unresolved remote parent must never refuse the kind flip"
