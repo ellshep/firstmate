@@ -19,6 +19,7 @@
 #   fm-operational-input.sh kind           # current input on stdin, kind stdout
 #   fm-operational-input.sh classify       # current or legacy input on stdin
 #   fm-operational-input.sh body           # current generic input on stdin
+#   fm-operational-input.sh doorbell-kind <state-dir> # record-backed doorbell on stdin
 #   fm-operational-input.sh --help
 #
 # All successful data commands print exactly one value and no diagnostics.
@@ -170,6 +171,27 @@ fm_operational_input_classify() {  # <message> <result-var>
   return 1
 }
 
+# A doorbell is operational only while it names a real pending inbox record.
+# Reuse the inbox owner's formatter so similar captain prose is never excluded.
+fm_operational_doorbell_kind() {  # <message> <state-dir> <result-var>
+  local message=${1-} state=${2-} result_var=${3-} record line
+  [ -n "$result_var" ] || return 2
+  case "$message" in ': Firstmate instruction waiting: '*) ;; *) return 1 ;; esac
+  [ -d "$state" ] && [ ! -L "$state" ] || return 1
+  # Loaded only for the rare candidate, not for every prompt.
+  # shellcheck source=/dev/null
+  . "$(dirname "${BASH_SOURCE[0]}")/fm-task-inbox-lib.sh" || return 1
+  for record in "$state"/*.inbox/*.msg; do
+    [ -f "$record" ] && [ ! -L "$record" ] || continue
+    line=$(fm_task_inbox_doorbell_line "$record") || continue
+    if [ "$message" = "$line" ]; then
+      printf -v "$result_var" '%s' doorbell
+      return 0
+    fi
+  done
+  return 1
+}
+
 fm_message_from_firstmate() {  # <message>
   local kind
   fm_operational_input_kind "${1-}" kind && [ "$kind" = from-firstmate ]
@@ -201,6 +223,7 @@ Usage:
   bin/fm-operational-input.sh kind           # current input on stdin
   bin/fm-operational-input.sh classify       # current or legacy input on stdin
   bin/fm-operational-input.sh body           # current input on stdin
+  bin/fm-operational-input.sh doorbell-kind <state-dir> # record-backed doorbell
 
 Current construction kinds:
   session-start watcher turn-end-guard away-supervisor from-firstmate launch-brief
@@ -239,6 +262,12 @@ fm_operational_main() {
       fm_operational_read_stdin input || return 2
       fm_operational_input_body "$input" output || return 1
       printf '%s' "$output"
+      ;;
+    doorbell-kind)
+      [ "$#" -eq 2 ] || return 2
+      fm_operational_read_stdin input || return 2
+      fm_operational_doorbell_kind "$input" "$argument" output || return 1
+      printf '%s\n' "$output"
       ;;
     *)
       fm_operational_usage >&2

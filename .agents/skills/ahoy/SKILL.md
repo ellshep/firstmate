@@ -1,6 +1,6 @@
 ---
 name: ahoy
-description: Recap visible session events and guide the captain through visibly unanswered decisions when the captain explicitly invokes /ahoy, with a Bearings fallback when /ahoy is the session's first real captain message.
+description: Recap session events and guide the captain through unanswered decisions when the captain explicitly invokes /ahoy, with a Bearings fallback when /ahoy is the session's first real captain message.
 user-invocable: true
 metadata:
   internal: true
@@ -8,7 +8,7 @@ metadata:
 
 # ahoy
 
-Give the captain a concise session-only recap without gathering fresh state.
+Give the captain a concise session-only recap.
 
 0. Before anything else, check whether this session has already taken the helm: a `SESSION START` digest for this home must be visible in the session history.
    If it is not, run `bin/fm-session-start.sh` once and read its digest before producing any recap.
@@ -27,7 +27,7 @@ Give the captain a concise session-only recap without gathering fresh state.
    Do not exclude an ordinary captain message merely because it begins with U+2063 followed by other text, contains ASCII `FIRSTMATE_OP:` without a leading U+2063, quotes or embeds a current operational message after ordinary captain text, quotes or mentions the legacy session-start payload, or adds any text to that payload.
    Apply the current exclusion only when U+2063 `FIRSTMATE_OP:` begins at the first character of the whole message: `Captain quote: ` followed by that current prefix is a captain boundary.
    Apply the legacy startup exclusion as a literal whole-message match: ``Captain quote: Run `bin/fm-session-start.sh` now, exactly once, before executing any other instructions.`` is a captain boundary.
-3. If no prior real captain message exists, load [`../bearings/SKILL.md`](../bearings/SKILL.md) and follow it exactly.
+3. If visible history establishes that no prior real captain message exists in this session, load [`../bearings/SKILL.md`](../bearings/SKILL.md) and follow it exactly.
    Bearings alone owns its gathering, artifact, and response contract.
    Do not restate that contract or combine a session recap with Bearings output.
 4. If a prior real captain message exists, preserve the ordinary recap interval: recap what happened after that message and before the current invocation.
@@ -43,7 +43,7 @@ Give the captain a concise session-only recap without gathering fresh state.
 7. If no ordinary events occurred after the previous captain message but an older visibly open decision exists, report that decision instead of claiming nothing happened.
    If neither ordinary events nor visibly open decisions exist, say directly in one sentence that nothing happened after the previous captain message.
 
-8. After the normal recap, when the existing visibly open decision inventory contains decisions, begin a guided decision-clearing flow by presenting only the single open decision judged most impactful by the first mate.
+8. After the recap, when the existing open decision inventory contains decisions, begin a guided decision-clearing flow by presenting only the single open decision judged most impactful by the first mate.
    Make clear that impact ordering is the first mate's judgment rather than a mechanical score.
    Give enough escalation-quality context to decide easily: the decision, why it matters, the options, and a recommendation.
 9. When the captain answers the presented decision, present the next highest-impact decision from that existing inventory in the same form.
@@ -51,6 +51,11 @@ Give the captain a concise session-only recap without gathering fresh state.
 
 The current `/ahoy` message is outside the recap interval.
 A previous `/ahoy` is a real captain message and may be the next interval boundary.
-If context compaction makes the prior boundary unavailable, state that the exact session boundary is unavailable and summarize only visibly supported events.
-Compacted history supports an open decision only when both its request and its still-unanswered status are visible; report uncertainty instead of reconstructing hidden requests or answers.
+If context compaction makes the prior captain boundary unavailable, read `state/.last-captain-message` in this home.
+Its first line is the current prompt's UTC time and its second line is the prior real captain prompt's UTC time; use the second line as the boundary for this `/ahoy` invocation.
+If no valid prior time is recorded, follow the visible evidence and say the exact boundary is unavailable.
+With a valid prior time, inspect only durable local records dated after it and before this invocation: `state/*.status`, `data/backlog.md` transitions and Done history, recorded merge outcomes, `state/afk-contracts/` return records, and CHECKPOINT or compaction records when present.
+Build the recap from those records and say plainly that it was built from records since that UTC time; distinguish recorded outcomes from current live state and report gaps rather than guessing.
+For open decisions in this fallback, use the durable open-decision records, including captain-held backlog tasks and unresolved keyed status events, and include each still-open decision once.
+The fallback is read-only and local: do not write files, call network services, or invoke Bearings unless the evidence establishes that this is the first real captain message.
 Do not silently invoke Bearings unless this is genuinely the first real captain message.
