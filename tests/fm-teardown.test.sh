@@ -3686,18 +3686,24 @@ test_worktree_containers_stop_without_touching_unrelated_containers() {
   case_dir=$(make_case worktree-container-stop)
   write_meta "$case_dir" no-mistakes ship
   land_shippable_commit "$case_dir"
+  mkdir -p "$case_dir/project/supabase"
+  printf '%s\n' 'project_id = "shared-id"' > "$case_dir/project/supabase/config.toml"
   cat > "$case_dir/fakebin/podman" <<'SH'
 #!/usr/bin/env bash
 case "${1:-}" in
-  ps) printf '%s\n' bound unrelated labelled working ;;
+  ps) printf '%s\n' bound unrelated labelled working shared-supabase shared-compose ;;
   inspect)
     case "${2:-}" in
       bound)
         printf '[{"Mounts":[{"Source":"%s/data"}],"Config":{"Labels":{},"WorkingDir":"/app"}}]\n' "$FM_TEST_WT" ;;
       labelled)
-        printf '[{"Mounts":[],"Config":{"Labels":{"com.docker.compose.project.working_dir":"%s"},"WorkingDir":"/app"}}]\n' "$FM_TEST_WT" ;;
+        printf '[{"Mounts":[],"Config":{"Labels":{"com.docker.compose.project.working_dir":"%s","com.docker.compose.project":"worker-id"},"WorkingDir":"/app"}}]\n' "$FM_TEST_WT" ;;
       working)
         printf '[{"Mounts":[],"Config":{"Labels":{},"WorkingDir":"%s/service"}}]\n' "$FM_TEST_WT" ;;
+      shared-supabase)
+        printf '[{"Mounts":[],"Config":{"Labels":{"com.supabase.cli.workdir":"%s","com.supabase.cli.project":"shared-id"},"WorkingDir":"/app"}}]\n' "$FM_TEST_WT" ;;
+      shared-compose)
+        printf '[{"Mounts":[{"Source":"%s/data"}],"Config":{"Labels":{"com.docker.compose.project":"shared-id"},"WorkingDir":"/app"}}]\n' "$FM_TEST_WT" ;;
       unrelated)
         printf '[{"Mounts":[{"Source":"%s-other/data"}],"Config":{"Labels":{},"WorkingDir":"/app"}}]\n' "$FM_TEST_WT" ;;
     esac ;;
@@ -3713,7 +3719,11 @@ SH
   assert_grep 'labelled' "$case_dir/stopped.log" "label-bound container was not stopped"
   assert_grep 'working' "$case_dir/stopped.log" "working-directory-bound container was not stopped"
   assert_no_grep 'unrelated' "$case_dir/stopped.log" "unrelated container was stopped"
+  assert_no_grep 'shared-supabase' "$case_dir/stopped.log" "shared Supabase container was stopped"
+  assert_no_grep 'shared-compose' "$case_dir/stopped.log" "shared Compose container was stopped"
   assert_grep 'stopped podman container bound' "$case_dir/stderr" "stop was not reported"
+  assert_grep 'skipped podman container shared-supabase' "$case_dir/stderr" "shared Supabase skip was not reported"
+  assert_grep 'skipped podman container shared-compose' "$case_dir/stderr" "shared Compose skip was not reported"
   pass "teardown stops only containers whose metadata binds them to its worktree"
 }
 

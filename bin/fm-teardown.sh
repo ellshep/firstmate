@@ -2140,8 +2140,15 @@ EOF
 }
 
 stop_worktree_databases() {  # <worktree> <project clone>
-  local wt=$1 project=$2 runtime ids id details config config_dir project_id relative base_config base_id
+  local wt=$1 project=$2 runtime ids id details config config_dir project_id source_ids source_id
+  local project_labels label shared_container_label
   [ -d "$wt" ] || return 0
+  source_ids=$'\n'
+  while IFS= read -r config; do
+    [ -n "$config" ] || continue
+    source_id=$(sed -nE 's/^[[:space:]]*project_id[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$config" | head -1)
+    [ -n "$source_id" ] && source_ids+="$source_id"$'\n'
+  done < <(find "$project" -type f -path '*/supabase/config.toml' -not -path '*/node_modules/*' -print 2>/dev/null)
   if ! command -v jq >/dev/null 2>&1; then
     echo "teardown: cannot inspect worktree containers for $ID (jq unavailable)" >&2
   else
@@ -2166,6 +2173,25 @@ stop_worktree_databases() {  # <worktree> <project clone>
         ' >/dev/null 2>&1; then
           continue
         fi
+        if ! project_labels=$(printf '%s\n' "$details" | jq -r '
+          .[0].Config.Labels // {} |
+          [.["com.supabase.cli.project"], .["com.docker.compose.project"]] |
+          .[] | strings | select(length > 0)
+        ' 2>/dev/null); then
+          echo "teardown: $runtime could not read project labels for container $id for $ID" >&2
+          continue
+        fi
+        shared_container_label=
+        while IFS= read -r label; do
+          [ -n "$label" ] || continue
+          case "$source_ids" in
+            *$'\n'"$label"$'\n'*) shared_container_label=$label; break ;;
+          esac
+        done <<< "$project_labels"
+        if [ -n "$shared_container_label" ]; then
+          echo "teardown: skipped $runtime container $id for $ID (project ID $shared_container_label shared with source project)" >&2
+          continue
+        fi
         if "$runtime" stop "$id" >/dev/null 2>&1; then
           echo "teardown: stopped $runtime container $id bound to $wt" >&2
         else
@@ -2183,18 +2209,13 @@ stop_worktree_databases() {  # <worktree> <project clone>
     config_dir=${config%/supabase/config.toml}
     project_id=$(sed -nE 's/^[[:space:]]*project_id[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$config" | head -1)
     [ -n "$project_id" ] || continue
-    relative=${config#"$wt"/}
-    base_config="$project/$relative"
-    base_id=
-    if [ -f "$base_config" ]; then
-      base_id=$(sed -nE 's/^[[:space:]]*project_id[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$base_config" | head -1)
-    fi
     # A copied project ID can address the shared stack; only an ID distinct
     # from the source project's configuration is safe to stop by CLI.
-    if [ -n "$base_id" ] && [ "$base_id" = "$project_id" ]; then
-      echo "teardown: skipped Supabase project $project_id for $ID (ID shared with source project)" >&2
-      continue
-    fi
+    case "$source_ids" in
+      *$'\n'"$project_id"$'\n'*)
+        echo "teardown: skipped Supabase project $project_id for $ID (ID shared with source project)" >&2
+        continue ;;
+    esac
     if supabase stop --project-id "$project_id" --workdir "$config_dir" >/dev/null 2>&1; then
       echo "teardown: stopped Supabase project $project_id from $config_dir" >&2
     else
