@@ -94,6 +94,21 @@ SH
 # tmux kill-window etc.: succeed silently.
 exit 0
 SH
+  # Keep teardown's container sweep hermetic on hosts with a real runtime.
+  cat > "$fakebin/podman" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in ps) exit 0 ;; esac
+exit 1
+SH
+  cat > "$fakebin/docker" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in ps) exit 0 ;; esac
+exit 1
+SH
+  cat > "$fakebin/supabase" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
   # Default gh-axi mock: no PR is associated with the branch, and viewing any PR
   # number fails. This keeps the landed-work check hermetic (never reaching the real
   # gh-axi) and represents the common "no GitHub PR" baseline. Tests that need a
@@ -165,7 +180,7 @@ case "${1:-}" in
 esac
 exit 0
 SH
-  chmod +x "$fakebin/treehouse" "$fakebin/tmux" "$fakebin/gh-axi" "$fakebin/gh" "$fakebin/no-mistakes"
+  chmod +x "$fakebin/treehouse" "$fakebin/tmux" "$fakebin/gh-axi" "$fakebin/gh" "$fakebin/no-mistakes" "$fakebin/podman" "$fakebin/docker" "$fakebin/supabase"
 
   # Bare origin so the clone has an `origin` remote and origin/HEAD.
   git init -q --bare "$case_dir/origin.git"
@@ -3666,6 +3681,87 @@ EOF
   pass "the run abort and the leaked-process reap both complete before the destructive worktree return"
 }
 
+test_worktree_containers_stop_without_touching_unrelated_containers() {
+  local case_dir rc
+  case_dir=$(make_case worktree-container-stop)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  cat > "$case_dir/fakebin/podman" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  ps) printf '%s\n' bound unrelated labelled working ;;
+  inspect)
+    case "${2:-}" in
+      bound)
+        printf '[{"Mounts":[{"Source":"%s/data"}],"Config":{"Labels":{},"WorkingDir":"/app"}}]\n' "$FM_TEST_WT" ;;
+      labelled)
+        printf '[{"Mounts":[],"Config":{"Labels":{"com.docker.compose.project.working_dir":"%s"},"WorkingDir":"/app"}}]\n' "$FM_TEST_WT" ;;
+      working)
+        printf '[{"Mounts":[],"Config":{"Labels":{},"WorkingDir":"%s/service"}}]\n' "$FM_TEST_WT" ;;
+      unrelated)
+        printf '[{"Mounts":[{"Source":"%s-other/data"}],"Config":{"Labels":{},"WorkingDir":"/app"}}]\n' "$FM_TEST_WT" ;;
+    esac ;;
+  stop) printf '%s\n' "${2:-}" >> "$FM_TEST_STOP_LOG" ;;
+esac
+SH
+  chmod +x "$case_dir/fakebin/podman"
+  rc=0
+  FM_TEST_WT="$case_dir/wt" FM_TEST_STOP_LOG="$case_dir/stopped.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "bound-container: teardown should succeed"
+  assert_grep 'bound' "$case_dir/stopped.log" "bound container was not stopped"
+  assert_grep 'labelled' "$case_dir/stopped.log" "label-bound container was not stopped"
+  assert_grep 'working' "$case_dir/stopped.log" "working-directory-bound container was not stopped"
+  assert_no_grep 'unrelated' "$case_dir/stopped.log" "unrelated container was stopped"
+  assert_grep 'stopped podman container bound' "$case_dir/stderr" "stop was not reported"
+  pass "teardown stops only containers whose metadata binds them to its worktree"
+}
+
+test_unreachable_container_runtime_does_not_block_teardown() {
+  local case_dir rc
+  case_dir=$(make_case runtime-unreachable)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  cat > "$case_dir/fakebin/podman" <<'SH'
+#!/usr/bin/env bash
+echo "runtime unavailable" >&2
+exit 1
+SH
+  chmod +x "$case_dir/fakebin/podman"
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "runtime-unreachable: teardown should succeed"
+  assert_grep 'podman runtime unavailable' "$case_dir/stderr" "runtime failure was not reported"
+  pass "an unavailable container runtime does not block eligible teardown"
+}
+
+test_supabase_stops_unique_worktree_project_but_skips_shared_id() {
+  local case_dir rc
+  case_dir=$(make_case worktree-supabase-stop)
+  write_meta "$case_dir" no-mistakes ship
+  mkdir -p "$case_dir/wt/supabase" "$case_dir/wt/app/supabase" "$case_dir/project/supabase"
+  printf '%s\n' 'project_id = "shared-id"' > "$case_dir/wt/supabase/config.toml"
+  printf '%s\n' 'project_id = "shared-id"' > "$case_dir/project/supabase/config.toml"
+  printf '%s\n' 'project_id = "worker-id"' > "$case_dir/wt/app/supabase/config.toml"
+  git -C "$case_dir/wt" add supabase/config.toml app/supabase/config.toml
+  git -C "$case_dir/wt" -c user.email=t@t -c user.name=t commit -q -m "Supabase fixture"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+  cat > "$case_dir/fakebin/supabase" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_SUPABASE_LOG"
+SH
+  chmod +x "$case_dir/fakebin/supabase"
+  rc=0
+  FM_TEST_SUPABASE_LOG="$case_dir/supabase.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "supabase-project: teardown should succeed"
+  assert_grep '--project-id worker-id' "$case_dir/supabase.log" "unique worktree Supabase project was not stopped"
+  assert_no_grep 'shared-id' "$case_dir/supabase.log" "shared Supabase project was stopped"
+  assert_grep 'skipped Supabase project shared-id' "$case_dir/stderr" "shared ID skip was not reported"
+  pass "Supabase stop targets unique worktree project IDs and skips the source project's shared ID"
+}
+
 test_local_only_fork_remote_allows
 test_teardown_closes_the_backlog_item_itself
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
@@ -3750,3 +3846,6 @@ test_process_spawned_during_grace_is_reaped_on_later_pass
 test_persistent_scan_refuses_after_bounded_retries
 test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal
+test_worktree_containers_stop_without_touching_unrelated_containers
+test_unreachable_container_runtime_does_not_block_teardown
+test_supabase_stops_unique_worktree_project_but_skips_shared_id
