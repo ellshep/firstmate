@@ -78,7 +78,7 @@ link_fake_bin() {
   # echo takes the plain-message path; there is no tasks-axi and no backlog here.
   rm -f "$fake/bin/fm-tasks-axi-lib.sh"
   cat > "$fake/bin/fm-tasks-axi-lib.sh" <<'SH'
-FM_TASKS_AXI_MIN=0.2.4
+FM_TASKS_AXI_MIN=0.2.6
 fm_tasks_axi_backend() { printf 'markdown\n'; }
 fm_tasks_axi_backend_available() { return 1; }
 fm_tasks_axi_compatible() { return 1; }
