@@ -14,7 +14,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (the guard parses herdr's JSON, and jq is the holder process)"; exit 0; }
+command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (the guard parses herdr's JSON)"; exit 0; }
+command -v node >/dev/null 2>&1 || { echo "skip: node not found (the holder needs a non-platform binary)"; exit 0; }
 command -v mkfifo >/dev/null 2>&1 || { echo "skip: mkfifo not found (holder processes block on a fifo)"; exit 0; }
 
 TMP_ROOT=$(fm_test_tmproot fm-remote-herdr-guard)
@@ -26,7 +27,12 @@ trap 'if [ "${#HOLDER_PIDS[@]}" -gt 0 ]; then kill "${HOLDER_PIDS[@]}" 2>/dev/nu
 
 GUARD="$ROOT/bin/fm-remote-herdr-guard.sh"
 JQ=$(command -v jq)
+NODE=$(command -v node)
 SESSION=fm-remote
+HOLDER_SCRIPT="$TMP_ROOT/holder.js"
+cat > "$HOLDER_SCRIPT" <<'JS'
+require('fs').readFileSync(process.argv[2]);
+JS
 
 # The guard must see only the fixture and the system tools it really needs,
 # so a case can also present a host with NO lsof.
@@ -98,7 +104,7 @@ SH
 chmod +x "$FAKE/lsof" "$FAKE/launchctl" "$FAKE/herdr"
 cp "$FAKE/lsof" "$TMP_ROOT/lsof.fake"
 
-# hold <marker-env...> -> HOLDER_PID: a real non-platform process (jq blocked
+# hold <marker-env...> -> HOLDER_PID: a real non-platform process (Node blocked
 # on a fifo this test keeps open) whose environment is exactly the markers.
 hold() {
   local fifo="$TMP_ROOT/holder-$HOLDER_FD.fifo"
@@ -107,7 +113,7 @@ hold() {
   # Open read-write so this never blocks on the reader; the holder sees EOF
   # only when the descriptor closes at exit.
   eval "exec ${HOLDER_FD}<>\"\$fifo\""
-  env -i "$@" "$JQ" . "$fifo" &
+  env -i "$@" "$NODE" "$HOLDER_SCRIPT" "$fifo" &
   HOLDER_PID=$!
   HOLDER_PIDS+=("$HOLDER_PID")
   HOLDER_FD=$((HOLDER_FD + 1))
@@ -121,8 +127,8 @@ hold_under() {
   rm -f "$fifo" "$pidfile"
   mkfifo "$fifo"
   eval "exec ${HOLDER_FD}<>\"\$fifo\""
-  ( export FM_HOLDER_JQ="$JQ" FM_HOLDER_FIFO="$fifo" FM_HOLDER_PIDFILE="$pidfile"
-    exec -a "$argv0" bash -c 'env -i FM_HOLDER=1 "$FM_HOLDER_JQ" . "$FM_HOLDER_FIFO" & printf "%s\n" "$!" > "$FM_HOLDER_PIDFILE"; wait' "$@" ) &
+  ( export FM_HOLDER_NODE="$NODE" FM_HOLDER_SCRIPT="$HOLDER_SCRIPT" FM_HOLDER_FIFO="$fifo" FM_HOLDER_PIDFILE="$pidfile"
+    exec -a "$argv0" bash -c 'env -i FM_HOLDER=1 "$FM_HOLDER_NODE" "$FM_HOLDER_SCRIPT" "$FM_HOLDER_FIFO" & printf "%s\n" "$!" > "$FM_HOLDER_PIDFILE"; wait' "$@" ) &
   HOLDER_PIDS+=("$!")
   HOLDER_FD=$((HOLDER_FD + 1))
   local i=0
@@ -184,7 +190,7 @@ assert_stop_before_start() {
   [ "$stop_line" -lt "$start_line" ] || fail "the guard started its server before stopping the foreign one"
 }
 
-# Prove the holder construction on this host: the environment of a jq holder
+# Prove the holder construction on this host: the environment of a Node holder
 # must be readable, or every marker case would be vacuous.
 hold FM_PROBE_MARKER=1
 PROBE_PID=$HOLDER_PID
@@ -194,7 +200,7 @@ sleep 0.2
 probe_env=$(fm_remote_herdr_process_env "$PROBE_PID")
 case "$probe_env" in
   *FM_PROBE_MARKER=1*) ;;
-  *) fail "this host does not expose a holder's environment (macOS hides platform-binary environments; jq at $JQ must be a non-platform binary): $probe_env" ;;
+  *) fail "this host does not expose a holder's environment (node at $NODE): $probe_env" ;;
 esac
 pass "holder processes expose their environment to the owner library"
 
