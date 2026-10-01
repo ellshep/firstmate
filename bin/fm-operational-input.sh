@@ -200,7 +200,7 @@ fm_operational_input_classify() {  # <message> <result-var>
 
 # A doorbell is operational only while it names a real pending inbox record.
 # Reuse the inbox owner's formatter so similar captain prose is never excluded.
-fm_operational_doorbell_kind() {  # <message> <state-dir> <result-var>
+fm_operational_task_doorbell_kind() {  # <message> <state-dir> <result-var>
   local message=${1-} state=${2-} result_var=${3-} record line
   [ -n "$result_var" ] || return 2
   case "$message" in ': Firstmate instruction waiting: '*) ;; *) return 1 ;; esac
@@ -341,9 +341,17 @@ fm_operational_doorbell_record_kind() {  # <message> <result-var>
 }
 
 # The same, bound to <state-dir>: the record must sit in that home's own inbox.
+# The local task-inbox doorbell also remains recognized through this shared
+# entry point for captain-boundary and away-supervisor callers.
 fm_operational_doorbell_kind() {  # <message> <state-dir> <result-var>
   local message=${1-} state=${2-} result_var=${3-} named_record want have
   [ -n "$state" ] && [ -n "$result_var" ] || return 2
+  case "$message" in
+    ': Firstmate instruction waiting: '*)
+      fm_operational_task_doorbell_kind "$message" "$state" "$result_var"
+      return $?
+      ;;
+  esac
   fm_operational_doorbell_path "$message" named_record || return 1
   want=$(cd -P "$state/$FM_OPERATIONAL_RECORD_DIRNAME" 2>/dev/null && pwd -P) || return 1
   have=$(cd -P "${named_record%/*}" 2>/dev/null && pwd -P) || return 1
