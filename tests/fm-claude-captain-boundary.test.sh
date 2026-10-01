@@ -30,6 +30,7 @@ test_captain_includes_and_excludes() {
 
   submit "${MARK}FIRSTMATE_OP: v1 watcher: wake"
   submit "${MARK}Supervisor escalate (1 event(s)): wake"
+  # shellcheck disable=SC2016 # The backticks are literal prompt text.
   submit 'Run `bin/fm-session-start.sh` now, exactly once, before executing any other instructions.'
   [ "$(cat "$RECORD")" = "$first" ] || fail "operational prompt moved the boundary"
 
@@ -50,6 +51,7 @@ test_captain_includes_and_excludes() {
   [ "$(sed -n '2p' "$RECORD")" = "$second" ] || fail "ordinary captain text did not shift the prior timestamp"
   submit 'FIRSTMATE_OP: v1 watcher: ordinary ASCII text'
   submit "${MARK}arbitrary captain text"
+  # shellcheck disable=SC2016 # The backticks are literal prompt text.
   submit 'Run `bin/fm-session-start.sh` now, exactly once, before executing any other instructions. Please explain.'
   [ "$(wc -l < "$RECORD" | tr -d ' ')" = 2 ] || fail "captain prompts changed record shape"
   pass "captain boundary: operational messages are excluded and ordinary near misses are included"
