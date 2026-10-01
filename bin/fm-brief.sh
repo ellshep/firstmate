@@ -694,6 +694,7 @@ $ASK_USER_BLOCK
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
+
 8. Whenever a turn ends while a pipeline stage (rebase, review, fix round, no-mistakes gate) is
    still in progress, make the final line of that turn this line:
 CHECKPOINT: stage=<name> pr=<url-or-id> done=<short summary> next=<short summary>
