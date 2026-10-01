@@ -44,9 +44,11 @@ BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 under_process() {  # <named-executable> [VAR=VAL ...]
   local bin=$1
   shift
-  env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+  ( cd "$(dirname "$bin")" || exit 1
+    env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
     -u CURSOR_AGENT -u CURSOR_INVOKED_AS "$@" \
-    "$bin" -c "r=\$(\"$HARNESS\"); printf '%s' \"\$r\""
+    "./$(basename "$bin")" -c "r=\$(\"$HARNESS\"); printf '%s' \"\$r\""
+  )
 }
 
 # A fake ps that reports a bash ancestor terminating at pid 1, so the ancestry
@@ -122,7 +124,7 @@ with_blind_ancestry() {  # <fakebin> [VAR=VAL ...]
 
 named_bin() {  # <dir> <name>
   mkdir -p "$1"
-  cp "$(command -v bash)" "$1/$2"
+  ln -s "$(command -v bash)" "$1/$2"
   printf '%s\n' "$1/$2"
 }
 

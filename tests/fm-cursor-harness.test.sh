@@ -210,12 +210,14 @@ test_cursor_marker_outranks_inherited_claudecode() {
   local tree_dir
   tree_dir="$TMP_ROOT/marker-ordering-trees"
   mkdir -p "$tree_dir"
-  cp "$(command -v bash)" "$tree_dir/cursor-agent"
-  cp "$(command -v bash)" "$tree_dir/claude"
-  out=$(env -u CLAUDECODE "$tree_dir/cursor-agent" -c \
+  # A copied system Bash is killed by macOS code signing. The named launcher
+  # still appears as the real ancestor when invoked relative to its directory.
+  ln -s "$(command -v bash)" "$tree_dir/cursor-agent"
+  ln -s "$(command -v bash)" "$tree_dir/claude"
+  out=$(cd "$tree_dir" && env -u CLAUDECODE ./cursor-agent -c \
     "r=\$(CURSOR_AGENT=1 \"$HARNESS\"); printf '%s' \"\$r\"")
   [ "$out" = cursor ] || fail "a real cursor-agent ancestor must detect cursor, got '$out'"
-  out=$("$tree_dir/claude" -c \
+  out=$(cd "$tree_dir" && ./claude -c \
     "r=\$(CLAUDECODE=1 CURSOR_AGENT=1 \"$HARNESS\"); printf '%s' \"\$r\"")
   [ "$out" = claude ] \
     || fail "a retained CURSOR_AGENT must not rename a real claude ancestor, got '$out'"
