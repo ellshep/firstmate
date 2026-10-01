@@ -8,7 +8,7 @@
 # is refused outright: that adapter is read-only, and the refusal at the parse
 # below owns why.
 #
-# Merge method on GitHub defaults to --squash when the caller passes none of
+# Merge method on GitHub defaults to --merge when the caller passes none of
 # --squash, --merge, --rebase, or --method after the optional -- separator.
 # A GitHub merge is refused unless every pre-merge condition holds, each read
 # live at merge time rather than taken from recorded metadata: the pull request
@@ -1345,7 +1345,7 @@ case "$PROVIDER" in
     merge_output=
     merge_args=()
     if ! caller_has_merge_method "$@"; then
-      merge_args=(--squash)
+      merge_args=(--merge)
     fi
     FM_PR_GITHUB_CALLER_METHOD=$(caller_merge_method "$@")
     # mergeable reads UNKNOWN for a short while after a push or base-branch

@@ -528,7 +528,7 @@ test_verified_merge_records_pr_and_head() {
     "records-before-merge: pr= was not recorded"
   assert_grep 'pr_head=deadbeefcafefeed0000000000000000deadbeef' "$case_dir/state/task-x1.meta" \
     "records-before-merge: pr_head= was not recorded"
-  assert_logged_gh_merge "$case_dir" 9 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 9 example/repo --merge
   pass "fm-pr-merge records pr= and pr_head= for a verified GitHub merge"
 }
 
@@ -550,7 +550,7 @@ test_pr_metadata_is_recorded_before_the_forge_call() {
   set -e
 
   expect_code 0 "$rc" "records-ahead-of-forge-call: fm-pr-merge should succeed"
-  assert_logged_gh_merge "$case_dir" 62 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 62 example/repo --merge
   assert_grep 'pr=https://github.com/example/repo/pull/62' "$case_dir/meta-at-merge" \
     "records-ahead-of-forge-call: the merge ran before pr= was recorded"
   pass "fm-pr-merge records pr= before the forge call can land the merge"
@@ -671,7 +671,7 @@ test_github_mergeable_unknown_retries_then_succeeds() {
   expect_code 0 "$rc" "github-mergeable-unknown-then-mergeable: a merge should succeed once mergeable resolves"
   [ "$(grep -c '^pr view .*statusCheckRollup' "$case_dir/gh.log")" -eq 2 ] \
     || fail "github-mergeable-unknown-then-mergeable: expected exactly 2 mergeable reads, got $(grep -c '^pr view .*statusCheckRollup' "$case_dir/gh.log")"
-  assert_logged_gh_merge "$case_dir" 83 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 83 example/repo --merge
   [ "$(grep -c '^pr merge ' "$case_dir/gh.log")" -eq 1 ] \
     || fail "github-mergeable-unknown-then-mergeable: the wrapper attempted more than one merge"
   assert_grep 'pr=https://github.com/example/repo/pull/83' "$case_dir/state/task-x1.meta" \
@@ -1102,7 +1102,7 @@ test_away_plan_gated_403_does_not_block_the_merge() {
   FM_TEST_HOME="$case_dir/home" run_pr_merge "$case_dir" task-x1 "$url" \
     > "$case_dir/stdout" 2> "$case_dir/stderr" \
     || fail "away-plan-gated-403: a private repo's plan-gated 403 must not block an away merge"
-  assert_logged_gh_merge "$case_dir" 91 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 91 example/repo --merge
   pass "away merge proceeds on a plan-gated 403 because that repository cannot have a merge queue"
 }
 
@@ -1332,7 +1332,7 @@ test_github_zero_exit_queue_required_refuses_with_exact_retry() {
     "github-zero-exit-queue-required: refusal did not name the exact compatible flags"
   assert_grep 'api --paginate repos/example/repo/rules/branches/release%2F2026' "$case_dir/gh.log" \
     "github-zero-exit-queue-required: queue rules were not read with pagination and encoded branch path"
-  assert_logged_gh_merge "$case_dir" 56 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 56 example/repo --merge
   [ "$(grep -c '^pr merge ' "$case_dir/gh.log")" -eq 1 ] \
     || fail "github-zero-exit-queue-required: the wrapper attempted more than one merge"
   assert_no_grep --auto "$case_dir/gh.log" \
@@ -1422,7 +1422,7 @@ test_github_queue_required_refusal_names_retry_flags() {
     "github-queue-required: refusal did not name the queue requirement"
   grep -F -- '--attended-override -- --auto --merge' "$case_dir/stderr" >/dev/null \
     || fail "github-queue-required: refusal did not name the exact compatible flags"
-  assert_logged_gh_merge "$case_dir" 54 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 54 example/repo --merge
   assert_present "$case_dir/state/task-x1.check.sh" \
     "github-queue-required: the failed forge call did not leave the merge poll armed"
   pass "fm-pr-merge explains how to retry with the required GitHub merge queue method"
@@ -1682,7 +1682,7 @@ test_bundled_repo_override_args_refuse_before_recording() {
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/8 --attended-override -- -d \
     > "$case_dir/stdout" 2> "$case_dir/stderr" \
     || fail "bundled-delete-attended: attended override should merge"
-  assert_logged_gh_merge "$case_dir" 8 example/repo --squash -d
+  assert_logged_gh_merge "$case_dir" 8 example/repo --merge -d
   pass "fm-pr-merge refuses a bundled short-option repo override and refuses -d unless attended"
 }
 
@@ -1697,7 +1697,7 @@ test_explicit_merge_method_not_overridden() {
     > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "explicit-merge-method: fm-pr-merge failed"
 
   assert_logged_gh_merge "$case_dir" 22 example/repo --merge
-  pass "fm-pr-merge does not add default --squash when the caller passes an explicit merge method"
+  pass "fm-pr-merge does not add default --merge when the caller passes an explicit merge method"
 }
 
 test_method_equals_merge_method_not_overridden() {
@@ -1724,7 +1724,7 @@ test_parses_pr_url_for_gh_axi() {
   run_pr_merge "$case_dir" task-x1 https://github.com/my-org/my-repo/pull/126 \
     > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "url-parsing: fm-pr-merge failed"
 
-  assert_logged_gh_merge "$case_dir" 126 my-org/my-repo --squash
+  assert_logged_gh_merge "$case_dir" 126 my-org/my-repo --merge
   pass "fm-pr-merge parses a GitHub PR URL into gh-axi number and --repo arguments"
 }
 
@@ -2435,7 +2435,7 @@ test_absent_backlog_still_merges() {
   expect_code 0 "$rc" "absent-backlog-merges: a home with no backlog must still merge"
   assert_no_grep 'held for the captain' "$case_dir/stderr" \
     "absent-backlog-merges: an absent backlog was read as a captain hold"
-  assert_logged_gh_merge "$case_dir" 61 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 61 example/repo --merge
   pass "fm-pr-merge proceeds when the home carries no backlog at all"
 }
 
@@ -2558,7 +2558,7 @@ test_absent_user_backend_config_directory_and_backlog_still_merge() {
   expect_code 0 "$rc" "absent-user-backend-config-directory-and-backlog-merges: sound defaults and no backlog must permit merging"
   [ "$(grep -c '^pr merge ' "$case_dir/gh.log")" -eq 1 ] \
     || fail "absent-user-backend-config-directory-and-backlog-merges: the forge must merge exactly once"
-  assert_logged_gh_merge "$case_dir" 67 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 67 example/repo --merge
   pass "fm-pr-merge proceeds once when its user configuration directory and backlog are genuinely absent"
 }
 
@@ -2582,7 +2582,7 @@ test_backend_override_bypasses_unreadable_user_config() {
   chmod 644 "$user_config"
 
   expect_code 0 "$rc" "backend-override-bypasses-unreadable-user-config: an explicit backend must bypass config"
-  assert_logged_gh_merge "$case_dir" 65 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 65 example/repo --merge
   pass "fm-pr-merge honors a backend override over an unreadable user configuration"
 }
 
@@ -2612,7 +2612,7 @@ test_github_red_checks_refuse_and_allow_red_waives_named() {
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/81 \
     --allow-red lint \
     > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "github-allow-red: named waiver should merge"
-  assert_logged_gh_merge "$case_dir" 81 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 81 example/repo --merge
   pass "fm-pr-merge refuses red GitHub checks and waives only a named --allow-red check"
 }
 
@@ -2667,7 +2667,7 @@ test_superseded_failed_check_run_no_longer_refuses() {
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/90 \
     > "$case_dir/stdout" 2> "$case_dir/stderr" \
     || fail "github-superseded-red: a failed run replaced by a passing re-run must merge"$'\n'"$(cat "$case_dir/stderr")"
-  assert_logged_gh_merge "$case_dir" 90 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 90 example/repo --merge
   pass "fm-pr-merge merges when a failed check run was replaced by a passing re-run"
 }
 
@@ -2759,7 +2759,7 @@ test_late_finishing_old_cancellation_is_superseded() {
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/99 \
     > "$case_dir/stdout" 2> "$case_dir/stderr" \
     || fail "github-old-cancellation-finishes-last: the passing re-run must merge"$'\n'"$(cat "$case_dir/stderr")"
-  assert_logged_gh_merge "$case_dir" 99 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 99 example/repo --merge
   pass "fm-pr-merge supersedes an old cancellation that finishes last"
 }
 
@@ -2886,7 +2886,7 @@ test_allow_red_still_waives_only_the_current_failure() {
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/96 \
     --allow-red lint > "$case_dir/stdout" 2> "$case_dir/stderr" \
     || fail "superseded-allow-red-named: the named waiver should merge"$'\n'"$(cat "$case_dir/stderr")"
-  assert_logged_gh_merge "$case_dir" 96 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 96 example/repo --merge
   pass "fm-pr-merge keeps --allow-red scoped to its named check beside a superseded failure"
 }
 
@@ -2946,7 +2946,7 @@ test_quiet_record_keeps_merges_attended() {
     || fail "quiet-allow-red: the attended waiver was refused under quiet mode: $(cat "$case_dir/stderr")"
   assert_no_grep 'attended-only' "$case_dir/stderr" \
     "quiet-allow-red: quiet mode was treated as away"
-  assert_logged_gh_merge "$case_dir" 84 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 84 example/repo --merge
   [ "$(sed -n 6p "$case_dir/state/task-x1.merge-authority" 2>/dev/null || true)" = attended ] \
     || fail "quiet-allow-red: the persisted merge authority is not attended: $(cat "$case_dir/state/task-x1.merge-authority" 2>/dev/null || true)"
   pass "fm-pr-merge keeps a quiet-mode home's merges attended, the named red-check waiver included"
@@ -2997,7 +2997,7 @@ test_away_record_permits_any_green_merge_under_away_authority() {
   write_away_record "$case_dir" --words 'merge the windows fix when green'
   FM_TEST_HOME="$case_dir/home" run_pr_merge "$case_dir" task-x1 "$url" \
     > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "away-green: a green merge under the record should succeed: $(cat "$case_dir/stderr")"
-  assert_logged_gh_merge "$case_dir" 83 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 83 example/repo --merge
   assert_grep "merge landed: task-x1 $url away" "$case_dir/state/.wake-queue" \
     "away-green: the durable outcome did not tag away"
   assert_no_grep 'away-grant' "$case_dir/state/.wake-queue" \
@@ -3076,7 +3076,7 @@ test_away_branch_actor_merges_green_under_the_record() {
     || fail "away-branch-green: a green merge must succeed for the branch under the record: $(cat "$case_dir/stderr")"
   assert_grep 'main is parked' "$case_dir/stderr" \
     "away-branch-green: the relocation note was not printed"
-  assert_logged_gh_merge "$case_dir" 93 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 93 example/repo --merge
   assert_grep "merge landed: task-x1 $url away" "$case_dir/state/.wake-queue" \
     "away-branch-green: the durable outcome did not tag away"
 
@@ -3537,7 +3537,7 @@ test_app_bound_required_status_context_matches_by_name() {
       run_required_case "$case_dir" 111
       if [ "$variant" = reported ]; then
         expect_code 0 "$RC" "app-status-$kind-reported: a green app-bound status must merge: $(cat "$case_dir/stderr")"
-        assert_logged_gh_merge "$case_dir" 111 example/repo --squash
+        assert_logged_gh_merge "$case_dir" 111 example/repo --merge
       else
         expect_code 1 "$RC" "app-status-$kind-absent: an unreported app-bound status must refuse"
         assert_grep "required check 'license/cla' has not reported" "$case_dir/stderr" \
@@ -3620,7 +3620,7 @@ test_required_checks_reported_and_green_merge() {
     "required-present: the branch rules were not read"
   assert_grep "every unwaived required check reported and every unwaived check green at head $head" \
     "$case_dir/stderr" "required-present: the verified line did not state the required checks reported"
-  assert_logged_gh_merge "$case_dir" 91 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 91 example/repo --merge
   pass "fm-pr-merge merges when every required check reported and is green"
 }
 
@@ -3702,7 +3702,7 @@ test_unreadable_required_set_refuses() {
     > "$case_dir/github-required-rules-fail"
   run_required_case "$case_dir" 94
   expect_code 0 "$RC" "required-plan-gated: a plan without branch rules must not read as unreadable: $(cat "$case_dir/stderr")"
-  assert_logged_gh_merge "$case_dir" 94 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 94 example/repo --merge
 
   case_dir=$(make_case github-required-plan-gated-classic-absent)
   add_gh_mocks "$case_dir" "$head"
@@ -3725,7 +3725,7 @@ test_allow_missing_waives_only_the_named_unreported_check() {
   write_github_required "$case_dir" classic:ci ruleset:validate
   run_required_case "$case_dir" 96 --allow-missing validate
   expect_code 0 "$RC" "allow-missing-named: the named waiver should merge: $(cat "$case_dir/stderr")"
-  assert_logged_gh_merge "$case_dir" 96 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 96 example/repo --merge
 
   case_dir=$(make_case github-allow-missing-other-missing)
   add_gh_mocks "$case_dir" "$head"
