@@ -42,7 +42,7 @@
 #   fm-operational-input.sh classify       # current or legacy input on stdin
 #   fm-operational-input.sh body           # current generic input on stdin
 #   fm-operational-input.sh record <kind>  # body on stdin, doorbell stdout
-#   fm-operational-input.sh doorbell-kind  # doorbell on stdin, record kind stdout
+#   fm-operational-input.sh doorbell-kind [state-dir] # doorbell on stdin, record kind stdout
 #   fm-operational-input.sh open <path>    # this home's record body stdout
 #   fm-operational-input.sh --help
 #
@@ -195,6 +195,27 @@ fm_operational_input_classify() {  # <message> <result-var>
     printf -v "$result_var" '%s' "$classified_kind"
     return 0
   fi
+  return 1
+}
+
+# A doorbell is operational only while it names a real pending inbox record.
+# Reuse the inbox owner's formatter so similar captain prose is never excluded.
+fm_operational_doorbell_kind() {  # <message> <state-dir> <result-var>
+  local message=${1-} state=${2-} result_var=${3-} record line
+  [ -n "$result_var" ] || return 2
+  case "$message" in ': Firstmate instruction waiting: '*) ;; *) return 1 ;; esac
+  [ -d "$state" ] && [ ! -L "$state" ] || return 1
+  # Loaded only for the rare candidate, not for every prompt.
+  # shellcheck source=/dev/null
+  . "$(dirname "${BASH_SOURCE[0]}")/fm-task-inbox-lib.sh" || return 1
+  for record in "$state"/*.inbox/*.msg; do
+    [ -f "$record" ] && [ ! -L "$record" ] || continue
+    line=$(fm_task_inbox_doorbell_line "$record") || continue
+    if [ "$message" = "$line" ]; then
+      printf -v "$result_var" '%s' doorbell
+      return 0
+    fi
+  done
   return 1
 }
 
@@ -356,7 +377,7 @@ Usage:
   bin/fm-operational-input.sh classify       # current or legacy input on stdin
   bin/fm-operational-input.sh body           # current input on stdin
   bin/fm-operational-input.sh record <kind>  # body on stdin; prints the doorbell
-  bin/fm-operational-input.sh doorbell-kind  # doorbell on stdin; record's kind
+  bin/fm-operational-input.sh doorbell-kind [state-dir] # doorbell on stdin; record kind
   bin/fm-operational-input.sh open <path>    # this home's record; prints its body
 
 Current construction kinds:
@@ -408,9 +429,13 @@ fm_operational_main() {
       printf '%s\n' "$output"
       ;;
     doorbell-kind)
-      [ "$#" -eq 1 ] || return 2
+      case "$#" in 1|2) ;; *) return 2 ;; esac
       fm_operational_read_stdin input || return 2
-      fm_operational_doorbell_record_kind "$input" output || return 1
+      if [ "$#" -eq 2 ]; then
+        fm_operational_doorbell_kind "$input" "$argument" output || return 1
+      else
+        fm_operational_doorbell_record_kind "$input" output || return 1
+      fi
       printf '%s\n' "$output"
       ;;
     open)

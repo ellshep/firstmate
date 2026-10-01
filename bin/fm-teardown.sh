@@ -291,6 +291,9 @@
 #     root still exists, so the account's healthy LaunchAgent worker and every
 #     live remote secondmate worker are out of scope. Best effort: a sweep
 #     failure never blocks this teardown.
+#   Fix 4 - stop running database containers whose own metadata binds them to
+#     this task's worktree before returning the copy. Runtime failures are
+#     reported but never turn an otherwise eligible teardown into a refusal.
 #
 # Completion guard. Every refusal above exits non-zero on purpose, so a caller
 # treats exit 0 as proof the whole sequence ran. Bash breaks that on its own:
@@ -2289,6 +2292,92 @@ EOF
   return 1
 }
 
+stop_worktree_databases() {  # <worktree> <project clone>
+  local wt=$1 project=$2 runtime ids id details config config_dir project_id source_ids source_id
+  local project_labels label shared_container_label
+  [ -d "$wt" ] || return 0
+  source_ids=$'\n'
+  while IFS= read -r config; do
+    [ -n "$config" ] || continue
+    source_id=$(sed -nE 's/^[[:space:]]*project_id[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$config" | head -1)
+    [ -n "$source_id" ] && source_ids+="$source_id"$'\n'
+  done < <(find "$project" -type f -path '*/supabase/config.toml' -not -path '*/node_modules/*' -print 2>/dev/null)
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "teardown: cannot inspect worktree containers for $ID (jq unavailable)" >&2
+  else
+    local found_runtime=0
+    for runtime in podman docker; do
+      command -v "$runtime" >/dev/null 2>&1 || continue
+      found_runtime=1
+      if ! ids=$("$runtime" ps -q 2>/dev/null); then
+        echo "teardown: $runtime runtime unavailable; worktree containers could not be checked for $ID" >&2
+        continue
+      fi
+      while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        if ! details=$("$runtime" inspect "$id" 2>/dev/null); then
+          echo "teardown: $runtime could not inspect container $id for $ID" >&2
+          continue
+        fi
+        if ! printf '%s\n' "$details" | jq -e --arg wt "$wt" '
+          .[0] | [ .Mounts[]?.Source, .Config.WorkingDir,
+            ((.Config.Labels // {}) | .[]) ]
+          | any(. | strings | . == $wt or startswith($wt + "/"))
+        ' >/dev/null 2>&1; then
+          continue
+        fi
+        if ! project_labels=$(printf '%s\n' "$details" | jq -r '
+          .[0].Config.Labels // {} |
+          [.["com.supabase.cli.project"], .["com.docker.compose.project"]] |
+          .[] | strings | select(length > 0)
+        ' 2>/dev/null); then
+          echo "teardown: $runtime could not read project labels for container $id for $ID" >&2
+          continue
+        fi
+        shared_container_label=
+        while IFS= read -r label; do
+          [ -n "$label" ] || continue
+          case "$source_ids" in
+            *$'\n'"$label"$'\n'*) shared_container_label=$label; break ;;
+          esac
+        done <<< "$project_labels"
+        if [ -n "$shared_container_label" ]; then
+          echo "teardown: skipped $runtime container $id for $ID (project ID $shared_container_label shared with source project)" >&2
+          continue
+        fi
+        if "$runtime" stop "$id" >/dev/null 2>&1; then
+          echo "teardown: stopped $runtime container $id bound to $wt" >&2
+        else
+          echo "teardown: $runtime could not stop worktree container $id for $ID" >&2
+        fi
+      done <<< "$ids"
+    done
+    if [ "$found_runtime" -eq 0 ]; then
+      echo "teardown: no container runtime available; worktree containers could not be checked for $ID" >&2
+    fi
+  fi
+  command -v supabase >/dev/null 2>&1 || return 0
+  while IFS= read -r config; do
+    [ -n "$config" ] || continue
+    config_dir=${config%/supabase/config.toml}
+    project_id=$(sed -nE 's/^[[:space:]]*project_id[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$config" | head -1)
+    [ -n "$project_id" ] || continue
+    # A copied project ID can address the shared stack; only an ID distinct
+    # from the source project's configuration is safe to stop by CLI.
+    case "$source_ids" in
+      *$'\n'"$project_id"$'\n'*)
+        echo "teardown: skipped Supabase project $project_id for $ID (ID shared with source project)" >&2
+        continue ;;
+    esac
+    if supabase stop --project-id "$project_id" --workdir "$config_dir" >/dev/null 2>&1; then
+      echo "teardown: stopped Supabase project $project_id from $config_dir" >&2
+    else
+      echo "teardown: Supabase project $project_id could not be stopped for $ID" >&2
+    fi
+  done < <(find "$wt" -type f -path '*/supabase/config.toml' -not -path '*/node_modules/*' -print 2>/dev/null)
+  return 0
+}
+
 require_orca_worktree_path_match() {
   local worktree_id=$1 inspected=$2 resolved inspected_abs resolved_abs
   resolved=$(fm_backend_worktree_path orca "$worktree_id") || {
@@ -3577,6 +3666,7 @@ fi
 if [ "$KIND" != secondmate ] && teardown_owns_worktree; then
   conclude_task_no_mistakes_run "$WT"
   reap_task_worktree_processes worktree "$WT" "$TASK_TMP"
+  stop_worktree_databases "$WT" "$PROJ"
 elif [ "$KIND" != secondmate ]; then
   reap_task_worktree_processes tasktmp "$TASK_TMP"
 fi
