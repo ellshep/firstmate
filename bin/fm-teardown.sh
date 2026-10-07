@@ -49,7 +49,9 @@
 # GitHub reports a PR head that contains the current local work, or its content is
 # already present in the up-to-date default branch. This recognizes the common
 # squash-merge-then-delete-branch flow, where the branch's own commits live nowhere
-# on a remote yet the change is fully in main.
+# on a remote yet the change is fully in main. A task whose meta records
+# base_branch= (bin/fm-spawn.sh) runs that content check against origin's copy of
+# its base branch instead of the default branch.
 # Squash merges collapse the branch's commits, so per-commit patch ids against main
 # no longer match, and a pipeline rebase can leave the local worktree diverged from
 # the PR head. A diverged copy is not treated as landed: path-set coverage, git
@@ -305,6 +307,12 @@
 # set only on the two paths that genuinely finish, and the EXIT trap turns a
 # zero status without it into a loud failure so the caller retries instead of
 # recording a teardown that never happened.
+# After Fix 1 and Fix 2, when config/pipeline-spend opts this home in, a ship
+# task whose local copy this teardown owns has its no-mistakes pipeline spend
+# recorded by bin/fm-pipeline-spend.sh, which owns the attribution and the
+# ledger. It runs before the task branch it attributes runs by is deleted and
+# before state/<id>.meta is removed, and is best effort: a failure warns and
+# never blocks cleanup.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1177,6 +1185,7 @@ elif [ "$TREEHOUSE_SLOT_LOCK_REQUIRED" = 1 ]; then
 fi
 MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
 [ -n "$MODE" ] || MODE=no-mistakes
+BASE_BRANCH=$(grep '^base_branch=' "$META" | cut -d= -f2- || true)
 
 # A record accepted as a legacy incarnation (no spawn_gen, and either
 # --legacy-record given or the record is windowless) may be torn down only
@@ -1593,8 +1602,8 @@ pr_is_merged() {
 # "added". Returns non-zero when inconclusive (no default ref, or a merge conflict),
 # so the caller refuses rather than guesses.
 content_in_default() {
-  local name ref default_tree merged_tree
-  name=$(default_branch) || return 1
+  local name=${BASE_BRANCH:-} ref default_tree merged_tree
+  [ -n "$name" ] || name=$(default_branch) || return 1
   if git -C "$WT" remote get-url origin >/dev/null 2>&1; then
     git -C "$WT" fetch --quiet origin "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1 || return 1
     ref="refs/remotes/origin/$name"
@@ -3687,6 +3696,11 @@ if [ "$KIND" != secondmate ] && teardown_owns_worktree; then
   stop_worktree_databases "$WT" "$PROJ"
 elif [ "$KIND" != secondmate ]; then
   reap_task_worktree_processes tasktmp "$TASK_TMP"
+fi
+if [ "$KIND" = ship ] && teardown_owns_worktree && [ -e "$CONFIG/pipeline-spend" ]; then
+  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" FM_CONFIG_OVERRIDE="$CONFIG" \
+    "$SCRIPT_DIR/fm-pipeline-spend.sh" record "$ID" >/dev/null \
+    || echo "warning: could not record $ID's no-mistakes pipeline spend; cleanup continues" >&2
 fi
 
 # Fix 3 (see script header): sweep remote job workers abandoned by an already
