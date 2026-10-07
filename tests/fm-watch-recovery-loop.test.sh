@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Pin the Pi/OpenCode recovery-loop fix: one announcement per generation, and a
-# handling successor that keeps supervising instead of going blind.
+# Pin watcher recovery loops: one announcement per generation, a handling
+# successor that keeps supervising, and Claude successor isolation.
+# shellcheck disable=SC2016 # the fake Claude harness expands this script body
 set -u
 
 # shellcheck source=tests/wake-helpers.sh
@@ -222,5 +223,83 @@ test_handling_successor_does_not_go_blind() {
   pass "a resurfacing handling successor stays alive and supervises instead of going blind"
 }
 
+# Claude can retire the Stop hook's session when the handling turn starts.
+# The successor must survive that session cleanup after its wake was drained
+# and acknowledged, or the next arm turns its TERM into an empty resurface.
+test_claude_handling_successor_survives_handled_turn() {
+  local dir home state fakebin out rc=0 watcher arm hook_session successor_session i
+  dir=$(make_case claude-handled-successor)
+  home="$dir/project"
+  state="$home/state"
+  fakebin="$dir/fakebin"
+  mkdir -p "$home/config" "$state"
+  git init -q "$home"
+  git -C "$home" commit -q --allow-empty -m init
+  : > "$home/AGENTS.md"
+  : > "$home/config/supervision-host-off"
+  : > "$state/task.meta"
+  cp -R "$ROOT/bin/." "$home/bin/"
+  ln -s /bin/bash "$fakebin/claude"
+  fm_test_track_watcher_state "$state"
+  printf 'pending:downtime:handled-fixture\n' > "$state/.watcher-down"
+  chmod 600 "$state/.watcher-down"
+  printf 'needs-decision [key=choice]: keep this visible\n' > "$state/task.status"
+  prime_status_seen "$state" "$state/task.status"
+
+  out="$dir/hook.out"
+  printf '%s\n' '{"session_id":"handled-fixture","stop_hook_active":false}' \
+    | FM_HOME="$home" FM_ROOT_OVERRIDE="$home" PATH="$fakebin:$PATH" \
+      FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+      "$fakebin/claude" -c '
+        printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+        "$FM_HOME/bin/fm-claude-stop-autoarm.sh"
+      ' > "$out" 2>&1 || rc=$?
+  expect_code 2 "$rc" "Claude hook did not deliver the first recovery wake: $(cat "$out")"
+  grep -F 'check: rearm-resurface' "$out" >/dev/null \
+    || fail "Claude hook did not deliver the fixture's first recovery wake: $(cat "$out")"
+  watcher=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+  case "$watcher" in ''|*[!0-9]*) fail "handling successor has no watcher pid" ;; esac
+  arm=$(ps -o ppid= -p "$watcher" | tr -d '[:space:]')
+  case "$arm" in ''|*[!0-9]*) fail "handling successor has no arm parent" ;; esac
+
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$home" "$home/bin/fm-wake-drain.sh" > "$dir/drain.out" 2>&1 \
+    || fail "handled wake could not be drained: $(cat "$dir/drain.out")"
+  grep -F 'OPEN DECISIONS' "$dir/drain.out" >/dev/null \
+    || fail "empty recovery drain lost its open decision"
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$home" "$home/bin/fm-wake-drain.sh" \
+    --ack-through 0 --recovery-generation handled-fixture > "$dir/ack.out" 2>&1 \
+    || fail "handled wake could not be acknowledged: $(cat "$dir/ack.out")"
+
+  hook_session=$(python3 -c 'import os; print(os.getsid(0))')
+  successor_session=$(python3 -c 'import os, sys; print(os.getsid(int(sys.argv[1])))' "$arm") \
+    || fail "handling successor exited before session cleanup"
+  # Claude's next-turn cleanup targets its old hook session. Model that
+  # boundary only for a successor still in it; a detached session is untouched.
+  if [ "$successor_session" = "$hook_session" ]; then
+    kill -TERM "$arm" 2>/dev/null || fail "could not retire session-bound successor"
+    i=0
+    while [ -e "$state/.watch.lock/pid" ] && [ "$i" -lt 50 ]; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+  fi
+
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$home" PATH="$fakebin:$PATH" \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$home/bin/fm-watch-arm.sh" > "$dir/next-arm.out" 2>&1 &
+  local next_arm=$!
+  sleep 2
+  if grep -F 'check: rearm-resurface' "$dir/next-arm.out" >/dev/null; then
+    fail "handled Claude wake caused an empty recovery loop: $(cat "$dir/next-arm.out")"
+  fi
+  kill -0 "$watcher" 2>/dev/null \
+    || fail "handling successor did not survive the handled turn"
+  kill -TERM "$next_arm" 2>/dev/null || true
+  wait "$next_arm" 2>/dev/null || true
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$home" "$home/bin/fm-watch-arm.sh" --stop >/dev/null 2>&1 || true
+  pass "Claude handling successor survives a handled wake without an empty resurface"
+}
+
 test_handling_successor_does_not_go_blind
+test_claude_handling_successor_survives_handled_turn
 test_unacknowledged_recovery_is_announced_once_per_generation

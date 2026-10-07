@@ -170,9 +170,9 @@ So that successor is the one deliberate detached launch in the continuity path:
 
 - It runs under nohup.
 - Its stdio is away from the hook's pipes.
-- It has its own process group.
+- It has its own session, so Claude's next-turn cleanup cannot terminate its arm and watcher.
 
-This is the shape `bin/fm-startup-network.sh` uses, and [`verification/supervision.md`](verification/supervision.md#detached-session-open-workers-survive-the-hook) verified that it survives the hook.
+[`verification/supervision.md`](verification/supervision.md#detached-session-open-workers-survive-the-hook) records the detached-hook survival evidence.
 
 The next Stop's foreground arm attaches to that live cycle.
 A successor that confirms no live watcher adds one line to the rewake banner and never withholds the wake.
@@ -449,6 +449,7 @@ They also prove that a legacy or handoff-phase watcher marker from an absent rep
 
 - The once-per-generation announcement bound with the real Pi extension against a refused handling handshake.
 - A handling successor that must surface a real crew event instead of going blind.
+- A Claude handling successor that survives hook-session cleanup after a decision-only recovery wake is acknowledged.
 
 `tests/fm-watch-triage.test.sh` proves TERM stops a watcher blocked inside a poll's pane capture and still releases its lock and records an acknowledgeable stop.
 It also exercises a single TERM with a live foreign downtime-marker lock holder, retained stale singleton and subsequent arm-style recovery, including decimal `08` and zero `00` cleanup bounds.
