@@ -923,6 +923,19 @@ status_has_open_decision() {  # <status-file>
   [ -n "$(status_open_decisions "$1")" ]
 }
 
+# A pipeline gate decision needs its own current-state evidence before it can
+# explain a quiet pane. An open status key alone does not say who owes the gate.
+status_has_open_nm_gate_decision() {  # <status-file>
+  local open key verb note
+  open=$(status_open_decisions "$1")
+  while IFS=$'\t' read -r key verb note; do
+    case "$key:$verb" in nm-*-*:needs-decision) return 0 ;; esac
+  done <<EOF
+$open
+EOF
+  return 1
+}
+
 # Resolve the log's current declaration at one boundary for crew-state consumers.
 # Any decision the fold still holds open wins over unrelated events, and the
 # fold's most recently opened record supplies it; a standing declared wait, then

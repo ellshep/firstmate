@@ -179,9 +179,8 @@ fm_tmux_composer_stray_only() {  # <target>
   cy=$(fm_tmux_composer_cursor_row "$target") || return 1
   case "$cy" in ''|*[!0-9]*) return 1 ;; esac
   pane=$(fm_tmux_composer_capture "$target") || return 1
-  if ! identity=$(fm_tmux_composer_identity "$target") || [ -z "$identity" ]; then
-    identity=probe-absent
-  fi
+  identity=$(fm_tmux_composer_identity "$target") || identity=
+  [ -n "$identity" ] || identity='probe-absent'
   fm_composer_stray_only "$(fm_tmux_composer_caps)" "$pane" "$cy" "$identity"
 }
 

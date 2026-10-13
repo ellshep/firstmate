@@ -1544,17 +1544,13 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
            wedge_defer_wait "$win" "$since_file" "$label" "$age" "$evidence"; then
           return 0
         fi
-        # An unanswered keyed decision is the same class of fact as the declared
-        # wait above, and is consulted right after it: that fold already knows the
-        # pane is waiting for firstmate, so firing a possible-wedge would be a false
-        # stall. Ordered second because a pane that declared BOTH is better served by
-        # wedge_defer_wait's recheck, which names the human who owes the wait; the two
-        # are disjoint by verb anyway, and a captain-held transfer closes this fold's
-        # key rather than opening it. The idle window restarts instead of escalating,
-        # and a later resolved/captain-held close for that key restores this
-        # function's ordinary schedule. Not a second source of decision state, a new
-        # marker, or a timeout heuristic.
-        if status_has_open_decision "$STATE/$task.status"; then
+        # An ordinary open decision explains a quiet pane. Pipeline gate keys
+        # need the current gate verdict above to establish who owes the answer;
+        # a worker-owed gate must keep the wedge ladder. Where gate verification
+        # is enabled, only the verified wait above defers this escalation.
+        if [ ! -e "$CONFIG/wedge-defer-parked-gate" ] \
+          && ! status_has_open_nm_gate_decision "$STATE/$task.status" \
+          && status_has_open_decision "$STATE/$task.status"; then
           date +%s > "$since_file"
           triage_log "absorbed $label (open keyed decision, idle ${age}s): $win"
           return 0

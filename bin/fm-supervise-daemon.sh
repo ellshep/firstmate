@@ -1517,7 +1517,7 @@ inject_msg() {  # <message> [state]
   if [ "$backend" = herdr ] && [ "$composer" = unknown ] && reveal_herdr_claude_composer "$target"; then
     # Herdr's read may briefly return the pre-toggle frame. Never promote an
     # unknown verdict: wait only for the normal classifier to prove a composer.
-    for attempt in 1 2 3 4 5; do
+    for ((attempt = 0; attempt < 5; attempt++)); do
       pane_is_busy "$target" "$backend" && break
       composer=$(fm_backend_composer_state "$backend" "$target" 2>/dev/null)
       [ "$composer" != unknown ] && break

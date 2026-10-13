@@ -1196,7 +1196,7 @@ test_spawn_relaunch_sanitizes_copied_env_but_preserves_worker_values() {
     "the relaunch must not report excluded values"
   assert_contains "$out" "spawned rl-env harness=claude" \
     "the relaunch should launch with the recorded agent-free endpoint"
-  [ "$(stat -f '%Lp' "$dir/wt/.env" 2>/dev/null || stat -c '%a' "$dir/wt/.env")" = 600 ] \
+  [ "$(stat -c '%a' "$dir/wt/.env" 2>/dev/null || stat -f '%Lp' "$dir/wt/.env")" = 600 ] \
     || fail "a rebuilt relaunch env file must be mode 600"
   pass "fm-spawn --relaunch: rebuilds regular env files with source and worker values"
 }
