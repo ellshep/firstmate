@@ -57,8 +57,9 @@
 #     handling-successor watcher and links the lifecycle ledger. A child of
 #     this hook cannot outlive the exit-2 rewake, so the successor is launched
 #     the one way a process survives a Claude hook: nohup, stdio detached, in
-#     its own process group (the shape bin/fm-startup-network.sh uses;
-#     docs/verification/supervision.md records the survival check). The hook
+#     its own session, so Claude's next-turn cleanup cannot TERM the parked
+#     arm and its watcher (docs/verification/supervision.md records the survival
+#     check). The hook
 #     waits for the successor's one status line, adds one banner line when no
 #     live watcher was confirmed, and never withholds the wake for it; the
 #     next Stop's foreground arm attaches to that live cycle. The supervision
@@ -358,25 +359,24 @@ run_arm() {  # <output file, or empty for none>
 # OpenCode adapters do from their child-close handlers, so a watcher covers the
 # handling turn instead of the home waiting uncovered for the next Stop. The
 # successor receives the closed arm's pid as FM_WATCH_PREDECESSOR_ARM_PID; it
-# must outlive this hook's exit, so it is detached three ways: nohup, stdio
-# away from the hook's pipes, and its own process group. Its one status line
+# must outlive this hook's exit and Claude's next-turn cleanup, so it is
+# detached three ways: nohup, stdio away from the hook's pipes, and its own
+# session. Its one status line
 # is awaited within the arm's own confirmation budget plus slack. Sets
 # SUCCESSOR_FAILURE to the banner line for an unconfirmed successor.
 SUCCESSOR_FAILURE=
 start_handling_successor() {  # <closed-arm-pid>
-  local out pid deadline budget line monitor_was_on=0
+  local out pid deadline budget line
   budget=${FM_ARM_CONFIRM_TIMEOUT:-30}
   case "$budget" in ''|*[!0-9]*) budget=30 ;; esac
   if ! out=$(mktemp "$STATE/.claude-autoarm-successor.XXXXXX"); then
     SUCCESSOR_FAILURE='The handling successor did not confirm a live watcher (its output file could not be created); this handling turn runs uncovered until the next turn end re-arms.'
     return 1
   fi
-  case $- in *m*) monitor_was_on=1 ;; esac
-  set -m 2>/dev/null || true
   FM_WATCH_PREDECESSOR_ARM_PID=$1 FM_GUARD_GRACE="$GRACE" \
-    nohup "$SCRIPT_DIR/fm-watch-arm.sh" >"$out" 2>&1 </dev/null &
+    nohup perl -MPOSIX=setsid -e 'setsid() != -1 or die "watcher: FAILED - handling successor could not create its session: $!\n"; exec @ARGV or die "watcher: FAILED - handling successor could not exec its arm: $!\n"' \
+      "$SCRIPT_DIR/fm-watch-arm.sh" >"$out" 2>&1 </dev/null &
   pid=$!
-  [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
   deadline=$(( $(date +%s) + budget + 2 ))
   while :; do
     if grep -Eq '^watcher: (started|attached) pid=[0-9]+' "$out" 2>/dev/null; then

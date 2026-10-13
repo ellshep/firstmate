@@ -566,6 +566,9 @@ Observed guarantee: a wake delivered while main was streaming was followed by a 
 The once-per-generation recovery bound and immediate handling-successor poll were verified on 2026-08-21 with the tracked Pi extension, real watcher processes, and an isolated home.
 The regression forced handling confirmation to fail, observed one recovery follow-up across the former repeat window, confirmed the successor remained live, and then proved a separate handling successor durably queued a crew event within the bounded poll window.
 
+A Claude handling successor must also survive Claude's own next-turn hook-session cleanup, verified on 2026-10-07 with a fake Claude harness and real watcher processes in an isolated home.
+The regression confirmed the successor's detached session differs from the hook's session, drained and acknowledged the fixture's decision-only recovery wake, retired any successor still found session-bound to model the cleanup boundary, and then proved the next arm raised no empty `check: rearm-resurface` wake and the watcher stayed alive.
+
 ```sh
 bin/fm-test-run.sh tests/fm-watch-recovery-loop.test.sh
 ```
@@ -574,8 +577,9 @@ Observed output:
 
 ```text
 ok - a resurfacing handling successor stays alive and supervises instead of going blind
+ok - Claude handling successor survives a handled wake without an empty resurface
 ok - unacknowledged recovery is announced at most once per generation and the successor stays alive
-FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=59357
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=68185
 ```
 
 Deterministic entry points:
