@@ -60,7 +60,10 @@
 #     status_has_open_decision fold, likewise is not a wedge: the pane is
 #     waiting for firstmate, so housekeeping refreshes the stale marker until
 #     the fold shows the decision closed, and a later close starts a fresh
-#     window. A captain-held transfer is not rechecked while an away record
+#     window - EXCEPT a pipeline gate key (nm-<run>-<step>) owed by the
+#     crewmate itself (status_has_open_nm_gate_decision), which keeps the
+#     wedge ladder exactly like bin/fm-watch.sh's wedge_timer_check.
+#     A captain-held transfer is not rechecked while an away record
 #     (state/.afk-contract, never quiet mode's) exists: nobody is there to
 #     answer it, and the return brief lists it.
 #     Crewmates are autonomous, so a delayed stale response does not stall a
@@ -1266,7 +1269,8 @@ housekeeping() {  # <state>
       reconcile_pause_tracking "$win" "$state" "$last"
       continue
     fi
-    if status_has_open_decision "$state/$task.status"; then
+    if ! status_has_open_nm_gate_decision "$state/$task.status" \
+      && status_has_open_decision "$state/$task.status"; then
       # Parked on an unanswered keyed decision: waiting for firstmate, not wedged.
       # Refresh the marker timestamp so a later close starts a fresh window.
       # Deleting it here leaves no daemon marker to age after the answer when
@@ -1675,7 +1679,8 @@ handle_wake() {  # <reason> <state>
                      idle\ *s,\ possible\ wedge,\ escalation\ *)
                        last=$(status_declared_wait_line "$state/$task.status")
                        status_is_paused_or_captain_held "$last" \
-                         || status_has_open_decision "$state/$task.status" \
+                         || { ! status_has_open_nm_gate_decision "$state/$task.status" \
+                              && status_has_open_decision "$state/$task.status"; } \
                          || decision="escalate|${reason#stale: }"
                        ;;
                    esac ;;
@@ -1738,7 +1743,8 @@ handle_wake() {  # <reason> <state>
             esac
           fi
         fi
-        if status_has_open_decision "$state/$task.status"; then
+        if ! status_has_open_nm_gate_decision "$state/$task.status" \
+          && status_has_open_decision "$state/$task.status"; then
           # An open keyed decision outranks the terminal-looking line above: the
           # pane is waiting for firstmate, so keep a marker and start its window
           # fresh rather than clearing the aging entirely.
