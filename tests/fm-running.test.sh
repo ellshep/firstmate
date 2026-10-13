@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Orphan classifier and layout helpers for bin/fm-running.sh: synthetic
-# ppid/cwd/elapsed rows, including the age-alone case that must not flag,
-# and synthetic process rows for the column layout. Does not read the live
+# Orphan classifier, layout helpers, and memory summary for bin/fm-running.sh.
+# Uses synthetic process rows and stubbed macOS command output, never the live
 # process table.
 set -u
 
@@ -242,6 +241,52 @@ test_init_style_respects_no_color() {
   pass "init_style honours NO_COLOR even when rich output was previously enabled"
 }
 
+test_memory_summary_from_stubbed_commands() {
+  local fixture got
+  fixture=$(mktemp -d)
+  cat > "$fixture/vm" <<'EOF'
+Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free: 65536.
+Pages inactive: 131072.
+Pages speculative: 65536.
+Pages purgeable: 0.
+Pages active: 1048576.
+EOF
+  printf 'System-wide memory free percentage: 8%%\n' > "$fixture/pressure"
+  printf 'vm.swapusage: total = 8.00G  used = 5.00G  free = 3.00G  (encrypted)\n' > "$fixture/swap"
+  cat > "$fixture/rss" <<'EOF'
+  101 2097152 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+  102 1048576 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper
+  103 1048576 /Applications/Podman Desktop.app/Contents/MacOS/Podman Desktop
+  104  524288 /opt/homebrew/bin/node server.js
+  105  524288 /opt/homebrew/bin/node other.js
+EOF
+  got=$(fm_running_memory_summary 8589934592 "$fixture/vm" "$fixture/pressure" "$fixture/swap" "$fixture/rss")
+  assert_contains "$got" 'RAM: 4.0 GiB used / 8.0 GiB physical (estimate)' 'RAM usage must subtract reclaimable pages'
+  assert_contains "$got" 'Memory pressure: high (8% system-wide free)' 'high pressure must be surfaced'
+  assert_contains "$got" 'Swap: 5.0 GiB used / 8.0 GiB total' 'swap units must be parsed'
+  assert_contains "$got" 'Swap use is high. macOS swap only empties after a restart.' 'high swap must explain restart behavior'
+  assert_contains "$got" 'Google Chrome: 3.0 GiB (2 processes)' 'Chrome parent and helper must be grouped by app'
+  assert_contains "$got" 'Podman Desktop: 1.0 GiB (1 process)' 'VM apps must appear in the memory summary'
+  assert_contains "$got" 'node: 1.0 GiB (2 processes)' 'CLI process memory must be summed'
+  rm -rf -- "$fixture"
+  pass 'memory summary parses stubbed RAM, pressure, swap, and process output'
+}
+
+test_low_swap_has_no_restart_note() {
+  local fixture got
+  fixture=$(mktemp -d)
+  printf 'Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free: 1.\n' > "$fixture/vm"
+  printf 'System-wide memory free percentage: 60%%\n' > "$fixture/pressure"
+  printf 'vm.swapusage: total = 8.00G  used = 1.00G  free = 7.00G\n' > "$fixture/swap"
+  printf '  100 1024 /usr/bin/example\n' > "$fixture/rss"
+  got=$(fm_running_memory_summary 8589934592 "$fixture/vm" "$fixture/pressure" "$fixture/swap" "$fixture/rss")
+  assert_contains "$got" 'Memory pressure: normal (60% system-wide free)' 'normal pressure must be surfaced'
+  assert_not_contains "$got" 'Swap use is high' 'low swap must not show a restart note'
+  rm -rf -- "$fixture"
+  pass 'low swap omits the restart note'
+}
+
 test_tmp_orphan_is_flagged
 test_var_folders_orphan_is_flagged
 test_slash_tmp_orphan_is_flagged
@@ -261,3 +306,5 @@ test_tool_name_from_npx_bin_path
 test_tool_name_from_uvx_invocation
 test_tool_name_from_bare_node_script
 test_tool_name_falls_back_to_argv0_basename
+test_memory_summary_from_stubbed_commands
+test_low_swap_has_no_restart_note

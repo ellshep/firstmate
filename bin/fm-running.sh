@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # fm-running.sh - grouped survey of what is running on this Mac.
 #
-# Read-only: never kills, signals, or restarts anything. When a process is
+# Read-only: never kills, signals, purges, or restarts anything. When a process is
 # flagged as stale, the script prints the exact `kill <pid>` command and does
 # not run it. There is no --kill flag.
 #
@@ -20,7 +20,7 @@
 # comes from BSD ps `etime` ([[dd-]hh:]mm:ss); macOS has no `etimes` keyword.
 #
 # Usage:
-#   fm-running.sh           grouped AI/tool survey
+#   fm-running.sh           grouped AI/tool and memory survey
 #   fm-running.sh --all     every non-system process
 #   fm-running.sh --help
 #
@@ -28,6 +28,11 @@
 # known agent CLIs, and commands whose path looks like an MCP server).
 # Firstmate's own long-running services are always listed, unfiltered.
 # --all drops that AI/tooling filter and still excludes system daemons.
+# The memory summary always includes all processes. RAM used is an estimate:
+# physical RAM minus free, inactive, speculative, and purgeable pages. Memory
+# pressure uses memory_pressure -Q's system-wide free percentage: 25% or less
+# is elevated and 10% or less is high. Swap above 50% of its total or at least 4 GiB
+# is high; macOS only empties swap after a restart.
 # Every matching row is printed; long command paths truncate to the command
 # column for the current terminal width (COLUMNS, else tput cols, else 80).
 # A TOOL column names the process from the first real script or binary after
@@ -56,8 +61,8 @@ fm_running_usage() {
   cat <<'EOF'
 usage: fm-running.sh [--all]
 
-Print a grouped survey of AI and tooling processes on this Mac.
-Read-only: never kills, signals, or restarts anything.
+Print a grouped survey of AI/tooling processes and memory on this Mac.
+Read-only: never kills, signals, purges, or restarts anything.
 
 --all   drop the AI/tooling filter and show every non-system process
 --help  print this usage
@@ -569,6 +574,102 @@ fm_running_parse_listen_f() {
   '
 }
 
+fm_running_gib() {  # <bytes>
+  awk -v bytes="$1" 'BEGIN { printf "%.1f GiB", bytes / 1073741824 }'
+}
+
+# The command outputs are arguments so the live survey and tests use the same
+# parser without depending on the host's current memory or process table.
+fm_running_memory_summary() {  # <ram-bytes> <vm-stat-file> <pressure-file> <swap-file> <rss-file>
+  local ram=$1 vm_file=$2 pressure_file=$3 swap_file=$4 rss_file=$5
+  local used pressure swap_values swap_used swap_total
+  if [ -n "$ram" ] && [ -s "$vm_file" ]; then
+    used=$(awk -v ram="$ram" '
+      /page size of [0-9]+ bytes/ {
+        for (i = 1; i <= NF; i++) if ($i == "of") { page = $(i + 1) + 0; break }
+      }
+      /^Pages (free|inactive|speculative|purgeable):/ {
+        value = $3; gsub(/[^0-9]/, "", value); reclaimable += value; seen++
+      }
+      END { if (page > 0 && seen > 0) { used = ram - reclaimable * page; if (used < 0) used = 0; printf "%.0f", used } }
+    ' "$vm_file")
+    if [ -n "$used" ]; then
+      printf '  RAM: %s used / %s physical (estimate)\n' "$(fm_running_gib "$used")" "$(fm_running_gib "$ram")"
+    else
+      printf '  RAM: unavailable (vm_stat could not be parsed)\n'
+    fi
+  else
+    printf '  RAM: unavailable (sysctl or vm_stat failed)\n'
+  fi
+
+  pressure=$(awk '/System-wide memory free percentage:/ { value = $NF; gsub(/[^0-9]/, "", value); if (value != "") print value }' "$pressure_file" | tail -1)
+  if [ -n "$pressure" ]; then
+    if [ "$pressure" -le 10 ]; then
+      printf '  Memory pressure: high (%s%% system-wide free)\n' "$pressure"
+    elif [ "$pressure" -le 25 ]; then
+      printf '  Memory pressure: elevated (%s%% system-wide free)\n' "$pressure"
+    else
+      printf '  Memory pressure: normal (%s%% system-wide free)\n' "$pressure"
+    fi
+  else
+    printf '  Memory pressure: unavailable\n'
+  fi
+
+  swap_values=$(awk '
+    function mib(value, unit) {
+      unit = substr(value, length(value), 1)
+      value = substr(value, 1, length(value) - 1) + 0
+      if (unit == "G") return value * 1024
+      if (unit == "K") return value / 1024
+      return value
+    }
+    /vm.swapusage:/ {
+      for (i = 1; i < NF; i++) {
+        if ($i == "total") total = mib($(i + 2))
+        if ($i == "used") used = mib($(i + 2))
+      }
+      found = 1
+    }
+    END { if (found) printf "%.0f %.0f", used * 1048576, total * 1048576 }
+  ' "$swap_file")
+  if [ -n "$swap_values" ]; then
+    read -r swap_used swap_total <<< "$swap_values"
+    printf '  Swap: %s used / %s total\n' "$(fm_running_gib "$swap_used")" "$(fm_running_gib "$swap_total")"
+    if awk -v used="$swap_used" -v total="$swap_total" 'BEGIN { exit !(used >= 4294967296 || (total > 0 && used * 2 > total)) }'; then
+      printf '  Swap use is high. macOS swap only empties after a restart.\n'
+    fi
+  else
+    printf '  Swap: unavailable\n'
+  fi
+
+  printf '  Top memory consumers (RSS by app):\n'
+  if [ ! -s "$rss_file" ]; then
+    printf '    unavailable\n'
+    return
+  fi
+  awk '
+    function basename(path, n, parts) { n = split(path, parts, "/"); return parts[n] }
+    {
+      if ($1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/) next
+      rss = $2 + 0
+      $1 = $2 = ""; sub(/^ +/, "")
+      cmd = $0
+      app_start = index(cmd, ".app/")
+      if (app_start > 0) {
+        app_path = substr(cmd, 1, app_start - 1)
+        app = basename(app_path)
+      } else {
+        split(cmd, words, /[[:space:]]+/)
+        executable = words[1]
+        app = basename(executable)
+      }
+      if (app == "") app = "unknown"
+      sum[app] += rss; count[app]++
+    }
+    END { for (app in sum) printf "%.0f\t%d\t%s\n", sum[app], count[app], app }
+  ' "$rss_file" | LC_ALL=C sort -t "$(printf '\t')" -k1,1nr | head -5 | awk -F'\t' '{ printf "    %s: %.1f GiB (%d %s)\n", $3, $1 / 1048576, $2, ($2 == 1 ? "process" : "processes") }'
+}
+
 fm_running_print_section() {  # <title> [alarm]
   printf '\n%s\n' "$(fm_running_section_heading "${FM_RUNNING_COLS:-80}" "$1" "${2:-0}")"
 }
@@ -584,7 +685,7 @@ fm_running_main() {
   local listen_err listen_raw listen_rc cwd_raw pid_list
   local pid ppid cmd argv0 secs label owner cwd port reason short cwd_row
   local fm_count=0 group_owner='' orphan_count=0 first_group=1
-  local listen_note='' cols prefix_w
+  local listen_note='' cols prefix_w ram_bytes
 
   case "${1:-}" in
     '') ;;
@@ -732,6 +833,17 @@ fm_running_main() {
   FM_RUNNING_COLS=$cols
 
   printf '%s\n' "$(fm_running_section_heading "$cols" "Running")"
+
+  ram_bytes=$(sysctl -n hw.memsize 2>/dev/null || true)
+  case "$ram_bytes" in
+    ''|*[!0-9]*) ram_bytes= ;;
+  esac
+  vm_stat > "$work/vm-stat" 2>/dev/null || : > "$work/vm-stat"
+  memory_pressure -Q > "$work/pressure" 2>/dev/null || : > "$work/pressure"
+  sysctl vm.swapusage > "$work/swap" 2>/dev/null || : > "$work/swap"
+  "$ps_bin" -axo pid=,rss=,command= > "$work/rss" 2>/dev/null || : > "$work/rss"
+  fm_running_print_section 'Memory and swap'
+  fm_running_memory_summary "$ram_bytes" "$work/vm-stat" "$work/pressure" "$work/swap" "$work/rss"
 
   fm_running_print_section 'Firstmate services'
   printf '%s\n' "$(fm_running_process_header "$cols")"
