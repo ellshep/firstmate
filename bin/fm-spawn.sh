@@ -4892,10 +4892,13 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     # before replacing its claim; teardown checks the same records before a
     # return and must keep refusing any existing collision.
     if ! fm_local_firstmate_state_dirs "$STATE"; then
-      echo "error: cannot prove Treehouse pool slot $WT is free: $FM_LOCAL_FIRSTMATE_ERROR; refusing to launch task $ID" >&2
+      echo "error: cannot prove Treehouse pool slot $WT is free: $FM_LOCAL_FIRSTMATE_ERROR; refusing to launch task $ID; inspect window $T" >&2
       exit 1
     fi
-    spawn_slot=$(CDPATH='' cd -- "$WT" && pwd -P) || exit 1
+    spawn_slot=$(CDPATH='' cd -- "$WT" && pwd -P) || {
+      echo "error: could not resolve Treehouse pool slot $WT to a real path; inspect window $T" >&2
+      exit 1
+    }
     for spawn_state in "${FM_LOCAL_FIRSTMATE_STATES[@]}"; do
       for spawn_meta in "$spawn_state"/*.meta; do
         [ -f "$spawn_meta" ] && [ ! -L "$spawn_meta" ] || continue
@@ -4906,7 +4909,7 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
           [ -n "$spawn_other_path" ] && [ -d "$spawn_other_path" ] || continue
           spawn_other_slot=$(CDPATH='' cd -- "$spawn_other_path" && pwd -P) || continue
           if [ "$spawn_other_slot" = "$spawn_slot" ]; then
-            echo "error: Treehouse pool slot $WT is still recorded as task $spawn_other_id's $spawn_field; refusing to launch task $ID" >&2
+            echo "error: Treehouse pool slot $WT is still recorded as task $spawn_other_id's $spawn_field; refusing to launch task $ID; inspect window $T" >&2
             exit 1
           fi
         done
