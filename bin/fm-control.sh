@@ -186,6 +186,8 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-worker-account-lib.sh"
 # shellcheck source=bin/fm-exclude-tools-lib.sh
 . "$SCRIPT_DIR/fm-exclude-tools-lib.sh"
+# shellcheck source=bin/fm-effort-ceiling-lib.sh
+. "$SCRIPT_DIR/fm-effort-ceiling-lib.sh"
 
 POLL=${FM_CONTROL_POLL:-0.5}
 SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
@@ -956,6 +958,7 @@ resolve_relaunch_profile() {
   else
     TARGET_EFFORT=default
   fi
+  fm_worker_effort_check "$CONFIG" "$TARGET_MODEL" "$TARGET_EFFORT" || return 1
   if [ "$TARGET_EFFORT" = ultra ]; then
     "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$TARGET_HARNESS" "$TARGET_MODEL" "$TARGET_EFFORT" || return 1
   fi

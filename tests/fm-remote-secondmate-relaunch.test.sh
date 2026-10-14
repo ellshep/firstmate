@@ -189,4 +189,23 @@ fm_pr_poll_artifacts_valid "$HOME_DIR/state" ios "$ROOT/bin/fm-pr-poll.sh" \
   || fail "a remote relaunch broke PR poll authentication by writing harness/model/effort after pr="
 pass "a remote relaunch keeps an already-armed PR poll authenticating"
 
+# --- the captain's effort ceiling is enforced before the remote host is asked
+reset_meta
+cp "$HOME_DIR/state/ios.meta" "$TMP/ios-before-ceiling.meta"
+printf 'high\n' > "$HOME_DIR/config/worker-effort-ceiling"
+OUT=$(run_relaunch ios claude claude-opus-5-5 xhigh); RC=$?
+[ "$RC" -ne 0 ] || fail "a relaunch above the captain's ceiling must be refused"
+assert_contains "$OUT" "exceeds config/worker-effort-ceiling 'high'" \
+  "the ceiling refusal should name the setting"
+cmp -s "$TMP/ios-before-ceiling.meta" "$HOME_DIR/state/ios.meta" \
+  || fail "a ceiling refusal must not touch the parent's record"
+pass "a remote relaunch above the captain's effort ceiling is refused before contacting the host"
+
+OUT=$(run_relaunch ios claude claude-opus-5-5 high); RC=$?
+expect_code 0 "$RC" "a remote relaunch at the ceiling should proceed"$'\n'"$OUT"
+assert_grep 'effort=high' "$HOME_DIR/state/ios.meta" \
+  "a relaunch at the ceiling should still be recorded"
+rm -f "$HOME_DIR/config/worker-effort-ceiling"
+pass "a remote relaunch at the captain's effort ceiling is allowed"
+
 echo "ALL TESTS PASSED"
