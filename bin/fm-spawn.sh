@@ -1083,6 +1083,12 @@ spawn_remote_secondmate() {
     fm_lock_release "$SPAWN_TASK_LOCK" || true
     return 1
   fi
+  # This function's unset sentinel is '-', not the empty string fm_worker_effort_check expects.
+  fm_worker_effort_check "$CONFIG" "${model#-}" "${effort#-}" || {
+    fm_lock_release "$registry_lock" || true
+    fm_lock_release "$SPAWN_TASK_LOCK" || true
+    return 1
+  }
   meta="$STATE/$id.meta"
   if [ -e "$meta" ] || [ -L "$meta" ]; then
     if ! fm_backlog_record_present "$meta" "task record" "$STATE" ||
