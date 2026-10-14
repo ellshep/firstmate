@@ -743,6 +743,38 @@ test_pool_slot_claim_follows_the_spawn_outcome() {
   pass "a Treehouse slot claim names the launched task, refuses when unclaimable, and is dropped by a locked abort"
 }
 
+test_pool_slot_recorded_by_idle_task_refuses_spawn() {
+  local rec id owner out status before field
+  for field in worktree home; do
+    id="pool-slot-reuse-$field-r1"
+    owner="idle-scout-$field"
+    rec=$(make_case "slot-reuse-$field" "$id")
+    read_case_record "$rec"
+    lay_out_as_pool_slot
+    if [ "$field" = worktree ]; then
+      printf 'task=%s\nhome=%s\n' "$owner" "$HOME_DIR" > "$SLOT_CLAIM"
+    fi
+    printf '%s=%s\nkind=scout\n' "$field" "$POOL_DIR" > "$HOME_DIR/state/$owner.meta"
+    before=$(git -C "$POOL_DIR" rev-parse HEAD)
+
+    out=$(run_spawn "$id" --scout)
+    status=$?
+    [ "$status" -ne 0 ] || fail "spawn reused a slot recorded by an idle task's $field"
+    assert_contains "$out" "still recorded as task $owner's $field" \
+      "spawn did not identify the idle task retaining the slot"
+    [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "spawn published a second task on the idle task's slot"
+    if [ "$field" = worktree ]; then
+      grep -Fxq -- "task=$owner" "$SLOT_CLAIM" \
+        || fail "spawn replaced the idle task's slot claim"
+    else
+      [ ! -e "$SLOT_CLAIM" ] || fail "spawn claimed a slot still recorded by the idle task"
+    fi
+    [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$before" ] \
+      || fail "spawn reset the idle task's slot before refusing"
+  done
+  pass "a slot still recorded by an idle task refuses a new spawn before claim, refresh, or launch"
+}
+
 publish_feature_branch() { # <branch>
   git -C "$CASE_DIR/publisher" checkout --quiet -b "$1"
   printf 'only on %s\n' "$1" > "$CASE_DIR/publisher/feature-only.txt"
@@ -876,6 +908,7 @@ test_scout_base_branch_refused_on_gerrit_forge() {
 
 test_remote_seeded_home_spawns_from_treehouse_pool
 test_pool_slot_claim_follows_the_spawn_outcome
+test_pool_slot_recorded_by_idle_task_refuses_spawn
 test_linked_spawning_home_rejects_primary_before_refresh
 test_stale_pool_base_refreshes_before_branching
 test_named_base_branch_starts_from_that_branch

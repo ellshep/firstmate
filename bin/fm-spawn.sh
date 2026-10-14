@@ -178,8 +178,9 @@
 #   is published. Under that same lock it writes the slot's owner claim, which is
 #   what lets teardown leave a slot reassigned since untouched; bin/fm-wake-lib.sh
 #   owns the claim and bin/fm-teardown.sh owns what it protects. A slot that
-#   cannot be claimed refuses the spawn rather than launching a worker whose slot
-#   could later be released out from under its successor. A spawn that aborts
+#   cannot be claimed, or is still named by another task record, refuses the
+#   spawn rather than launching a worker whose slot could later be released out
+#   from under its successor. A spawn that aborts
 #   while it still holds the allocation lock drops its own claim; an abort after
 #   metadata publication has released that lock leaves the claim in place, and
 #   the next spawn's claim replaces it.
@@ -4886,6 +4887,31 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # Written under the Treehouse project lock held from before slot allocation
   # through metadata publication, so no other spawn or return sees a half-claim.
   if fm_treehouse_pool_slot "$PROJ_ABS" "$WT"; then
+    # Treehouse's process lease may lapse while an idle scout still owns the
+    # slot. Check every local home's durable records under the project lock
+    # before replacing its claim; teardown checks the same records before a
+    # return and must keep refusing any existing collision.
+    if ! fm_local_firstmate_state_dirs "$STATE"; then
+      echo "error: cannot prove Treehouse pool slot $WT is free: $FM_LOCAL_FIRSTMATE_ERROR; refusing to launch task $ID" >&2
+      exit 1
+    fi
+    spawn_slot=$(CDPATH='' cd -- "$WT" && pwd -P) || exit 1
+    for spawn_state in "${FM_LOCAL_FIRSTMATE_STATES[@]}"; do
+      for spawn_meta in "$spawn_state"/*.meta; do
+        [ -f "$spawn_meta" ] && [ ! -L "$spawn_meta" ] || continue
+        spawn_other_id=${spawn_meta##*/}
+        spawn_other_id=${spawn_other_id%.meta}
+        for spawn_field in worktree home; do
+          spawn_other_path=$(fm_meta_get "$spawn_meta" "$spawn_field")
+          [ -n "$spawn_other_path" ] && [ -d "$spawn_other_path" ] || continue
+          spawn_other_slot=$(CDPATH='' cd -- "$spawn_other_path" && pwd -P) || continue
+          if [ "$spawn_other_slot" = "$spawn_slot" ]; then
+            echo "error: Treehouse pool slot $WT is still recorded as task $spawn_other_id's $spawn_field; refusing to launch task $ID" >&2
+            exit 1
+          fi
+        done
+      done
+    done
     if ! fm_treehouse_slot_owner_claim "$WT" "$ID" "$FM_HOME"; then
       echo "error: could not claim Treehouse pool slot $WT for task $ID; refusing to launch a worker whose slot cannot later be proved to be its own; inspect window $T" >&2
       exit 1
