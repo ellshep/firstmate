@@ -3078,6 +3078,8 @@ printf 'session:\n  file: /a.html\n  status: ended\n  ended_by: user\nprompts[0]
 silent_says no "a declared-empty content block is still present"
 printf 'session:\n  file: /a.html\n  status: ended\n  ended_by: user\nprompts[many]{tag,text}:\n' > "$SIL"
 silent_says no "a malformed top-level content header is indeterminate"
+printf 'session:\n  file: /a.html\n  status: ended\n  ended_by: user\nresponses[1]{text}:\n  an answer\n' > "$SIL"
+silent_says no "an unknown top-level content shape is not an empty close"
 printf 'session:\n  file: /a.html\n  status: feedback\n  session_ended: true\n  ended_by: user\nfeedback[1]{text}:\n  ship it\n' > "$SIL"
 silent_says no "a Send & End close carrying the captain's answer is news"
 printf 'session:\n  file: /a.html\n  status: feedback\nprompts[1]{tag,text}:\n  "message","some prose"\n' > "$SIL"
@@ -3088,6 +3090,8 @@ printf 'session:\n  file: /a.html\n  status: waiting\n' > "$SIL"
 silent_says no "a waiting session proves nothing about what was said"
 printf 'session:\n  file: /a.html\n  status: browser_disconnected\n' > "$SIL"
 silent_says yes "a browser disconnect carries no answer and keeps the session open"
+printf 'session:\n  file: /a.html\n  status: browser_disconnected\nresponses[1]{text}:\n  an answer\n' > "$SIL"
+silent_says no "a browser disconnect with an unknown content shape is not silent"
 printf 'error: No active Lavish Editor session for this file\ncode: NOT_FOUND\n' > "$SIL"
 silent_says no "a missing session is not a no-op"
 printf 'error: Lavish Editor poll response was interrupted\ncode: SERVER_ERROR\n' > "$SIL"
@@ -3113,6 +3117,48 @@ pass "the adapter owns which Lavish results are silent, and fails closed on ever
 # and must appear as its own field, not as just another annotation.
 READ="$TMP_ROOT/read-result"
 read_out() { "$ROOT/bin/fm-procevent-lavish.sh" read "$READ"; }
+cp "$ROOT/tests/captures/lavish-prompts-five.toon" "$READ"
+out=$(read_out) || fail "read refused the five-item prompts capture"
+assert_contains "$out" "declared_items: 5" "the prompts capture lost its declared count"
+assert_contains "$out" "presented_items: 5" "the prompts capture dropped an item"
+assert_contains "$out" "complete: yes" "the prompts capture was not complete"
+assert_contains "$out" "annotation_count: 4" "the prompts capture dropped an annotation"
+assert_contains "$out" "session_ending_message_count: 1" "the prompts capture dropped its message"
+assert_contains "$out" "| Fourth annotation" "the final annotation text was not presented"
+assert_contains "$out" "| Please address all four notes" "the freeform message was not presented"
+pass "read presents all five prompts from a captured-format Lavish result"
+
+printf 'error: No active Lavish Editor session for this file\ncode: NOT_FOUND\n' > "$READ"
+out=$(read_out) || fail "read refused the documented missing-session error shape"
+assert_contains "$out" "declared_items: 0" \
+  "a missing session was not presented as an empty board"
+assert_contains "$out" "lifecycle: missing" \
+  "a missing session did not report the missing lifecycle"
+pass "read presents the documented missing-session error shape as an empty board"
+
+cat > "$READ" <<'EOF'
+session:
+  file: /review.html
+  status: feedback
+responses[2]{uid,prompt,selector,tag,text}:
+  "cell-1","First annotation","#review > section",note,"First cell"
+  "","Please address the note","",message,"Freeform message"
+EOF
+if out=$(read_out 2>&1); then
+  fail "read accepted an unknown result shape as an empty board"
+fi
+assert_contains "$out" "unrecognized Lavish result shape" \
+  "read did not explain why the unknown result was refused"
+assert_not_contains "$out" "declared_items: 0" \
+  "read reported an unknown result as an empty board"
+printf 'session:\n  status: feedback\n' > "$READ"
+if out=$(read_out 2>&1); then
+  fail "read accepted feedback with no content block as an empty board"
+fi
+assert_not_contains "$out" "declared_items: 0" \
+  "read reported missing content as an empty board"
+pass "read refuses unknown and missing feedback shapes"
+
 cat > "$READ" <<'EOF'
 session:
   file: /review.html

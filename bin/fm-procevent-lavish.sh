@@ -33,7 +33,8 @@
 #            words are never dropped. Choice Context data is not a comment.
 #            Captain-supplied body lines are visibly prefixed so they cannot
 #            forge structural labels. Empty message and annotation sections
-#            are reported explicitly.
+#            are reported explicitly. An unrecognized result shape is refused
+#            rather than presented as an empty board.
 # poll       The registered listener command `arm` publishes, not a command to
 #            run in a conversational turn. It runs the published blocking poll
 #            and prints its response verbatim, absorbing only the one exact
@@ -545,6 +546,10 @@ result_has_queued_content() {  # <result-file>
       verdict = "indeterminate"
       exit
     }
+    /^[^[:space:]]/ && $0 !~ /^session:[[:space:]]*$/ {
+      verdict = "indeterminate"
+      exit
+    }
     END {
       if (verdict == "present") exit 0
       if (verdict == "indeterminate") exit 2
@@ -563,8 +568,10 @@ cmd_silent() {
   local file=${1-} content_rc
   [ -n "$file" ] || usage
   [ -f "$file" ] && [ ! -L "$file" ] || die "result file does not exist: $file"
-  [ "$(cmd_classify "$file")" = disconnected ] && return 0
-  [ "$(cmd_classify "$file")" = ended ] || return 1
+  case "$(cmd_classify "$file")" in
+    disconnected|ended) ;;
+    *) return 1 ;;
+  esac
   result_has_queued_content "$file"
   content_rc=$?
   # Only a completed check that proved the result carries nothing declares
@@ -718,18 +725,41 @@ cmd_read() {
     my ($path, $lifecycle, $session_ended) = @ARGV;
     open my $fh, "<", $path or exit 1;
     my (@fields, $want, @rows);
+    my $headers = 0;
     while (my $line = <$fh>) {
+      if ($line !~ /^\s/ && $line !~ /^session:\s*$/) {
+        if ($line =~ /^(prompts|feedback)\[\d+\]\{([^}]+)\}:\s*$/) {
+          $headers++;
+          die "multiple Lavish content blocks\n" if $headers > 1;
+          my ($kind, $columns) = ($1, $2);
+          my %columns = map { $_ => 1 } split /,/, $columns;
+          die "unrecognized Lavish $kind fields: $columns\n"
+            unless $kind eq "prompts"
+              ? $columns{tag} && ($columns{prompt} || $columns{text})
+              : $columns{text};
+        } elsif ($lifecycle eq "missing" && $line =~ /^(?:error|code):/) {
+          1;
+        } else {
+          die "unrecognized Lavish result shape: $line";
+        }
+      }
       if (!@fields) {
         next unless $line =~ /^(?:prompts|feedback)\[(\d+)\]\{([^}]*)\}:\s*$/;
         ($want, @fields) = ($1, split /,/, $2);
         next;
       }
-      last unless $line =~ /^\s/;
-      last if defined($want) && @rows >= $want;
+      next unless $line =~ /^\s/;
+      die "Lavish content has more rows than declared\n"
+        if @rows >= $want && $line =~ /\S/;
+      next if @rows >= $want;
       chomp $line;
       push @rows, $line;
     }
     close $fh;
+    die "unrecognized Lavish feedback shape: missing content block\n"
+      if !$headers && $lifecycle eq "feedback";
+    die "unrecognized Lavish result lifecycle: $lifecycle\n"
+      unless $lifecycle =~ /\A(?:feedback|ended|waiting|disconnected|missing)\z/;
     $want = 0 unless defined $want;
     my @parsed;
     my $malformed = 0;
