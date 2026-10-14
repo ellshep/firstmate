@@ -1451,7 +1451,12 @@ SH
   turn_end "$home"
   wait_until 150 watcher_live "$home" || fail "hook write failure: no watcher started"
   append_status "$home" 'step one'
-  wait_until 250 hook_exited "$home" || fail "hook write failure: the Stop hook did not finish"
+  # The injected write failure sends the close through the marker's quarantine
+  # and failure-notification path on top of the ordinary hook round trip, so
+  # it needs the same wider margin already used for other heavier-than-usual
+  # closes in this file (e.g. line ~1872's 400-tick wait) rather than the
+  # plain 250 every lighter hook case uses.
+  wait_until 400 hook_exited "$home" || fail "hook write failure: the Stop hook did not finish"
   [ "$(cat "$home/offer-count" 2>/dev/null)" -ge 2 ] || fail "fixture: the close did not turn main-only at its turn"
   assert_re 'pass-through[[:space:]]+downtime-unrestored' "$home/state/.supervision-host.log" "fixture: downtime publication did not fail"
   assert_re '^(pending|announced):handling:' "$home/state/.watcher-down" "fixture: the marker unexpectedly became downtime"
