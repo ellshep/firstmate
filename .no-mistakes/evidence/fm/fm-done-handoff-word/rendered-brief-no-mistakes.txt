@@ -1,0 +1,19 @@
+# Live evidence: rendered no-mistakes ship brief (bin/fm-brief.sh), disposable FM_HOME
+# Command: FM_HOME=/tmp/fm-live-dod/home ./bin/fm-brief.sh live-handoff-demo some-proj --mode no-mistakes
+
+=== States line ===
+   States: working, needs-decision, blocked, paused, validation-ready, done, failed.
+
+=== Handoff text ===
+When the implementation is committed, append `validation-ready [at=<epoch>]: {summary}` to the status file and stop.
+Firstmate starts the validation run by instructing you to run /no-mistakes to validate and ship a PR.
+That `validation-ready:` line is the handoff to firstmate; the pipeline owns the push.
+
+=== Finished text (distinct status word, same as before) ===
+Then append `done [at=<epoch>]: PR {url} checks green` and stop. You are finished.
+
+# Gerrit variant (FM_HOME=/tmp/fm-live-dod/home-gerrit, --forge gerrit):
+When the implementation is committed, append `validation-ready [at=<epoch>]: {summary}` to the status file and stop.
+That `validation-ready:` line is the handoff; it is not a request to publish.
+Then append `done [at=<epoch>]: PR {change url} published for review` to the status file and stop. You are finished.
+No legacy `done [at=<epoch>]: {summary}` handoff line present in either rendering.

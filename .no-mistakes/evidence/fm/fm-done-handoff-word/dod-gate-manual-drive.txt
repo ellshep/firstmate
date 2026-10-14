@@ -1,0 +1,16 @@
+# Live evidence: manual drive of bin/fm-dod-lib.sh / bin/fm-classify-lib.sh against a disposable git worktree
+# (not pushed to any remote), issue https://github.com/kunchenguid/firstmate/issues/7251
+
+--- Scenario: legacy 'done:' handoff recognized as validation handoff, not gated ---
+PASS: legacy done: handoff accepted without push
+
+--- Scenario: new 'validation-ready:' handoff recognized, not gated ---
+PASS: validation-ready: handoff accepted without push
+
+--- Adversarial: finished 'done: PR ... checks green' with unpushed commit must still be GATED (refused) ---
+named head b7e5ac39b3f45f053f696e4feb9afa3d04261ad6 is unreachable outside the worker copy
+PASS: finished unpushed report correctly refused
+
+--- status_is_terminal_verb('validation-ready [at=123]: implementation committed') -> 0 (wakes supervisor)
+--- status_is_captain_relevant('validation-ready [at=123]: implementation committed') -> 0 (reaches firstmate)
+--- FM_CLASSIFY_CAPTAIN_RE_DEFAULT = validation-ready:|done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged
