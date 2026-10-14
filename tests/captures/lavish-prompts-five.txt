@@ -1,0 +1,11 @@
+session:
+  file: /review.html
+  status: feedback
+  session_ended: true
+  ended_by: user
+prompts[5]{uid,prompt,selector,tag,text}:
+  "cell-1","First annotation","#review > section:nth-of-type(1)",note,"First cell"
+  "cell-2","Second annotation","#review > section:nth-of-type(2)",note,"Second cell"
+  "cell-3","Third annotation","#review > section:nth-of-type(3)",note,"Third cell"
+  "cell-4","Fourth annotation","#review > section:nth-of-type(4)",note,"Fourth cell"
+  "","Please address all four notes","",message,"Freeform message"
