@@ -737,6 +737,8 @@ cmd_read() {
             unless $kind eq "prompts"
               ? $columns{tag} && ($columns{prompt} || $columns{text})
               : $columns{text};
+        } elsif ($lifecycle eq "missing" && $line =~ /^(?:error|code):/) {
+          1;
         } else {
           die "unrecognized Lavish result shape: $line";
         }

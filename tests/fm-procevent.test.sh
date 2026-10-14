@@ -3128,6 +3128,14 @@ assert_contains "$out" "| Fourth annotation" "the final annotation text was not 
 assert_contains "$out" "| Please address all four notes" "the freeform message was not presented"
 pass "read presents all five prompts from a captured-format Lavish result"
 
+printf 'error: No active Lavish Editor session for this file\ncode: NOT_FOUND\n' > "$READ"
+out=$(read_out) || fail "read refused the documented missing-session error shape"
+assert_contains "$out" "declared_items: 0" \
+  "a missing session was not presented as an empty board"
+assert_contains "$out" "lifecycle: missing" \
+  "a missing session did not report the missing lifecycle"
+pass "read presents the documented missing-session error shape as an empty board"
+
 cat > "$READ" <<'EOF'
 session:
   file: /review.html
