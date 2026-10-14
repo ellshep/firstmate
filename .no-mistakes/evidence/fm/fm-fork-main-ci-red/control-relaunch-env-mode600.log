@@ -1,0 +1,28 @@
+Scenario: Behavior portable serial 3 - fm-control-relaunch.test.sh rebuilt env file mode 600
+Command: test_spawn_relaunch_sanitizes_copied_env_but_preserves_worker_values,
+run in isolation (this test file has no FM_TEST_ONLY filter, so the setup
+through just this one test function's definition was extracted into a
+temporary runnable copy inside tests/ so its "$(dirname "${BASH_SOURCE[0]}")"
+sourcing of tests/lib.sh still resolved, then removed immediately after).
+
+== BASE (c935d6a503f2dfd17fba5866d23faefa6aea6e54), macOS/BSD stat ==
+exit=0
+ok - fm-spawn --relaunch: rebuilds regular env files with source and worker values
+
+== TARGET (0923835 6b969b46830d5de9c2eb8568d7f792662), macOS/BSD stat ==
+exit=0
+ok - fm-spawn --relaunch: rebuilds regular env files with source and worker values
+
+Result/limitation: the fix is a pure reorder of the stat(1) fallback chain
+(`stat -c '%a' ... || stat -f '%Lp' ...` instead of `stat -f ... || stat -c
+...`). On GNU/Linux (the CI runner), `stat -f` is "filesystem status" mode, not
+BSD's format flag, so the original order silently produced the wrong
+(non-600) value instead of falling through, which is exactly the CI failure
+quoted in the user intent. macOS's BSD `stat` has no such ambiguity (`-f` is
+always the format flag here), so both the pre-fix and post-fix ordering pass
+locally and this host cannot discriminate the two commits for this specific
+assertion. No Docker, Linux VM, or local GNU coreutils (`gstat`) is available
+on this host, and installing coreutils system-wide/globally is out of bounds
+for this run, so the Linux-specific regression itself could not be
+reproduced live here. The target scenario pass above is still a direct live
+run of the real test against the real product on the available platform.

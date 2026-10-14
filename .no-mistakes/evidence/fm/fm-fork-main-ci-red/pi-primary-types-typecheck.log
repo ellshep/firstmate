@@ -1,0 +1,20 @@
+Scenario: Behavior portable parallel 1 - Pi extension strict no-emit typecheck
+Command: tests/fm-pi-primary-types.test.sh (direct, with a disposable local
+TypeScript toolchain and a disposable global-style npm prefix install of
+@earendil-works/pi-coding-agent@latest, matching the CI "npm install -g"
+install shape rather than a hoisted local install)
+
+== BASE (c935d6a503f2dfd17fba5866d23faefa6aea6e54) against Pi 1.2.0 ==
+../../var/folders/yl/r0vn90j910bdmdqt36txn9sh0000gn/T/fm-pi-primary-types.E2PTG0/fm-branch-supervision.ts(1684,26): error TS2339: Property 'prompt' does not exist on type 'BeforeAgentStartEvent'.
+  Property 'prompt' does not exist on type 'BeforeAgentStartCustomEvent'.
+../../var/folders/yl/r0vn90j910bdmdqt36txn9sh0000gn/T/fm-pi-primary-types.E2PTG0/fm-primary-pi-watch.ts(1203,35): error TS2339: Property 'prompt' does not exist on type 'BeforeAgentStartEvent'.
+  Property 'prompt' does not exist on type 'BeforeAgentStartCustomEvent'.
+
+== TARGET (0923835 6b969b46830d5de9c2eb8568d7f792662) against Pi 1.2.0 ==
+ok - tracked Pi extensions pass strict no-emit typecheck against Pi 1.2.0
+
+Result: base reproduces the exact reported TS2339 error on
+BeforeAgentStartEvent.prompt; target passes cleanly against the same Pi
+package version. The fix (an "messageType" in event narrowing guard added to
+.pi/extensions/fm-branch-supervision.ts and fm-primary-pi-watch.ts) resolves
+the type error.

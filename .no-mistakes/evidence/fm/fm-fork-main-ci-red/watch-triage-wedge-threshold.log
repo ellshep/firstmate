@@ -1,0 +1,20 @@
+Scenario: Behavior portable serial 1 - fm-watch-triage.test.sh wedge threshold defers to a parked gate
+Command: FM_TEST_ONLY=test_wedge_threshold_defers_to_a_parked_gate_awaiting_a_human bash tests/fm-watch-triage.test.sh
+(this test file has a built-in FM_TEST_ONLY filter that runs exactly one named
+test function instead of the whole ~230-test suite, driving the real
+bin/fm-watch.sh subprocess against a fake tmux pane/status fixture)
+
+== BASE (c935d6a503f2dfd17fba5866d23faefa6aea6e54) ==
+not ok - a gate awaiting the crewmate stopped escalating at threshold 1:
+
+== TARGET (0923835 6b969b46830d5de9c2eb8568d7f792662) ==
+ok - a gate awaiting firstmate's decision for its own run is rechecked on the
+long cadence in either posture, while a crewmate-owed gate, an unrelated open
+decision and a runless verdict keep the unchanged ladder
+
+Result: base reproduces exactly the "did not stop escalation at threshold 1"
+regression named in the user intent (the crewmate-owed nm-gate case was being
+absorbed by the generic decision fold instead of continuing the wedge
+escalation ladder); target passes, confirming
+status_has_open_nm_gate_decision() in bin/fm-classify-lib.sh and its use in
+bin/fm-watch.sh correctly exclude a crewmate-owed decision from the fold.

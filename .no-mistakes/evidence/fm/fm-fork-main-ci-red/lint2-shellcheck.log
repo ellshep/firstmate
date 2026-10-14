@@ -1,0 +1,33 @@
+Scenario: Lint 2 - ShellCheck findings in the 4 named files
+Command: bin/fm-lint.sh bin/fm-claude-captain-boundary.sh bin/fm-supervise-daemon.sh bin/fm-tmux-lib.sh bin/backends/herdr.sh
+(explicit-path mode: same canonical ShellCheck config/version as CI's Lint 2
+partition, scoped to exactly the files the user intent names)
+ShellCheck 0.11.0, matching the repo's pinned version (bin/fm-lint.sh --required-version).
+
+== BASE (c935d6a503f2dfd17fba5866d23faefa6aea6e54) ==
+exit=1
+In bin/backends/herdr.sh line 3248:
+    identity=probe-absent
+             ^----------^ SC2100 (warning): Use $((..)) for arithmetics, e.g. i=$((i - 2))
+
+In bin/fm-claude-captain-boundary.sh line 22:
+  local payload prompt classified previous now tmp record="$STATE/.last-captain-message"
+                       ^--------^ SC2034 (warning): classified appears unused. Verify use (or export if used externally).
+
+In bin/fm-supervise-daemon.sh line 1520:
+    for attempt in 1 2 3 4 5; do
+    ^-^ SC2034 (warning): attempt appears unused. Verify use (or export if used externally).
+
+In bin/fm-tmux-lib.sh line 183:
+    identity=probe-absent
+             ^----------^ SC2100 (warning): Use $((..)) for arithmetics, e.g. i=$((i - 2))
+
+== TARGET (0923835 6b969b46830d5de9c2eb8568d7f792662) ==
+exit=0
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+(no findings)
+
+Result: base reproduces exactly the SC2034 (x2) and SC2100 (x2, including the
+bin/backends/herdr.sh finding) codes named in the user intent; target is
+clean.
