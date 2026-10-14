@@ -3117,7 +3117,7 @@ pass "the adapter owns which Lavish results are silent, and fails closed on ever
 # and must appear as its own field, not as just another annotation.
 READ="$TMP_ROOT/read-result"
 read_out() { "$ROOT/bin/fm-procevent-lavish.sh" read "$READ"; }
-cp "$ROOT/tests/captures/lavish-prompts-five.txt" "$READ"
+cp "$ROOT/tests/captures/lavish-prompts-five.toon" "$READ"
 out=$(read_out) || fail "read refused the five-item prompts capture"
 assert_contains "$out" "declared_items: 5" "the prompts capture lost its declared count"
 assert_contains "$out" "presented_items: 5" "the prompts capture dropped an item"

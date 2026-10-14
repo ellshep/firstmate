@@ -66,7 +66,7 @@ ok "genuinely unrecognized content shape stays refused"
 # The newer prompts[N]{...} shape with a full house of annotations and a
 # freeform message must still report every queued item, not zero - this is
 # the original defect: a 5-item board reporting declared_items 0.
-cp "$FM_ROOT/tests/captures/lavish-prompts-five.txt" "$LAB/five.txt"
+cp "$FM_ROOT/tests/captures/lavish-prompts-five.toon" "$LAB/five.txt"
 out=$("$BIN/fm-procevent-lavish.sh" read "$LAB/five.txt" 2>&1)
 rc=$?
 [ "$rc" -eq 0 ] \
