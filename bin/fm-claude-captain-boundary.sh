@@ -19,6 +19,7 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-operational-input.sh"
 
 fm_captain_boundary_record() {
+  # shellcheck disable=SC2034 # fm_operational_doorbell_kind writes this output parameter.
   local payload prompt classified previous now tmp record="$STATE/.last-captain-message"
   fm_primary_scope_matches "$FM_ROOT" "$STATE" || return 0
   command -v jq >/dev/null 2>&1 || return 0

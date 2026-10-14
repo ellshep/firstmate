@@ -3244,9 +3244,8 @@ fm_backend_herdr_composer_stray_only() {  # <target> [expected-label]
   fm_backend_herdr_parse_target "$target" || return 1
   cap=$(fm_backend_herdr_capture_ansi "$target" "$FM_COMPOSER_CAPTURE_LINES" 2>/dev/null) || return 1
   caps=$(printf 'styled=1\ncursor=0\nidentity=1\nrows=%s' "$FM_COMPOSER_CAPTURE_LINES")
-  if ! identity=$(fm_backend_herdr_composer_identity "$target" 2>/dev/null) || [ -z "$identity" ]; then
-    identity=probe-absent
-  fi
+  identity=$(fm_backend_herdr_composer_identity "$target" 2>/dev/null) || identity=
+  [ -n "$identity" ] || identity='probe-absent'
   fm_composer_stray_only "$caps" "$cap" '' "$identity"
 }
 
