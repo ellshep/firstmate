@@ -804,7 +804,7 @@ When it is absent or contains `default`, crewmates mirror the firstmate's own ha
 The optional, local, gitignored `config/worker-effort-ceiling` contains one line: `low`, `medium`, `high`, `xhigh`, or `max`.
 Set it to `high` to refuse worker launches requesting `xhigh`, `max`, or native `ultra` effort.
 When this file exists, every ship, scout, and secondmate launch requires an explicit model and effort; `default` and omitted values are refused because the harness could inherit a higher global setting.
-`fm-control.sh relaunch` checks the resolved replacement profile before stopping the current worker, and `fm-spawn.sh` checks it before provisioning the replacement.
+`fm-control.sh relaunch` checks the resolved replacement profile before stopping the current worker, `fm-spawn.sh` checks it before provisioning a new worker or a remote secondmate, and `fm-remote-secondmate-relaunch.sh` checks it before asking the remote host to reconfigure a relaunched remote secondmate.
 An unreadable or invalid ceiling file refuses launches; absence preserves the existing default behavior.
 The primary inherits this file into secondmate homes so their own future workers follow the same ceiling.
 
