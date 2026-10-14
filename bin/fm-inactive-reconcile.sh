@@ -10,7 +10,7 @@
 # not a watcher, daemon, PR poll, or forge client of its own.
 # In a secondmate home every `scan` invocation, which is every watcher poll,
 # first runs the LEDGER-FIRST parent delivery: a direct child whose status
-# ledger ends in a whole `done:` or `failed:` line has stated its own outcome,
+# ledger ends in a whole finished `done:` or `failed:` line has stated its outcome,
 # so that line is published on the parent channel at once through
 # bin/fm-parent-channel-lib.sh from this unstamped payload:
 #   <state> [key=child-outcome-<child>-<state>-<fp8>]: child <child> <state>: <note> [pr=<url>] [mode=<mode>] [yolo=<posture>] [report=data/<child>/report.md]
@@ -19,7 +19,7 @@
 # published only when bin/fm-dod-lib.sh accepts the named head, so an
 # unpushed copy is not reported upstream as ready. The cadence path uses
 # fm-crew-state.sh, which applies the same gate: a no-mistakes
-# pre-validation `done: {summary}` still reads done (the pipeline handoff),
+# pre-validation legacy `done: {summary}` remains a validation handoff,
 # while a CI-ready or direct-PR/local-only done whose head lives only in the
 # disposable copy reads blocked and is not a terminal inactive outcome.
 # A line still being appended (no trailing newline yet)
@@ -369,11 +369,12 @@ notice_parent_report_failed() { # <record> <fingerprint> <payload>
 # selected through the shared latest-event reader, so the ledger path owns a
 # terminal record whose continuation prose trails it, and an unfinished line of
 # ordinary prose withholds nothing.
-child_terminal_ledger_line() { # <status>
-  local status=$1 snapshot last marker='__FM_LEDGER_SNAPSHOT_END__'
+child_terminal_ledger_line() { # <status> <meta>
+  local status=$1 meta=$2 snapshot last marker='__FM_LEDGER_SNAPSHOT_END__'
   [ -f "$status" ] && [ ! -L "$status" ] && [ -s "$status" ] || return 1
   last=$(last_status_line "$status")
   case "$(status_line_verb "$last")" in done|failed) ;; *) return 1 ;; esac
+  fm_dod_is_validation_handoff "$(meta_field "$meta" kind)" "$(meta_field "$meta" mode)" "$last" && return 1
   snapshot=$(cat "$status"; printf '%s' "$marker") || return 1
   case "$snapshot" in
     *$'\n'"$marker") ;;
@@ -415,7 +416,7 @@ claim_inactive_report_for_ledger() { # <task> <incarnation> <state> <ledger-fing
 report_child_ledger_locked() { # <id> <meta>
   local id=$1 meta=$2 status last previous state note pr mode yolo data incarnation fingerprint predecessor_head outcome_key line
   status="$STATE/$id.status"
-  last=$(child_terminal_ledger_line "$status") || return 0
+  last=$(child_terminal_ledger_line "$status" "$meta") || return 0
   state=$(status_line_verb "$last")
   pr=$(pr_for_task "$meta" "$last")
   incarnation=$(meta_incarnation "$meta")
@@ -506,7 +507,7 @@ reconcile_direct_child_locked() { # <id> <meta> <secondmate-id-or-empty> <timeou
   status_line_verb "$last" | grep -Fx captain-held >/dev/null 2>&1 && return 0
   # A ledger that states its own outcome is the ledger-first path's to deliver.
   if [ -n "$self" ]; then
-    child_terminal_ledger_line "$status" >/dev/null
+    child_terminal_ledger_line "$status" "$meta" >/dev/null
     case "$?" in 0|2) return 0 ;; esac
   fi
   age=$(last_activity_age "$meta" "$status" "$turn")
@@ -516,7 +517,7 @@ reconcile_direct_child_locked() { # <id> <meta> <secondmate-id-or-empty> <timeou
   [ "$state_rc" -ne 124 ] || return 3
   last=$(last_status_line "$status")
   if [ -n "$self" ]; then
-    child_terminal_ledger_line "$status" >/dev/null
+    child_terminal_ledger_line "$status" "$meta" >/dev/null
     case "$?" in 0|2) return 0 ;; esac
   fi
   case "$state_line" in

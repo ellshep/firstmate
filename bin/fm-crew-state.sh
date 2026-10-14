@@ -2,7 +2,7 @@
 # fm-crew-state.sh - deterministic read of a crew's CURRENT state.
 #
 # Why this exists: state/<id>.status is an append-only, best-effort EVENT LOG.
-# Crews append only wake-worthy transitions (done/needs-decision/blocked/paused/failed)
+# Crews append only wake-worthy transitions (validation-ready/done/needs-decision/blocked/paused/failed)
 # and nothing when they silently resume, so `tail -1` of that log reports the
 # last EVENT, not the current STATE. After firstmate resolves a needs-decision
 # or blocked and the crew resumes (responds to the gate, the pipeline fixes, it
@@ -257,7 +257,7 @@ map_log_state() {  # <line>
   fi
   case "$(status_line_verb "$1")" in
     working)        echo working ;;
-    needs-decision) echo parked ;;
+    validation-ready|needs-decision) echo parked ;;
     blocked)        echo blocked ;;
     done)           echo "done" ;;
     failed)         echo failed ;;
@@ -1308,6 +1308,9 @@ fi
 # the verb->state mapping (including the configurable paused verb), so reusing its
 # `unknown` verdict as the "not a state" test needs no second verb list here.
 if [ -n "$LOG_VERB" ]; then
+  if fm_dod_is_validation_handoff "$KIND" "$(meta_value mode)" "$LOG_LINE"; then
+    emit parked status-log "ready for validation; firstmate starts /no-mistakes${SEP}$(status_line_note "$LOG_LINE")"
+  fi
   if [ "$LOG_VERB" = "done" ]; then
     emit_ship_status_done
   fi
