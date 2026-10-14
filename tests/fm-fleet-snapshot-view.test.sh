@@ -1141,7 +1141,13 @@ EOF
     "kind=ship" \
     "mode=no-mistakes"
   record_claude_idle "$home/state" terminal-ship
-  printf 'done: complete\n' > "$home/state/terminal-ship.status"
+  # A bare `done:` is now the no-mistakes validation handoff, not a finished
+  # report (issue 7251), so the ordinary terminal case must use a CI-ready
+  # done: note whose named head the gate can verify.
+  fm_git_init_commit "$home/projects/terminal"
+  git -C "$home/projects/terminal" update-ref refs/remotes/origin/main \
+    "$(git -C "$home/projects/terminal" rev-parse HEAD)"
+  printf 'done: PR https://example.test/o/r/pull/9 checks green\n' > "$home/state/terminal-ship.status"
   out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
   printf '%s' "$out" | jq -e '
     .valid == false

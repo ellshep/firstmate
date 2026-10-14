@@ -920,7 +920,13 @@ EOF
     "harness=claude" "kind=ship" "mode=no-mistakes"
   record_claude_state "$mate/state" "done" idle
   record_claude_state "$mate/state" failed idle
-  printf 'done: complete\n' > "$mate/state/done.status"
+  # A bare `done:` is now the no-mistakes validation handoff, not a finished
+  # report (issue 7251), so this terminal case needs a CI-ready done: note
+  # whose named head the gate can verify.
+  fm_git_init_commit "$mate/projects/done"
+  git -C "$mate/projects/done" update-ref refs/remotes/origin/main \
+    "$(git -C "$mate/projects/done" rev-parse HEAD)"
+  printf 'done: PR https://example.test/o/r/pull/9 checks green\n' > "$mate/state/done.status"
   printf 'failed: stopped\n' > "$mate/state/failed.status"
   rm "$mate/state/parked.meta" "$mate/state/parked.status"
   refresh_local_secondmate_ledgers "$home"
