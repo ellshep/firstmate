@@ -1,0 +1,2 @@
+DEBUG: SSH_LOG lines after over-ceiling attempt:       18
+not ok - a refused remote spawn must never dispatch to the remote host via SSH at all (the check must run before any remote dispatch, including readiness/sync)
