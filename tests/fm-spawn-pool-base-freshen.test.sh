@@ -775,6 +775,29 @@ test_pool_slot_recorded_by_idle_task_refuses_spawn() {
   pass "a slot still recorded by an idle task refuses a new spawn before claim, refresh, or launch"
 }
 
+# A same-identity restart (fm-spawn invoked again for a task ID that already
+# has a task record in this exact home, as a projected-session recovery does)
+# must still reclaim its own slot rather than being refused as a collision
+# with itself.
+test_pool_slot_recorded_by_own_task_allows_reclaim() {
+  local rec id out status
+  id='pool-slot-reclaim-r1'
+  rec=$(make_case slot-reclaim "$id")
+  read_case_record "$rec"
+  lay_out_as_pool_slot
+  printf 'worktree=%s\nkind=scout\n' "$POOL_DIR" > "$HOME_DIR/state/$id.meta"
+
+  out=$(run_spawn "$id" --scout)
+  status=$?
+  expect_code 0 "$status" \
+    "a same-identity reclaim of the task's own recorded slot should launch"$'\n'"$out"
+  assert_not_contains "$out" "still recorded as task" \
+    "spawn refused its own task's prior slot record as a collision"
+  assert_grep "worktree=$POOL_DIR" "$HOME_DIR/state/$id.meta" \
+    "spawn did not keep its own slot recorded after reclaim"
+  pass "a slot still recorded by the task's own prior record reclaims rather than refusing"
+}
+
 publish_feature_branch() { # <branch>
   git -C "$CASE_DIR/publisher" checkout --quiet -b "$1"
   printf 'only on %s\n' "$1" > "$CASE_DIR/publisher/feature-only.txt"
@@ -909,6 +932,7 @@ test_scout_base_branch_refused_on_gerrit_forge() {
 test_remote_seeded_home_spawns_from_treehouse_pool
 test_pool_slot_claim_follows_the_spawn_outcome
 test_pool_slot_recorded_by_idle_task_refuses_spawn
+test_pool_slot_recorded_by_own_task_allows_reclaim
 test_linked_spawning_home_rejects_primary_before_refresh
 test_stale_pool_base_refreshes_before_branching
 test_named_base_branch_starts_from_that_branch

@@ -4902,6 +4902,7 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     for spawn_state in "${FM_LOCAL_FIRSTMATE_STATES[@]}"; do
       for spawn_meta in "$spawn_state"/*.meta; do
         [ -f "$spawn_meta" ] && [ ! -L "$spawn_meta" ] || continue
+        [ "$spawn_meta" != "$STATE/$ID.meta" ] || continue
         spawn_other_id=${spawn_meta##*/}
         spawn_other_id=${spawn_other_id%.meta}
         for spawn_field in worktree home; do
