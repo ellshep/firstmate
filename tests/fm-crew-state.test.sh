@@ -2338,7 +2338,7 @@ EOF
   local out; out=$(run_crew_state "$d" feat-g)
   assert_not_contains "$out" "source: run-step" "another branch's run not misattributed"
   assert_contains "$out" "source: status-log" "no own run -> falls back to status-log"
-  assert_contains "$out" "state: done" "falls back to the log verb"
+  assert_contains "$out" "state: parked" "legacy handoff awaits firstmate validation"
   pass "another branch's run is ignored, falls back"
 }
 
@@ -2400,7 +2400,7 @@ test_merged_pr_reads_done_under_captured_meta() {
   pass "recorded merged PR reads done under the fleet snapshot's captured meta"
 }
 
-test_no_mistakes_prevalidation_done_stays_done() {
+test_no_mistakes_validation_handoff_is_parked() {
   reset_fakes
   local d out
   d=$(new_case preval-done)
@@ -2410,15 +2410,19 @@ test_no_mistakes_prevalidation_done_stays_done() {
   fm_write_meta "$d/state/preval.meta" \
     "window=fm:fm-preval" "worktree=$d/wt" "project=$d/wt" \
     "kind=ship" "mode=no-mistakes" "harness=claude"
-  printf 'done: implementation complete\n' > "$d/state/preval.status"
   FM_FAKE_AXI_STATUS=""
   FM_FAKE_RUNS_LIST=""
   FM_FAKE_BUSY=0
   arm_idle_record "$d/state" preval
-  out=$(run_crew_state "$d" preval)
-  assert_contains "$out" "state: done" "no-mistakes pre-validation done: remains done"
-  assert_not_contains "$out" "state: blocked" "pre-validation done: must not be the named-head gate"
-  pass "no-mistakes pre-validation done: stays current-state done"
+  for line in 'validation-ready: implementation complete' 'done: implementation complete'; do
+    printf '%s\n' "$line" > "$d/state/preval.status"
+    out=$(run_crew_state "$d" preval)
+    assert_contains "$out" "state: parked" "$line must await firstmate validation"
+    assert_contains "$out" "firstmate starts /no-mistakes" "$line must name the next action"
+    assert_not_contains "$out" "state: done" "$line must not read as finished"
+    assert_not_contains "$out" "state: blocked" "$line must not hit the named-head gate"
+  done
+  pass "new and legacy no-mistakes validation handoffs remain parked"
 }
 
 test_moved_remote_branch_without_named_head_is_blocked() {
@@ -2866,7 +2870,7 @@ test_single_owner_terminal_declaration_supersedes_stale_decision() {
   make_fakebin "$d" >/dev/null
   arm_idle_record "$d/state" task
   for kind in scout ship; do
-    fm_write_meta "$d/state/task.meta" "window=fm:fm-task" "worktree=$d/wt" "kind=$kind" "harness=claude"
+    fm_write_meta "$d/state/task.meta" "window=fm:fm-task" "worktree=$d/wt" "kind=$kind" "mode=direct-PR" "harness=claude"
     for opener in needs-decision blocked; do
       for terminal in 'done' failed; do
         printf '%s [key=choice]: an earlier decision\n%s: final outcome\nContinuation prose.\n\n' \
@@ -5576,7 +5580,7 @@ test_coarse_run_does_not_probe_other_branch_ci_log_for_ready_status
 test_other_branch_run_ignored
 test_unpushed_ship_done_is_blocked
 test_merged_pr_reads_done_under_captured_meta
-test_no_mistakes_prevalidation_done_stays_done
+test_no_mistakes_validation_handoff_is_parked
 test_moved_remote_branch_without_named_head_is_blocked
 test_no_run_busy_pane
 test_no_run_launch_prompt_parked_is_not_working

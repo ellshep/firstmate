@@ -260,7 +260,7 @@ test_ship_mode_is_explicit_not_registry() {
   brief="$home/data/brief-explicit-a5/brief.md"
   grep -qx "Delivery contract: mode=no-mistakes" "$brief" \
     || fail "registered direct-PR posture overrode the explicit --mode"
-  assert_grep "Firstmate will then instruct you to run /no-mistakes" "$brief" \
+  assert_grep "Firstmate starts the validation run by instructing you to run /no-mistakes" "$brief" \
     "explicit no-mistakes brief did not render the pipeline definition of done"
 
   # An unregistered project is not a blocker either, because nothing is looked up.
@@ -361,6 +361,15 @@ test_no_mistakes_dod_wording() {
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
+  # shellcheck disable=SC2016 # The rendered status templates contain literal backticks.
+  assert_grep 'validation-ready [at=<epoch>]: {summary}' "$brief" \
+    "the pre-validation handoff did not use its own status word"
+  assert_grep 'Firstmate starts the validation run by instructing you to run /no-mistakes' "$brief" \
+    "the handoff did not name who starts validation"
+  assert_grep 'done [at=<epoch>]: PR {url} checks green' "$brief" \
+    "the finished report lost its distinct done status"
+  assert_no_grep 'done [at=<epoch>]: {summary}' "$brief" \
+    "the brief still uses done for the pre-validation handoff"
   for spelling in 'Captain:' "Captain's words:" "Captain's ask:" "Captain's intent:" 'Captain,'; do
     assert_no_grep "$spelling" "$brief" "rendered intent contract still teaches operator-address labels"
   done
@@ -953,8 +962,13 @@ $templates
 SIGNALS
     [ "$signals" -ge 4 ] \
       || fail "$kind brief instructed only $signals stamped status signals"
-    assert_grep "States: working, needs-decision, blocked, awaiting, done, failed." "$brief" \
-      "$kind brief did not render the configured pause verb in its states list"
+    if [ "$kind" = ship:no-mistakes ]; then
+      assert_grep "States: working, needs-decision, blocked, awaiting, validation-ready, done, failed." "$brief" \
+        "$kind brief did not render its handoff and configured pause verbs in the states list"
+    else
+      assert_grep "States: working, needs-decision, blocked, awaiting, done, failed." "$brief" \
+        "$kind brief did not render the configured pause verb in its states list"
+    fi
     # shellcheck disable=SC2016 # Literal backticks and braces must remain unexpanded.
     assert_grep 'Use `awaiting: {why}`' "$brief" \
       "$kind brief did not instruct the configured pause status"

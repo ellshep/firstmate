@@ -364,6 +364,10 @@ test_classifier_primitives() {
     && fail "working: free-text tokens wrongly recognized as captain-relevant"
   status_is_captain_relevant "done: PR https://x/pull/76 checks green" \
     || fail "genuine done: checks green not captain-relevant"
+  status_is_captain_relevant 'validation-ready [at=123]: implementation committed' \
+    || fail "validation-ready: did not reach firstmate"
+  status_is_terminal_verb 'validation-ready [at=123]: implementation committed' \
+    || fail "validation-ready: remained on the stale-worker path"
   status_is_terminal_verb "done: PR https://x/pull/76 checks green" \
     || fail "done: not a terminal verb"
   status_is_terminal_verb "working: rebased onto merged #76" \
@@ -508,6 +512,11 @@ test_unrecognized_status_prefix_is_visible() {
     || fail "done: stopped reaching the supervisor"
   [ "$event" = 'done: shipped' ] || fail "done: was rewritten to '$event'"
   status_is_terminal_verb "$event" || fail "done: stopped being terminal"
+  printf 'validation-ready: implementation committed\n' > "$state/validation-ready.status"
+  event=$(status_span_first_actionable "$state/validation-ready.status" 0) \
+    || fail "validation-ready: did not wake firstmate"
+  [ "$event" = 'validation-ready: implementation committed' ] \
+    || fail "validation-ready: event was rewritten to '$event'"
   printf 'note: for the record\n' > "$state/note.status"
   status_span_has_actionable "$state/note.status" 0 \
     && fail "note: became a supervisor event"

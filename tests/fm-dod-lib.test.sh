@@ -91,7 +91,15 @@ test_no_mistakes_prevalidation_done_is_not_gated() {
   git -C "$wt" commit -q --allow-empty -m 'only in the disposable copy'
   accept_done ship no-mistakes "$wt" "$repo" 'done: implementation complete' \
     || fail "no-mistakes pre-validation done: must not require named-head reachability"
-  pass "no-mistakes pre-validation done: is not gated"
+  accept_done ship no-mistakes "$wt" "$repo" 'validation-ready: implementation complete' \
+    || fail "no-mistakes validation-ready: must not require named-head reachability"
+  fm_dod_is_validation_handoff ship no-mistakes 'done: implementation complete' \
+    || fail "legacy done: handoff was misread as finished"
+  fm_dod_is_validation_handoff ship no-mistakes 'validation-ready: implementation complete' \
+    || fail "validation-ready: was not classified as a handoff"
+  fm_dod_is_validation_handoff ship no-mistakes 'done: PR https://example.test/o/r/pull/1 checks green' \
+    && fail "finished done: was misread as a handoff"
+  pass "new and legacy no-mistakes handoffs are not gated or finished"
 }
 
 test_local_only_linked_branch_is_accepted() {

@@ -90,7 +90,7 @@ unset _fm_classify_nounset
 # declaration cannot disappear behind an earlier recognized line. Continuation
 # prose is not a prefix and stays off that path. Recognized verbs keep the
 # classification below.
-FM_CLASSIFY_CAPTAIN_RE_DEFAULT='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'
+FM_CLASSIFY_CAPTAIN_RE_DEFAULT='validation-ready:|done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'
 
 # The declared-wait verb. A crew (or firstmate steering it) appends
 #   paused: <reason>
@@ -173,7 +173,7 @@ last_status_line() {  # <status-file> [<previous-event-var>]
 # 0 when <verb> is exactly one recognized status verb, with no leftover token.
 _fm_status_verb_recognized() {  # <verb>
   case "$1" in
-    working|needs-decision|blocked|done|failed|note|\
+    working|validation-ready|needs-decision|blocked|done|failed|note|\
     "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}"|\
     "${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}"|\
     "${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}")
@@ -275,21 +275,22 @@ _fm_classify_matches() {  # <line> <pattern>
   return "$matched"
 }
 
-# 0 if the given (last) status line's leading verb is a real terminal captain verb
-# (done, needs-decision, blocked, failed). Free-text tokens alone never count here;
+# 0 if the given (last) status line's leading verb ends a worker stage and
+# requires supervisor action (validation-ready, done, needs-decision, blocked,
+# failed). Free-text tokens alone never count here;
 # callers that need legacy free-text matching use status_is_captain_relevant.
 status_is_terminal_verb() {
   local line=$1 verb
   [ -n "$line" ] || return 1
   verb=$(status_line_verb "$line")
   case "$verb" in
-    done|needs-decision|blocked|failed) return 0 ;;
+    validation-ready|done|needs-decision|blocked|failed) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 # 0 if the given (last) status line matches a captain-relevant verb.
-# Verb-aware by default: terminal verbs always match; nonterminal progress verbs
+# Verb-aware by default: supervisor-actionable verbs always match; progress verbs
 # (working, resolved, captain-held) and paused never match from free-text prose;
 # only lines without those leading verbs may still match free-text tokens for
 # legacy bare lines such as "merged" or "PR ready".
@@ -312,7 +313,7 @@ status_is_captain_relevant() {
   status_prefix_unrecognized "$line" && return 0
   if [ -z "${FM_CAPTAIN_RE+x}" ]; then
     case "$verb" in
-      done|needs-decision|blocked|failed) return 0 ;;
+      validation-ready|done|needs-decision|blocked|failed) return 0 ;;
     esac
   fi
   _fm_status_unstamped "$line" unstamped
