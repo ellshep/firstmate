@@ -2725,7 +2725,25 @@ SH
   pass "fm-control exit removes the dialog file before it releases the control lock"
 }
 
+test_relaunch_effort_ceiling_refuses_before_stop() {
+  local dir out rc
+  dir=$(new_case ceiling-guard rl-ceiling)
+  add_ship_task "$dir" rl-ceiling
+  mkdir -p "$dir/home/config"
+  printf 'high\n' > "$dir/home/config/worker-effort-ceiling"
+  out=$(run_control "$dir" rl-ceiling relaunch --model sonnet --effort xhigh --note "continue safely"); rc=$?
+  expect_code 1 "$rc" "relaunch above the ceiling should refuse"
+  assert_contains "$out" "exceeds config/worker-effort-ceiling 'high'" "relaunch should name the ceiling"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "ceiling refusal stopped the existing agent"
+  [ ! -s "$dir/fake/literal" ] || fail "ceiling refusal sent a lifecycle command"
+
+  out=$(run_control "$dir" rl-ceiling relaunch --model sonnet --effort high --note "continue safely"); rc=$?
+  expect_code 0 "$rc" "relaunch at the ceiling should proceed"$'\n'"$out"
+  pass "fm-control: effort ceiling refuses before stopping the worker and allows high"
+}
+
 test_exit_and_relaunch_remove_the_dialog_file
+test_relaunch_effort_ceiling_refuses_before_stop
 test_exit_removes_the_dialog_file_before_releasing_the_lock
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text

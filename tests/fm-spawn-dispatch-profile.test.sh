@@ -2190,7 +2190,72 @@ test_non_claude_harness_ignores_claude_permission_mode() {
   pass "config/claude-permission-mode changes claude launches only"
 }
 
+test_worker_effort_ceiling() {
+  local rec out rc id sm
+  id=ceiling-ship
+  rec=$(make_spawn_case ceiling-ship claude "$id")
+  read_case_record "$rec"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness claude --model sonnet --effort xhigh); rc=$?
+  expect_code 0 "$rc" "an absent ceiling must preserve xhigh launch behavior"
+
+  id=ceiling-high
+  rec=$(make_spawn_case ceiling-high claude "$id")
+  read_case_record "$rec"
+  printf 'high\n' > "$HOME_DIR/config/worker-effort-ceiling"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness claude --model sonnet --effort high); rc=$?
+  expect_code 0 "$rc" "the ceiling must allow an effort equal to itself"
+
+  for id in xhigh max; do
+    rec=$(make_spawn_case "ceiling-$id" claude "ceiling-$id")
+    read_case_record "$rec"
+    printf 'high\n' > "$HOME_DIR/config/worker-effort-ceiling"
+    out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "ceiling-$id" "$PROJ_DIR" --harness claude --model sonnet --effort "$id"); rc=$?
+    expect_code 1 "$rc" "high ceiling must refuse $id"
+    assert_contains "$out" "exceeds config/worker-effort-ceiling 'high'" "ceiling refusal should name the setting"
+    [ ! -e "$HOME_DIR/state/ceiling-$id.meta" ] || fail "ceiling refusal created task metadata"
+  done
+
+  id=ceiling-no-model
+  rec=$(make_spawn_case "$id" claude "$id")
+  read_case_record "$rec"
+  printf 'high\n' > "$HOME_DIR/config/worker-effort-ceiling"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness claude --effort high); rc=$?
+  expect_code 1 "$rc" "a ceiling must refuse an inherited model"
+  assert_contains "$out" 'requires an explicit worker model' "missing model refusal should be actionable"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "missing-model refusal created task metadata"
+
+  id=ceiling-scout
+  rec=$(make_spawn_case "$id" claude "$id")
+  read_case_record "$rec"
+  printf 'high\n' > "$HOME_DIR/config/worker-effort-ceiling"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout --harness claude --model sonnet --effort xhigh); rc=$?
+  expect_code 1 "$rc" "scout launches must enforce the ceiling"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "scout ceiling refusal created task metadata"
+
+  id=ceiling-secondmate
+  rec=$(make_spawn_case "$id" claude "$id")
+  read_case_record "$rec"
+  printf 'high\n' > "$HOME_DIR/config/worker-effort-ceiling"
+  sm="$CASE_DIR/secondmate-home"
+  make_seeded_secondmate_home "$sm" "$id"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate --harness claude --model sonnet --effort xhigh); rc=$?
+  expect_code 1 "$rc" "secondmate launches must enforce the ceiling"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "secondmate ceiling refusal created task metadata"
+
+  id=ceiling-secondmate-high
+  rec=$(make_spawn_case "$id" claude "$id")
+  read_case_record "$rec"
+  printf 'high\n' > "$HOME_DIR/config/worker-effort-ceiling"
+  sm="$CASE_DIR/secondmate-home"
+  make_seeded_secondmate_home "$sm" "$id"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate --harness claude --model sonnet --effort high); rc=$?
+  expect_code 0 "$rc" "secondmate launch at the ceiling should succeed"$'\n'"$out"
+  [ "$(cat "$sm/config/worker-effort-ceiling")" = high ] || fail "secondmate did not inherit the ceiling"
+  pass "fm-spawn: effort ceiling guards ship, scout, and secondmate launches"
+}
+
 test_worker_launch_delivers_role_scope
+test_worker_effort_ceiling
 test_no_profile_keeps_claude_profile_defaults
 test_claude_launch_brief_publishes_record_doorbell
 test_claude_secondmate_launch_brief_publishes_into_its_own_home
