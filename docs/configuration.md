@@ -163,7 +163,8 @@ This preference is local to each Firstmate home and is not part of secondmate in
 ## Captain glance status line
 
 `bin/fm-captain-glance.sh` projects the existing Bearings snapshot into `state/captain-glance.json` after each handled wake.
-It records the number of live captain calls and captain-owned contributions, one short action, and the number of workers under way.
+It records the captain-action count, the number of workers under way, and the first due-now captain call or contribution as a short title.
+Parked calls remain in the count but do not appear as the next action; when nothing is due now, the line has no action text.
 It posts one Herdr notification for newly added action keys when the supervisor backend is Herdr, or one macOS notification on other backends.
 Removals and unchanged action sets are silent.
 The optional Claude Code reader marks a snapshot stale after ten minutes.

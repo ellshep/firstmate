@@ -148,7 +148,7 @@ remote homes under one shared snapshot budget and may refresh the parent-side ca
 Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,doing},
   secondmates{id,state,doing,provenance,freshness,age_seconds,contradiction,reason},
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
-  decisions_open{id,key,verb,summary,owner}, landed{id,what,artifact,owner},
+  decisions_open{id,key,verb,summary,title,hold_bucket,owner}, landed{id,what,artifact,owner},
   gates{id,title,blocked_by,reason,owner,filed}, reports{id,path}, recorded_prs{id,url},
   unhealthy_endpoints{...} (only when non-empty), omitted{surface,reveal}.
 Default gates are selected newest filed first before their bound; undated gates
@@ -527,14 +527,17 @@ MODEL=$(printf '%s' "$SNAP" | jq \
          | select(.structured and .hold_bucket != null)
          | select(($all_decisions == 1) or live_captain_call)
          | {id,key:.id,verb:"captain-hold",
-            summary:hold_summary(.title; .hold_reason),owner:"(main)"} ]
+            summary:hold_summary(.title; .hold_reason),title:(.title // "Captain decision"),hold_bucket,owner:"(main)"} ]
      + [ (.secondmate_current.records // [])[] as $m
          | ([ $m.decisions_open[]?
               | select(.source == "backlog" and .verb == "captain-hold")
               | select(($all_decisions == 1) or live_captain_call)
+              | . as $decision
               | {id:($m.id + "/" + .id),key,verb,
                  summary:hold_summary((.summary // .id);
-                                      (.reason // "captain decision pending")),owner:$m.id} ]
+                                      (.reason // "captain decision pending")),
+                 title:([ $m.queued[]? | select(.id == $decision.id) | .title ] | first // $decision.title // "Captain decision"),
+                 hold_bucket,owner:$m.id} ]
             + [ $m.queued[]?
                 | select($all_decisions == 1 and .hold_kind == "captain")
                 | select(.id as $id
@@ -544,7 +547,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
                          | index($id) | not)
                 | {id:($m.id + "/" + .id),key:.id,verb:"captain-hold",
                    summary:hold_summary((.title // .id);
-                                        (.hold_reason // "captain decision pending")),owner:$m.id} ])[] ]) as $decisions_all
+                                        (.hold_reason // "captain decision pending")),
+                   title:(.title // "Captain decision"),hold_bucket,owner:$m.id} ])[] ]) as $decisions_all
   | ([ .backlog.records[]
          | . as $record
          | select(.structured and projected_deferred_hold) ]

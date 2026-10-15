@@ -1274,7 +1274,8 @@ EOF
       and (.decisions_open | any(.[]; .id == "due-superseded"))
       and (.decisions_open | any(.[]; .id == "future-parked") | not)
       and (.decisions_open | any(.[]; .id == "aging-mate/mate-due-parked"))
-      and (.decisions_open | any(.[]; .id == "aging-mate/mate-parked"))
+      and (.decisions_open | any(.[]; .id == "aging-mate/mate-parked"
+            and .hold_bucket == "live" and .title == "Remote parked call"))
       and (.decisions_open | any(.[]; .id == "aging-mate/mate-due-not-required"))
       and (.decisions_open | any(.[]; .id == "aging-mate/mate-future-parked") | not)
       and (.decisions_open | any(.[]; .id == "contextual-call"))
@@ -1391,6 +1392,7 @@ EOF
   json=$(run "$home" "$fakebin" --json --all-decisions)
   printf '%s' "$json" | jq -e '
     (.decisions_open | any(.id == "reveal-blocked"
+      and .hold_bucket == "blocked" and .title == "Blocked parked call"
       and (.summary | contains("blocked-by missing-blocker-1234567890123456789012345678901234567890"))))
   ' >/dev/null || fail "a revealed blocked hold must show its complete blocked-by identity: $json"
   printf '%s' "$json" | jq -e '
@@ -1401,6 +1403,8 @@ EOF
   ' >/dev/null || fail "a revealed aged hold must show its age: $json"
   printf '%s' "$json" | jq -e '
     (.decisions_open | any(.id == "reveal-live"
+       and .hold_bucket == "live"
+       and .title == "123456789012345678901234567890123456789012345678901234567890"
        and .summary == "123456789012345678901234567890123456789012345678901234567890: choose A"
        and (.summary | contains("blocked-by") or contains("until ") or contains("held ") | not)))
   ' >/dev/null || fail "a long-titled live call must remain complete and unannotated: $json"
