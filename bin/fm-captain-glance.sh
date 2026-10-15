@@ -7,6 +7,8 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=bin/fm-supervisor-target-lib.sh
+. "$SCRIPT_DIR/fm-supervisor-target-lib.sh"
 FM_HOME=${FM_HOME:-${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}}
 STATE=${FM_STATE_OVERRIDE:-$FM_HOME/state}
 SNAPSHOT=
@@ -58,7 +60,7 @@ ADDED=$(printf '%s' "$MODEL" | jq -r '.added | length')
 SUMMARY=$(printf '%s' "$MODEL" | jq -r '"\(.added | length) new item(s) need you: \(.added[0].item)"')
 if [ -n "${FM_GLANCE_NOTIFY_EXEC:-}" ]; then
   "$FM_GLANCE_NOTIFY_EXEC" "$SUMMARY" || true
-elif [ "${FM_SUPERVISOR_BACKEND:-}" = herdr ] || { [ "${HERDR_ENV:-}" = 1 ] && [ -n "${HERDR_PANE_ID:-}" ] && [ -z "${TMUX_PANE:-}" ]; }; then
+elif [ "$(discover_supervisor_backend || true)" = herdr ]; then
   if command -v herdr >/dev/null 2>&1; then herdr notification show "$SUMMARY" >/dev/null 2>&1 || true; fi
 elif [ "$(uname)" = Darwin ] && command -v osascript >/dev/null 2>&1; then
   osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title "Firstmate"' -e 'end run' "$SUMMARY" >/dev/null 2>&1 || true
