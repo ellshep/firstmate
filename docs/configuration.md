@@ -160,6 +160,32 @@ The Claude Code mod reloads it on every `session.start`, including same-process 
 It also loads the preference lazily before any row that can draw ahead of that event, including during `claude --continue` restoration.
 This preference is local to each Firstmate home and is not part of secondmate inherited configuration.
 
+## Captain glance status line
+
+`bin/fm-captain-glance.sh` projects the existing Bearings snapshot into `state/captain-glance.json` after each handled wake.
+It records the number of live captain calls and captain-owned contributions, one short action, and the number of workers under way.
+It posts one Herdr notification for newly added action keys when the supervisor backend is Herdr, or one macOS notification on other backends.
+Removals and unchanged action sets are silent.
+The optional Claude Code reader marks a snapshot stale after ten minutes.
+Set `FM_CAPTAIN_GLANCE_DISABLE=1` to skip this automatic refresh (see "Environment variables" below).
+
+To show the line under the prompt, add this `statusLine` field to your private `~/.claude/settings.json`, replacing the command path with your Firstmate checkout path:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "/path/to/firstmate/bin/fm-captain-glance-line.sh",
+    "refreshInterval": 30
+  }
+}
+```
+
+Set `FM_HOME` in the Claude Code environment when your operational home differs from that checkout.
+The reader ignores Claude Code's stdin and only reads the home-local glance file, so other harnesses can use it too.
+The setting is private and optional; the shared repository does not enable it.
+Claude Code's [status line reference](https://code.claude.com/docs/en/statusline) owns the settings format and refresh behavior.
+
 ## Pi supervision branch
 
 On a Pi primary, an in-process supervision branch handles eligible task-local wake rows and selected heartbeat reviews.
@@ -2546,6 +2572,9 @@ FM_INBOX_REGION=        # overrides config/inbox-region for fm-inbox.sh say and 
 FM_INBOX_STT_MODEL=     # overrides config/inbox-stt-model for fm-inbox.sh say
 FM_INBOX_ASK_MODEL=     # overrides config/inbox-ask-model for fm-inbox.sh ask
 FM_INBOX_PROFILE=       # overrides config/inbox-profile; explicitly empty forces ambient credentials
+# captain glance status line; see "Captain glance status line" above
+FM_CAPTAIN_GLANCE_DISABLE=0   # set to 1 to skip the automatic background fm-captain-glance.sh refresh that bin/fm-wake-drain.sh forks after a handled --ack-through wake
+FM_GLANCE_NOTIFY_EXEC=   # notifier seam: route the new-action summary through this command instead of herdr/osascript; mainly for tests
 ```
 
 `fm-teardown.sh` retries only Git's `Unable to create '...index.lock': File exists` return failure up to `FM_TREEHOUSE_RETURN_LOCK_RETRIES` times.

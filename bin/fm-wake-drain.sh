@@ -967,6 +967,11 @@ if [ -n "$ACK_THROUGH" ]; then
     printf 'wake drain: acknowledged wakes through %s (%s row(s) consumed), but a newer recovery episode is pending; re-run bin/fm-wake-drain.sh and use the new WAKE_ACK_REQUIRED command\n' \
       "$ACK_THROUGH" "$ACK_REMOVED" >&2
   fi
+  # Refresh the optional captain glance after a handled wake without delaying
+  # or changing the acknowledgement result.
+  if [ "${FM_CAPTAIN_GLANCE_DISABLE:-0}" != 1 ]; then
+    ("$SCRIPT_DIR/fm-captain-glance.sh" >/dev/null 2>&1) &
+  fi
   exit 0
 fi
 
