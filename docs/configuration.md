@@ -167,6 +167,7 @@ It records the number of live captain calls and captain-owned contributions, one
 It posts one Herdr notification for newly added action keys when the supervisor backend is Herdr, or one macOS notification on other backends.
 Removals and unchanged action sets are silent.
 The optional Claude Code reader marks a snapshot stale after ten minutes.
+Set `FM_CAPTAIN_GLANCE_DISABLE=1` to skip this automatic refresh (see "Environment variables" below).
 
 To show the line under the prompt, add this `statusLine` field to your private `~/.claude/settings.json`, replacing the command path with your Firstmate checkout path:
 
@@ -2571,6 +2572,9 @@ FM_INBOX_REGION=        # overrides config/inbox-region for fm-inbox.sh say and 
 FM_INBOX_STT_MODEL=     # overrides config/inbox-stt-model for fm-inbox.sh say
 FM_INBOX_ASK_MODEL=     # overrides config/inbox-ask-model for fm-inbox.sh ask
 FM_INBOX_PROFILE=       # overrides config/inbox-profile; explicitly empty forces ambient credentials
+# captain glance status line; see "Captain glance status line" above
+FM_CAPTAIN_GLANCE_DISABLE=0   # set to 1 to skip the automatic background fm-captain-glance.sh refresh that bin/fm-wake-drain.sh forks after a handled --ack-through wake
+FM_GLANCE_NOTIFY_EXEC=   # notifier seam: route the new-action summary through this command instead of herdr/osascript; mainly for tests
 ```
 
 `fm-teardown.sh` retries only Git's `Unable to create '...index.lock': File exists` return failure up to `FM_TREEHOUSE_RETURN_LOCK_RETRIES` times.
