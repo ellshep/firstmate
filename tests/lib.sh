@@ -52,6 +52,13 @@ export FM_GATE_REFUSE_BYPASS=1
 # leaked harness pin alone stays inert outside a suite.
 export FM_TEST_SEAM=1
 
+# Suppress the captain-glance background fork that bin/fm-wake-drain.sh's
+# --ack-through success path spawns by default. Every suite that drains a
+# wake through this library would otherwise additionally fork an unmocked
+# subprocess tree racing its own tmp FM_HOME teardown. A test that exercises
+# the glance feature itself unsets this.
+export FM_CAPTAIN_GLANCE_DISABLE=1
+
 # Clear the task-worker marker bin/fm-spawn.sh exports into ship and scout
 # panes. This suite builds git-init fixture repositories whose primary checkout
 # it runs a copied bin/fm-test-run.sh in, and that runner refuses the primary
