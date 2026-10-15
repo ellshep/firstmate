@@ -566,7 +566,8 @@ use strict; use warnings;
 #
 # lavish_result(<path>, <block-name-regex>) returns
 # (form, declared, [item hashes], malformed), with form one of none, table,
-# list, or unrecognized.
+# list, unrecognized for a malformed content header, or unexpected for an
+# unrelated top-level line under strict reading.
 sub lavish_unescape {
   my ($v) = @_;
   $v =~ s/\\(.)/$1 eq "n" ? "\n" : $1 eq "t" ? "\t" : $1 eq "r" ? "\r" : $1/ge;
@@ -684,7 +685,7 @@ sub lavish_result {
       if ($line !~ /^(?:$names)/) {
         if ($strict && $line !~ /^\s/ && $line !~ /^session:\s*$/
             && $line !~ /^(?:error|code):/) {
-          $form = "unrecognized";
+          $form = "unexpected";
           last;
         }
         next;
@@ -705,7 +706,7 @@ sub lavish_result {
     push @body, $line;
   }
   close $fh;
-  return ($form, $want, [], 1) if $form eq "unrecognized";
+  return ($form, $want, [], 1) if $form eq "unrecognized" || $form eq "unexpected";
   return ($form, $want, [], 0) if $form eq "none";
   my ($items, $malformed) = $form eq "table"
     ? lavish_table_rows(\@fields, \@body)
@@ -896,7 +897,7 @@ cmd_read() {
     defined $form or exit 1;
     die "unrecognized Lavish result lifecycle: $lifecycle\n"
       unless $lifecycle =~ /\A(?:feedback|ended|waiting|disconnected|missing)\z/;
-    die "unrecognized Lavish result shape\n" if $form eq "unrecognized";
+    die "unrecognized Lavish result shape\n" if $form eq "unexpected";
     die "unrecognized Lavish feedback shape: missing content block\n"
       if $form eq "none" && $lifecycle eq "feedback";
     my @parsed = @$items;
