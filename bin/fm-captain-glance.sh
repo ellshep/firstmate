@@ -40,6 +40,17 @@ if [ -f "$PREVIOUS" ]; then
 fi
 MODEL=$(jq -c --argjson now "$NOW" --argjson notified "$OLD_NOTIFIED" '
   def short: tostring | gsub("[\\r\\n\\t]+"; " ") | .[:72];
+  def action_title:
+    tostring | gsub("\\s+"; " ") | gsub("^ +| +$"; "")
+    | if length <= 72 then .
+      else . as $title
+        | ($title[:71] | sub(" +[^ ]*$"; "")) as $whole_words
+        | (if $whole_words == "" then $title[:71] else $whole_words end) + "…"
+      end;
+  ([.decisions_open[]? | select(.hold_bucket == "live") | (.title // "Captain decision")]
+   + [.contributions.captain[]? | if .kind == "pr" then "Approve pull request" else "Review contribution" end]
+   | first // null) as $next_action
+  |
   ([.decisions_open[]? | {key:("decision:" + (.owner // "main") + ":" + (.key // .id)),
       item:((.summary // .id // "decision") | short)}]
    + [.contributions.captain[]? | {key:("contribution:" + (.owner // "main") + ":" + .task + ":" + .url),
@@ -54,7 +65,7 @@ MODEL=$(jq -c --argjson now "$NOW" --argjson notified "$OLD_NOTIFIED" '
   | (.in_flight | length) as $running
   | {schema:"fm-captain-glance.v1",updated:$now,needs:$unique,added:$added,notified:$kept_notified,running:$running,
      line:("⚑ \($unique | length) need you · ▶ \($running) running"
-       + (if ($unique | length) > 0 then " · " + ($unique[0].item | short) else "" end))}
+       + (if $next_action != null then " · " + ($next_action | action_title) else "" end))}
 ' "$TMP")
 printf '%s\n' "$MODEL" > "$TMP"
 chmod 0600 "$TMP"
