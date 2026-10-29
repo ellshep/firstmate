@@ -1438,6 +1438,8 @@ case "${plan[$i]}" in
     printf 'error: Lavish Editor poll response was interrupted\ncode: SERVER_ERROR\n%s' "$LAVISH_HELP_LINE"; exit 1 ;;
   interrupt-help-extra)
     printf 'error: Lavish Editor poll response was interrupted\ncode: SERVER_ERROR\n%sextra\n' "$LAVISH_HELP_LINE"; exit 1 ;;
+  interrupt-help-help)
+    printf 'error: Lavish Editor poll response was interrupted\ncode: SERVER_ERROR\n%s%s' "$LAVISH_HELP_LINE" "$LAVISH_HELP_LINE"; exit 1 ;;
   near-interrupt)
     printf 'error: Lavish Editor poll response was interrupted \ncode: SERVER_ERROR\n'; exit 1 ;;
   other-server-error)
@@ -1711,6 +1713,28 @@ assert_grep 'extra' "$(first_result "$HEXTRA" "$extra_id")" \
 PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HEXTRA" \
   "$ROOT/bin/fm-procevent-lavish.sh" retire "$EXTRA_ART" >/dev/null
 pass "trailing content beyond the help lines keeps the interruption out of the quiet retry policy"
+
+# lavish-axi 0.1.80 appends exactly one help line; a second one is not that
+# shape and must surface on the first poll instead of entering the quiet
+# retry policy.
+HHELP2="$TMP_ROOT/hhelp2"; new_home "$HHELP2"
+HELP2_ART="$TMP_ROOT/help2-board.html"
+printf '<h1>help2</h1>\n' > "$HELP2_ART"
+lavish_session "$HELP2_ART"
+help2_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$HELP2_ART")
+fm_test_track_procevent_home "$HHELP2"
+LAVISH_COUNT="$TMP_ROOT/help2-count"; LAVISH_SCRIPT="interrupt-help-help feedback"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HHELP2" FM_LAVISH_POLL_RETRY_DELAY=1 \
+  "$ROOT/bin/fm-procevent-lavish.sh" arm "$HELP2_ART" >/dev/null
+wait_for "$HHELP2/state/.wake-queue" \
+  || fail "an interruption with two help lines is captured and announced immediately"
+[ "$(cat "$LAVISH_COUNT")" = 1 ] \
+  || fail "an interruption with two help lines was retried instead of surfacing on its first poll"
+assert_contains "$(wake_payloads "$HHELP2")" "procevent lavish $help2_id 1" \
+  "an interruption with two help lines is captured and announced immediately"
+PATH="$LAVISH_SCRIPTED_BIN:$PATH" FM_HOME="$HHELP2" \
+  "$ROOT/bin/fm-procevent-lavish.sh" retire "$HELP2_ART" >/dev/null
+pass "a second help line keeps the interruption out of the quiet retry policy"
 
 # The public arm boundary refuses invalid retry intervals before it publishes a
 # source registration, rather than arming a listener that can only fail later.

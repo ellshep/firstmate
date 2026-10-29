@@ -124,8 +124,8 @@
 #
 # BOUNDED QUIET RETRY, owned here and nowhere else. A live listener can be cut
 # short by the server with exactly this two-line response, optionally followed
-# by `help[N]: ...` lines (lavish-axi 0.1.80 always appends one), while the
-# session's marks remain available:
+# by a single `help[N]: ...` line (lavish-axi 0.1.80 always appends one), while
+# the session's marks remain available:
 #
 #   error: Lavish Editor poll response was interrupted
 #   code: SERVER_ERROR
@@ -322,10 +322,10 @@ POLL_RETRY_DELAY_DEFAULT=5
 POLL_RETRY_DELAY_MIN=1
 POLL_RETRY_DELAY_MAX=60
 
-# Exit 10 only for the exact two-line interruption, optionally followed by
-# complete `help[N]: ` lines totalling at most 4096 bytes, and nothing else:
-# whitespace variants, any other trailing content, and any other SERVER_ERROR
-# are genuine errors this adapter must never swallow.
+# Exit 10 only for the exact two-line interruption, optionally followed by a
+# single complete `help[N]: ` line of at most 4096 bytes, and nothing else:
+# whitespace variants, any other trailing content, a second help line, and any
+# other SERVER_ERROR are genuine errors this adapter must never swallow.
 poll_response_filter() {  # <response-file>
   perl -e '
     use strict;
@@ -346,7 +346,7 @@ poll_response_filter() {  # <response-file>
       return 0 unless substr($c, 0, length $expected) eq $expected;
       my $rest = substr($c, length $expected);
       return 0 if length($rest) > $help_max;
-      return $rest =~ /\A(?:$help)*(?:h(?:e(?:l(?:p(?:\[(?:[0-9]+(?:\](?::(?: [^\n]*)?)?)?)?)?)?)?)?)?\z/ ? 1 : 0;
+      return $rest =~ /\A(?:$help)?(?:h(?:e(?:l(?:p(?:\[(?:[0-9]+(?:\](?::(?: [^\n]*)?)?)?)?)?)?)?)?)?\z/ ? 1 : 0;
     }
     sub write_all {
       my ($handle, $bytes) = @_;
@@ -382,7 +382,7 @@ poll_response_filter() {  # <response-file>
         last;
       }
     }
-    exit 10 if !$streaming && $candidate =~ /\A\Q$expected\E(?:$help)*\z/;
+    exit 10 if !$streaming && $candidate =~ /\A\Q$expected\E(?:$help)?\z/;
     write_all(*STDOUT, $candidate) unless $streaming;
   ' "$1"
 }
