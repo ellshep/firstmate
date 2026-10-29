@@ -1014,7 +1014,7 @@ test_github_enterprise_hosts() {
   : > "$dir/gh.log"
   run_merge_entry "$dir" task-a "$url" > "$dir/stdout" 2> "$dir/stderr" \
     || fail "merge entrypoint refused a configured GitHub Enterprise URL: $(cat "$dir/stderr")"
-  grep -qxF 'pr merge 7 --repo Org/repo --match-head-commit 0123456789abcdef0123456789abcdef01234567 --squash' \
+  grep -qxF 'pr merge 7 --repo Org/repo --match-head-commit 0123456789abcdef0123456789abcdef01234567 --merge' \
     "$dir/gh.log" || fail "merge wrapper did not derive owner and repository for a GitHub Enterprise pull request"
   grep -qxF 'host=leadsonline.ghe.com' "$dir/gh.log" \
     || fail "no merge read addressed the GitHub Enterprise host"
