@@ -123,11 +123,13 @@
 # legacy poll-with-reply path, without the synchronous handoff guarantee.
 #
 # BOUNDED QUIET RETRY, owned here and nowhere else. A live listener can be cut
-# short by the server with exactly this two-line response while the session's
-# marks remain available:
+# short by the server with exactly this two-line response, optionally followed
+# by `help[N]: ...` lines (lavish-axi 0.1.80 always appends one), while the
+# session's marks remain available:
 #
 #   error: Lavish Editor poll response was interrupted
 #   code: SERVER_ERROR
+#   help[2]: Run `lavish-axi server --verbose` or inspect ...
 #
 # That is an internal retry, not news, so registering the raw poll made the
 # generic runner capture it and wake the whole fleet. `poll` therefore re-runs
@@ -320,10 +322,10 @@ POLL_RETRY_DELAY_DEFAULT=5
 POLL_RETRY_DELAY_MIN=1
 POLL_RETRY_DELAY_MAX=60
 
-# Exit 0 only for the exact two-line interruption, and nothing else. The whole
-# response must be those two lines with those exact bytes: whitespace variants,
-# a longer response that merely opens with them, and any other SERVER_ERROR are
-# genuine errors this adapter must never swallow.
+# Exit 10 only for the exact two-line interruption, optionally followed by
+# complete `help[N]: ` lines totalling at most 4096 bytes, and nothing else:
+# whitespace variants, any other trailing content, and any other SERVER_ERROR
+# are genuine errors this adapter must never swallow.
 poll_response_filter() {  # <response-file>
   perl -e '
     use strict;
@@ -334,7 +336,18 @@ poll_response_filter() {  # <response-file>
     binmode STDIN;
     binmode STDOUT;
     binmode $staged;
+    my $help_max = 4096;
+    my $help = qr/help\[[0-9]+\]: [^\n]*\n/;
     my ($candidate, $streaming) = ("", 0);
+    # Could $candidate still grow into the interruption, with or without help?
+    sub may_match {
+      my ($c) = @_;
+      return substr($expected, 0, length $c) eq $c if length($c) <= length($expected);
+      return 0 unless substr($c, 0, length $expected) eq $expected;
+      my $rest = substr($c, length $expected);
+      return 0 if length($rest) > $help_max;
+      return $rest =~ /\A(?:$help)*(?:h(?:e(?:l(?:p(?:\[(?:[0-9]+(?:\](?::(?: [^\n]*)?)?)?)?)?)?)?)?)?\z/ ? 1 : 0;
+    }
     sub write_all {
       my ($handle, $bytes) = @_;
       my $offset = 0;
@@ -352,20 +365,24 @@ poll_response_filter() {  # <response-file>
         write_all(*STDOUT, $chunk);
         next;
       }
-      my $room = length($expected) + 1 - length($candidate);
-      my $take = length($chunk) < $room ? length($chunk) : $room;
-      my $prefix = substr($chunk, 0, $take);
-      $candidate .= $prefix;
-      write_all($staged, $prefix);
-      my $matches_prefix = length($candidate) <= length($expected)
-        && substr($expected, 0, length($candidate)) eq $candidate;
-      if (!$matches_prefix) {
+      # Stage only while the response can still be the interruption: up to the
+      # two exact lines plus one byte first, and the bounded help lines after.
+      while (length $chunk) {
+        my $limit = length($candidate) < length($expected)
+          ? length($expected) + 1 : length($expected) + $help_max + 1;
+        my $room = $limit - length($candidate);
+        my $take = length($chunk) < $room ? length($chunk) : $room;
+        my $prefix = substr($chunk, 0, $take, "");
+        $candidate .= $prefix;
+        write_all($staged, $prefix);
+        next if may_match($candidate) && $take;
         write_all(*STDOUT, $candidate);
-        write_all(*STDOUT, substr($chunk, $take));
+        write_all(*STDOUT, $chunk);
         $streaming = 1;
+        last;
       }
     }
-    exit 10 if !$streaming && $candidate eq $expected;
+    exit 10 if !$streaming && $candidate =~ /\A\Q$expected\E(?:$help)*\z/;
     write_all(*STDOUT, $candidate) unless $streaming;
   ' "$1"
 }
