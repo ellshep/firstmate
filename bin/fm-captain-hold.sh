@@ -200,9 +200,10 @@
 # one captain call. See "record divergence" beside command_diverged below.
 #
 # Resolution records: the block written into the body names this script, the
-# decision digest, and a `Resolution mode:` of answered, released, repaired, or
-# reconciled. A dated deferral has a separate nonterminal record, so it does not
-# consume the parent's keyed decision occurrence or count as a closed answer.
+# decision digest, and a `Resolution mode:` of answered, released, repaired,
+# reconciled, or deferred. A dated deferral has a separate nonterminal record,
+# so it does not consume the parent's keyed decision occurrence or count as a
+# closed answer.
 # Records written by the retired fm-decision-hold.sh (routed,
 # declined, answered, repaired) are recognized everywhere a record is read, so
 # nothing already closed needs rewriting.

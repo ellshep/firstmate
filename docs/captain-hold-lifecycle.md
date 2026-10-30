@@ -34,7 +34,7 @@ It never reads report bodies, review artifacts, terminal output, or chat.
 | Subcommand | What it does | Details |
 | --- | --- | --- |
 | `hold` | Creates or reuses a task and holds it for the captain. | [Creating a hold](#creating-a-hold-hold) |
-| `answer` | Records the captain's exact words and resolves the call. | [Answering a call](#answering-a-call-answer) |
+| `answer` | Records the captain's exact words and applies the selected mode (close, release, or a dated deferral). | [Answering a call](#answering-a-call-answer) |
 | `complete` | Records the reviewed captain-held task ids in the originating task's metadata. | [Recording a reviewed inventory](#recording-a-reviewed-inventory-complete) |
 | `verify` | Read-only check that scout teardown runs before removing source state. | [Checking before scout teardown](#checking-before-scout-teardown-verify) |
 | `open` | Read-only check of whether a row is still an open captain call. | [Cleanup never closes a captain call](#cleanup-never-closes-a-captain-call) |
@@ -91,7 +91,7 @@ A matching retry also completes any resolution-first normalization left unfinish
 
 ### Answer retries and tasks closed elsewhere
 
-- An exact retry is idempotent only when the requested close mode matches the newest record.
+- An exact retry is idempotent only when the requested mode matches the newest record.
 - A drifted answer or a mode mismatch is rejected.
 - A re-held task accepts a new answer as a new record on top.
 
@@ -537,7 +537,8 @@ The suite does not test the accepted merge-to-cleanup re-hold window or asynchro
 ### Answers, stamps, and deferral
 
 - Answer-time handling works through a bound channel with task-id keys.
-  This includes the `release` mode, mode-matched replay idempotence, and the refusal of drifted, mode-mismatched, absent, unheld, and already-closed keys.
+  This includes the `release` mode, a dated `defer:` mode that keeps the call open with an updated hold date, mode-matched replay idempotence, and the refusal of drifted, mode-mismatched, absent, unheld, and already-closed keys.
+- The captured board channel applies a dated deferral without closing the call, skips undated `later` answers, rejects mode-mismatched replays, and reports an exact deferral replay as `deferred:`.
 - The chat channel reaches the same intake.
 - Hold-set stamping precedes visible hold state, preserves an active lifecycle's timestamp, and resets after release.
 - Interrupted answer closure retains the stamp until close and restores resolution-first ordering on retry.
@@ -614,9 +615,10 @@ The captured-source coverage proves:
 
 ### Board suite
 
-The board's half is pinned in `tests/fm-bearings-board.test.sh`:
+The board's half is pinned in `tests/fm-bearings-board.test.sh` and `tests/fm-bearings-board-render.test.sh`:
 
 - Every published decision card carries exactly one reconcile option.
+- A decision option's optional `defer_until` must be a validated calendar date, and only decision cards may carry it.
 - Authored options reserve that value across every card type.
 - Recommendations name authored options.
 - A decision card whose structured subject appears in the payload's landed rows is dropped.
@@ -624,6 +626,7 @@ The board's half is pinned in `tests/fm-bearings-board.test.sh`:
 - A build requires a fresh authoritative listed-open result before binding or arming.
 - A reopen retires the pre-reopen source generation and waits for a fresh live listener.
 - A rebuild of an already-armed board with no live listener starts one.
+- The render suite exercises the shipped template so a dated later option shows its revisit date and queues `close: defer:YYYY-MM-DD` answer context.
 
 That suite drives its Lavish session through a protocol-shaped stub.
 `tests/fm-bearings-board-lavish-live-e2e.test.sh` is the default-on capability guard for the installed provider, and [`verification/process-event-sources.md`](verification/process-event-sources.md) owns the version-scoped evidence.
@@ -648,7 +651,7 @@ The exact commands and their summarized outputs are recorded in the shipping PR'
 To refresh this record, run:
 
 - The four suites above: `tests/fm-captain-hold-lifecycle.test.sh`, `tests/fm-classify-decision-key.test.sh`, `tests/fm-fleet-snapshot-view.test.sh`, and `tests/fm-bearings-snapshot.test.sh`.
-- `tests/fm-send-resolve-key.test.sh`, `tests/fm-bearings-board.test.sh`, and `tests/fm-procevent.test.sh`.
+- `tests/fm-send-resolve-key.test.sh`, `tests/fm-bearings-board.test.sh`, `tests/fm-bearings-board-render.test.sh`, and `tests/fm-procevent.test.sh`.
 - `bin/fm-lint.sh`.
 
 After a lavish-axi upgrade, run `FM_BEARINGS_LAVISH_LIVE=1 tests/fm-bearings-board-lavish-live-e2e.test.sh`.
