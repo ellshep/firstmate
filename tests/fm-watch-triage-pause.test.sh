@@ -874,6 +874,50 @@ test_reheld_captain_call_starts_its_own_resurface_window() {
   pass "a released-then-re-held task is a distinct captain call whose first sight still alarms"
 }
 
+# config/wedge-defer-worker-wait governs a stale window only when NO open
+# captain call bounds it first (terminal_wait_stale_bound checks
+# captain_call_stale_bound before falling back to the status-signature-only
+# worker-wait declaration). A needs-decision line never changes across
+# answer/release/re-hold, so if that ordering were reversed and the
+# worker-wait declaration were consulted on its own, the second captain call
+# would inherit the first call's silence through the byte-identical status
+# signature even though it is a brand new call. Pinned with both records -
+# the worker-wait flag AND an open captain call - standing at once.
+test_captain_call_outranks_worker_wait_status_signature() {
+  local dir state out capture wakes
+  command -v tasks-axi >/dev/null 2>&1 \
+    || fail "tasks-axi is required (captain call vs worker-wait precedence)"
+  dir=$(make_hold_home captain-outranks-worker-wait \
+    'needs-decision [key=review]: awaiting firstmate' hold) \
+    || fail "could not build a captain-held backlog fixture"
+  state="$dir/state"; out="$dir/watch.out"; capture="$dir/pane.txt"
+  : > "$dir/config/wedge-defer-worker-wait"
+
+  hold_watch_surface "$dir" "$out" "$capture" 'idle, elapsed 1s' \
+    || fail "first sight of the first captain call did not surface"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the first call's surface"
+  hold_watch_churn "$dir" "$out" "$capture" 'idle, tick' 1 \
+    || fail "the first call's churn was not absorbed"
+  [ "$(hold_stale_wakes "$state")" -eq 0 ] \
+    || fail "the first call's churn re-alarmed inside its own window"
+
+  # Answer and release, then re-hold: a second, distinct captain call on the
+  # same task id, with NO status append, so the needs-decision line the
+  # worker-wait bound would key on stays byte-identical across both calls.
+  printf 'go ahead\n' > "$dir/decision.txt"
+  run_hold "$dir" answer held-merge --decision-file "$dir/decision.txt" --release \
+    || fail "could not record the captain's answer"
+  run_hold "$dir" hold held-merge --reason 'awaiting the captain a second time' \
+    || fail "could not re-hold the task as a second captain call"
+
+  hold_watch_surface "$dir" "$out" "$capture" 'idle, elapsed 3s' \
+    || fail "the second captain call inherited the first call's silence through the unchanged worker-wait status signature"
+  wakes=$(hold_stale_wakes "$state")
+  [ "$wakes" -eq 1 ] \
+    || fail "the second captain call produced $wakes first wakes instead of one"
+  pass "an open captain call's own identity, not the unchanged worker-wait status signature, owns the re-surface throttle"
+}
+
 
 test_secondmate_paused_resurfaces_in_normal_mode() {
   local dir state fakebin out capture_file statusf window key pane_hash sig pid back
@@ -1530,6 +1574,7 @@ fm_test_run \
   test_stale_churn_without_a_captain_call_still_alarms \
   test_failed_wake_append_does_not_arm_the_captain_hold_throttle \
   test_reheld_captain_call_starts_its_own_resurface_window \
+  test_captain_call_outranks_worker_wait_status_signature \
   test_secondmate_paused_resurfaces_in_normal_mode \
   test_secondmate_captain_held_resurfaces_in_normal_mode \
   test_secondmate_nonpaused_stale_remains_suppressed \
