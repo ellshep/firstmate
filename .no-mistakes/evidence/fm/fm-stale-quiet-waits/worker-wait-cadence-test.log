@@ -1,0 +1,1 @@
+ok - an idle pane with an open worker decision or blocker absorbs hash churn, rechecks on cadence, and resumes alerts after the wait ends

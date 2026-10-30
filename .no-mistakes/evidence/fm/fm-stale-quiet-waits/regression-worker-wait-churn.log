@@ -1,0 +1,3 @@
+=== regression worker-wait pane churn ===
+base second-round stale wakes=1 triage=stale: test:fm-worker-wait
+fixed second-round stale wakes=0 triage=

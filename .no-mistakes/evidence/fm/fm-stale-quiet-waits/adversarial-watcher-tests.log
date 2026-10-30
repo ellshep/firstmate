@@ -1,0 +1,6 @@
+=== test_stale_churn_without_a_captain_call_still_alarms ===
+ok - a stale window with no open captain call keeps alarming on every new hash
+=== test_nonterminal_stale_not_working_surfaced ===
+ok - a not-provably-working non-terminal stale is surfaced immediately (never left to wait out the timer)
+=== test_open_captain_call_bounds_stale_churn ===
+ok - work under an open captain call surfaces once, absorbs pane churn, then re-surfaces when the window elapses
