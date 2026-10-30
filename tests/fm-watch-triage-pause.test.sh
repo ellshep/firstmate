@@ -425,6 +425,54 @@ parked_watch_round() {  # <state> <fakebin> <out> <capture> <window> <exit|absor
   return 0
 }
 
+test_live_worker_decision_churn_honors_wait_cadence() {
+  local verb dir state fakebin out capture statusf window key sig wakes throttle
+  for verb in needs-decision blocked; do
+    dir=$(make_case "live-$verb-churn"); state="$dir/state"; fakebin="$dir/fakebin"
+    out="$dir/watch.out"; capture="$dir/pane.txt"; statusf="$state/parked.status"
+    window="test:fm-worker-wait"; key=$(printf '%s' "$window" | tr ':/.' '___')
+    throttle="$state/.paused-resurfaced-$key"
+    mkdir -p "$dir/config"
+    : > "$dir/config/wedge-defer-worker-wait"
+    printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/parked.meta"
+    printf '%s [key=review]: awaiting firstmate\n' "$verb" > "$statusf"
+    sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+
+    printf 'idle prompt, quota footer 1' > "$capture"
+    printf '%s' "$(hash_text "$(cat "$capture")")" > "$state/.hash-$key"
+    printf '1\n' > "$state/.count-$key"
+    FM_CONFIG_OVERRIDE="$dir/config" parked_watch_round "$state" "$fakebin" "$out" "$capture" "$window" exit \
+      || fail "[$verb] first sight did not surface"
+    ack_stopped_cycle "$state" || fail "[$verb] could not acknowledge first sight"
+
+    printf 'idle prompt, quota footer 2' > "$capture"
+    FM_CONFIG_OVERRIDE="$dir/config" parked_watch_round "$state" "$fakebin" "$out" "$capture" "$window" absorb \
+      || fail "[$verb] repeated stale on a changed pane hash: $(cat "$out")"
+    wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
+      "$state/.wake-queue" 2>/dev/null || echo 0)
+    [ "$wakes" -eq 0 ] || fail "[$verb] queued a repeated stale inside the wait cadence"
+    [ -e "$throttle" ] || fail "[$verb] first sight recorded no wait throttle"
+    ack_stopped_cycle "$state" || fail "[$verb] could not acknowledge quiet round"
+
+    set_mtime "$(( $(date +%s) - 5000 ))" "$throttle"
+    printf 'idle prompt, quota footer 3' > "$capture"
+    FM_CONFIG_OVERRIDE="$dir/config" parked_watch_round "$state" "$fakebin" "$out" "$capture" "$window" exit \
+      || fail "[$verb] did not recheck after the wait cadence"
+    ack_stopped_cycle "$state" || fail "[$verb] could not acknowledge recheck"
+
+    if [ "$verb" = needs-decision ]; then
+      printf 'resolved [key=review]: firstmate answered\n' >> "$statusf"
+    else
+      printf 'working: resuming after the blocker\n' >> "$statusf"
+    fi
+    sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+    printf 'idle prompt, quota footer 4' > "$capture"
+    FM_CONFIG_OVERRIDE="$dir/config" parked_watch_round "$state" "$fakebin" "$out" "$capture" "$window" exit \
+      || fail "[$verb] stayed quiet after its decision ended or a newer status line arrived"
+  done
+  pass "an idle pane with an open worker decision or blocker absorbs hash churn, rechecks on cadence, and resumes alerts after the wait ends"
+}
+
 # --- a live worker parked on a declared wait: pane churn must not re-alarm ----
 # The 2026-08/09 alarm loop, in both observed forms - a worker parked on the
 # CAPTAIN (captain-held, five consecutive alarms) and one parked on the PIPELINE
@@ -1475,6 +1523,7 @@ fm_test_run \
   test_exited_declared_pause_is_bounded_but_live_gate_surfaces \
   test_own_work_wait_keeps_first_alert_then_long_cadence \
   test_absorbed_replacement_wait_does_not_inherit_the_old_throttle \
+  test_live_worker_decision_churn_honors_wait_cadence \
   test_live_declared_wait_churn_honors_the_resurface_throttle \
   test_live_paused_until_controls_recheck_time \
   test_open_captain_call_bounds_stale_churn \
