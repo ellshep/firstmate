@@ -1003,6 +1003,7 @@ fi
 
 The optional local, gitignored `config/wedge-defer-worker-wait` presence flag opts this home into a default-off form of wait evidence in the watcher's wedge timer.
 With it present, a provably-working pane about to escalate is deferred to the `FM_PAUSE_RESURFACE_SECS` recheck cadence when its newest status line is the worker's own still-open `blocked:` or `needs-decision:` line, and the recheck names firstmate and that verb's clearing action instead of reporting a suspected wedge.
+An idle pane on that same verified line surfaces once, then new pane hashes stay quiet until the recheck cadence expires.
 Lines under supervisor-reserved keys do not count, the escalation count does not rise, and any newer status line or a newer acknowledged steering-inbox record ends the deferral, so an answered lane that never resumes returns to the ladder.
 The away-mode daemon honors the same evidence before it escalates a possible-wedge wake.
 While the flag is present, this verified newest-line evidence replaces the generic open-decision fold absorb for the wedge timer and the away-mode daemon, so its ending rules hold.

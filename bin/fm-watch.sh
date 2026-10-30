@@ -2723,6 +2723,21 @@ captain_call_stale_bound() {  # <window-key> <task>
   stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION"
 }
 
+# A worker's newest open decision or blocker also explains an idle pane's
+# first-sight hash churn. The wedge timer consults this same verified declaration
+# only after its threshold; terminal-status first sights must honor its cadence
+# before a fresh hash can publish another wake. A newer event or an answered key
+# makes status_worker_wait_verb fail, releasing this bound immediately.
+terminal_wait_stale_bound() {  # <window-key> <task>
+  local key=$1 task=$2 verb
+  if captain_call_stale_bound "$key" "$task"; then return 0; fi
+  [ -z "$STALE_WAIT_DECLARATION" ] || return 1
+  [ -e "$CONFIG/wedge-defer-worker-wait" ] || return 1
+  verb=$(status_worker_wait_verb "$STATE/$task.status") || return 1
+  STALE_WAIT_DECLARATION=$(stale_wait_declaration "$task")
+  stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION"
+}
+
 # Surface a stale pane no classifier could resolve, so firstmate inspects it: it
 # may have finished through an interactive menu that wrote no status, be waiting on
 # a decision, or be wedged. pause_state_class deliberately answers `none` for a
@@ -4118,19 +4133,15 @@ EOF
               date +%s > "$ssf"
               clear_write_tracking "$key"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
-            elif captain_call_stale_bound "$key" "$task"; then
-              # The line is captain-relevant and stays so, but the backlog says
-              # the captain already holds this work: further NEW pane hashes with
-              # the same status-log state have nothing to add while they are
-              # deciding. Only that new-hash repetition is bounded - the first
-              # sight already alarmed, a new hash inside the window is absorbed,
-              # and a new hash after it alarms again. A stable hash stays as inert
-              # here as it already was after a first terminal alarm.
+            elif terminal_wait_stale_bound "$key" "$task"; then
+              # A verified open wait already reached firstmate. Further new
+              # hashes with the same declaration add nothing until its recheck
+              # cadence, even when an idle harness footer keeps changing.
               printf '%s' "$h" > "$sf"
               # Pre-cap shape kept the count here (keep-count contract).
               wedge_episode_end "$key" 0 1
               clear_write_tracking "$key"
-              triage_log "absorbed stale (open captain call already surfaced for this status): $w"
+              triage_log "absorbed stale (open wait already surfaced for this status): $w"
             else
               stale_reason=$(stale_reason_naming_dialog "stale: $w" "$dialog")
               fm_wake_append stale "$w" "$stale_reason" || exit 1

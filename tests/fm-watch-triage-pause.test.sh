@@ -425,6 +425,54 @@ parked_watch_round() {  # <state> <fakebin> <out> <capture> <window> <exit|absor
   return 0
 }
 
+test_live_worker_decision_churn_honors_wait_cadence() {
+  local verb dir state fakebin out capture statusf window key sig wakes throttle
+  for verb in needs-decision blocked; do
+    dir=$(make_case "live-$verb-churn"); state="$dir/state"; fakebin="$dir/fakebin"
+    out="$dir/watch.out"; capture="$dir/pane.txt"; statusf="$state/parked.status"
+    window="test:fm-worker-wait"; key=$(printf '%s' "$window" | tr ':/.' '___')
+    throttle="$state/.paused-resurfaced-$key"
+    mkdir -p "$dir/config"
+    : > "$dir/config/wedge-defer-worker-wait"
+    printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/parked.meta"
+    printf '%s [key=review]: awaiting firstmate\n' "$verb" > "$statusf"
+    sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+
+    printf 'idle prompt, quota footer 1' > "$capture"
+    printf '%s' "$(hash_text "$(cat "$capture")")" > "$state/.hash-$key"
+    printf '1\n' > "$state/.count-$key"
+    FM_CONFIG_OVERRIDE="$dir/config" parked_watch_round "$state" "$fakebin" "$out" "$capture" "$window" exit \
+      || fail "[$verb] first sight did not surface"
+    ack_stopped_cycle "$state" || fail "[$verb] could not acknowledge first sight"
+
+    printf 'idle prompt, quota footer 2' > "$capture"
+    FM_CONFIG_OVERRIDE="$dir/config" parked_watch_round "$state" "$fakebin" "$out" "$capture" "$window" absorb \
+      || fail "[$verb] repeated stale on a changed pane hash: $(cat "$out")"
+    wakes=$(awk -F '\t' -v w="$window" '$3 == "stale" && $4 == w { n++ } END { print n + 0 }' \
+      "$state/.wake-queue" 2>/dev/null || echo 0)
+    [ "$wakes" -eq 0 ] || fail "[$verb] queued a repeated stale inside the wait cadence"
+    [ -e "$throttle" ] || fail "[$verb] first sight recorded no wait throttle"
+    ack_stopped_cycle "$state" || fail "[$verb] could not acknowledge quiet round"
+
+    set_mtime "$(( $(date +%s) - 5000 ))" "$throttle"
+    printf 'idle prompt, quota footer 3' > "$capture"
+    FM_CONFIG_OVERRIDE="$dir/config" parked_watch_round "$state" "$fakebin" "$out" "$capture" "$window" exit \
+      || fail "[$verb] did not recheck after the wait cadence"
+    ack_stopped_cycle "$state" || fail "[$verb] could not acknowledge recheck"
+
+    if [ "$verb" = needs-decision ]; then
+      printf 'resolved [key=review]: firstmate answered\n' >> "$statusf"
+    else
+      printf 'working: resuming after the blocker\n' >> "$statusf"
+    fi
+    sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+    printf 'idle prompt, quota footer 4' > "$capture"
+    FM_CONFIG_OVERRIDE="$dir/config" parked_watch_round "$state" "$fakebin" "$out" "$capture" "$window" exit \
+      || fail "[$verb] stayed quiet after its decision ended or a newer status line arrived"
+  done
+  pass "an idle pane with an open worker decision or blocker absorbs hash churn, rechecks on cadence, and resumes alerts after the wait ends"
+}
+
 # --- a live worker parked on a declared wait: pane churn must not re-alarm ----
 # The 2026-08/09 alarm loop, in both observed forms - a worker parked on the
 # CAPTAIN (captain-held, five consecutive alarms) and one parked on the PIPELINE
@@ -824,6 +872,50 @@ test_reheld_captain_call_starts_its_own_resurface_window() {
   [ "$wakes" -eq 1 ] \
     || fail "the second captain call produced $wakes first wakes instead of one"
   pass "a released-then-re-held task is a distinct captain call whose first sight still alarms"
+}
+
+# config/wedge-defer-worker-wait governs a stale window only when NO open
+# captain call bounds it first (terminal_wait_stale_bound checks
+# captain_call_stale_bound before falling back to the status-signature-only
+# worker-wait declaration). A needs-decision line never changes across
+# answer/release/re-hold, so if that ordering were reversed and the
+# worker-wait declaration were consulted on its own, the second captain call
+# would inherit the first call's silence through the byte-identical status
+# signature even though it is a brand new call. Pinned with both records -
+# the worker-wait flag AND an open captain call - standing at once.
+test_captain_call_outranks_worker_wait_status_signature() {
+  local dir state out capture wakes
+  command -v tasks-axi >/dev/null 2>&1 \
+    || fail "tasks-axi is required (captain call vs worker-wait precedence)"
+  dir=$(make_hold_home captain-outranks-worker-wait \
+    'needs-decision [key=review]: awaiting firstmate' hold) \
+    || fail "could not build a captain-held backlog fixture"
+  state="$dir/state"; out="$dir/watch.out"; capture="$dir/pane.txt"
+  : > "$dir/config/wedge-defer-worker-wait"
+
+  hold_watch_surface "$dir" "$out" "$capture" 'idle, elapsed 1s' \
+    || fail "first sight of the first captain call did not surface"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the first call's surface"
+  hold_watch_churn "$dir" "$out" "$capture" 'idle, tick' 1 \
+    || fail "the first call's churn was not absorbed"
+  [ "$(hold_stale_wakes "$state")" -eq 0 ] \
+    || fail "the first call's churn re-alarmed inside its own window"
+
+  # Answer and release, then re-hold: a second, distinct captain call on the
+  # same task id, with NO status append, so the needs-decision line the
+  # worker-wait bound would key on stays byte-identical across both calls.
+  printf 'go ahead\n' > "$dir/decision.txt"
+  run_hold "$dir" answer held-merge --decision-file "$dir/decision.txt" --release \
+    || fail "could not record the captain's answer"
+  run_hold "$dir" hold held-merge --reason 'awaiting the captain a second time' \
+    || fail "could not re-hold the task as a second captain call"
+
+  hold_watch_surface "$dir" "$out" "$capture" 'idle, elapsed 3s' \
+    || fail "the second captain call inherited the first call's silence through the unchanged worker-wait status signature"
+  wakes=$(hold_stale_wakes "$state")
+  [ "$wakes" -eq 1 ] \
+    || fail "the second captain call produced $wakes first wakes instead of one"
+  pass "an open captain call's own identity, not the unchanged worker-wait status signature, owns the re-surface throttle"
 }
 
 
@@ -1475,12 +1567,14 @@ fm_test_run \
   test_exited_declared_pause_is_bounded_but_live_gate_surfaces \
   test_own_work_wait_keeps_first_alert_then_long_cadence \
   test_absorbed_replacement_wait_does_not_inherit_the_old_throttle \
+  test_live_worker_decision_churn_honors_wait_cadence \
   test_live_declared_wait_churn_honors_the_resurface_throttle \
   test_live_paused_until_controls_recheck_time \
   test_open_captain_call_bounds_stale_churn \
   test_stale_churn_without_a_captain_call_still_alarms \
   test_failed_wake_append_does_not_arm_the_captain_hold_throttle \
   test_reheld_captain_call_starts_its_own_resurface_window \
+  test_captain_call_outranks_worker_wait_status_signature \
   test_secondmate_paused_resurfaces_in_normal_mode \
   test_secondmate_captain_held_resurfaces_in_normal_mode \
   test_secondmate_nonpaused_stale_remains_suppressed \
