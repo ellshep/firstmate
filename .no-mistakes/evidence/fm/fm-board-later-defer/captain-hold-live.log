@@ -1,0 +1,11 @@
+=== test_board_answer_reaches_the_keyed_answer_intake ===
+bash: line 19: test_board_answer_reaches_the_keyed_answer_intake: command not found
+=== test_deferral_leaves_captains_call_until_due ===
+bash: line 21: test_deferral_leaves_captains_call_until_due: command not found
+=== adversarial: later without defer mode ===
+bash: line 23: make_home: command not found
+bash: line 24: run_captain: command not found
+answers output: bash: line 25: run_captain: command not found
+bash: line 27: tasks_in: command not found
+task state excerpt:
+WARN: expected skip message, got: bash: line 25: run_captain: command not found

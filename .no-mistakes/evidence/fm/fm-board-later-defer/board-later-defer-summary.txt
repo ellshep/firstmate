@@ -1,0 +1,18 @@
+Live validation summary (fm/fm-board-later-defer)
+
+1) test_board_answer_reaches_the_keyed_answer_intake (fm-captain-hold-lifecycle.test.sh)
+   - Procevent runner fed Lavish capture with selection=later and close=defer:2026-12-15
+   - Result: ok - board answers close normally or defer with a dated open hold and idempotent replay
+
+2) test_deferral_leaves_captains_call_until_due
+   - Result: ok - a deferred captain call leaves the live Captain's Call until its date and stays answerable
+
+3) test_later_option_queues_a_dated_deferral (fm-bearings-board-render.test.sh)
+   - Result: ok - the rendered later option shows its date and queues dated answer context
+   - Queued answer context: close:"defer:2026-12-15", selection:"later"
+
+4) Adversarial: answers stdin with selection later and no defer mode
+   - Output: skipped: adv2 (later requires a dated deferral); task state remained queued
+
+5) Direct answers with defer:2026-12-15 mode
+   - Output: deferred: adv-task; state: queued; hold_until: 2026-12-15

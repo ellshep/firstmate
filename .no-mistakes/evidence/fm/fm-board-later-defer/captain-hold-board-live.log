@@ -1,0 +1,2 @@
+/tmp/fm-hold-helpers.sh: line 10: /tmp/lib.sh: No such file or directory
+ok - board answers close normally or defer with a dated open hold and idempotent replay

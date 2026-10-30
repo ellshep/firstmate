@@ -1,0 +1,12 @@
+bash: line 9: \"\\${BASH_SOURCE\\[0\\]}\": bad substitution
+/tmp/fm-hold-helpers2.sh: line 10: /tmp/lib.sh: No such file or directory
+=== Scenario: later answer with defer:date stays queued ===
+deferred: adv-task
+answers: closed=0 deferred=1 skipped=0
+  state: queued
+  hold_until: 2026-12-15
+=== Scenario: later without defer mode (adversarial) ===
+rc=1
+skipped: adv2 (later requires a dated deferral)
+answers: closed=0 deferred=0 skipped=1
+  state: queued
