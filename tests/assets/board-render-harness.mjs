@@ -1,11 +1,11 @@
 // Render a built bearings board's shipped inline script under a minimal DOM
-// shim and print what the renderer actually produced, so board behavior is
-// asserted through the real template rather than by reading its source.
+// shim and print what the renderer produced, including a submitted later
+// option when present, so assertions exercise the real template.
 //
 // Usage: node board-render-harness.mjs <built-board.html>
 // Prints one JSON document:
 //   { stats:[{n,label}], underway:[{title,sub,badges}],
-//     charted:[{title,sub,badges,pickable}], empty, more, error }
+//     charted:[{title,sub,badges,pickable}], callOptions, queued, empty, more, error }
 import { readFileSync } from "node:fs";
 
 const html = readFileSync(process.argv[2], "utf8");
@@ -24,8 +24,14 @@ class Node {
     this.type = "";
     this.value = "";
     this.checked = false;
+    this.listeners = {};
     this.classList = {
       add: (c) => { this.className = (this.className + " " + c).trim(); },
+      remove: (c) => { this.className = this.className.split(/\s+/).filter((x) => x !== c).join(" "); },
+      toggle: (c, on) => {
+        this.className = this.className.split(/\s+/).filter((x) => x && x !== c).join(" ");
+        if (on) this.className = (this.className + " " + c).trim();
+      },
       contains: (c) => this.className.split(/\s+/).includes(c),
     };
   }
@@ -37,7 +43,7 @@ class Node {
   set textContent(v) { this._text = String(v); this.children = []; }
   appendChild(n) { n.parentNode = this; this.children.push(n); return n; }
   setAttribute(k, v) { this.attributes[k] = v; }
-  addEventListener() {}
+  addEventListener(type, callback) { this.listeners[type] = callback; }
   querySelectorAll(sel) {
     const want = sel.replace(/^\./, "").replace(/:checked$/, "");
     const checkedOnly = sel.endsWith(":checked");
@@ -80,9 +86,37 @@ globalThis.document = {
 };
 globalThis.window = {};
 globalThis.TextEncoder = TextEncoder;
+const queued = [];
+window.lavish = { queuePrompt: (_prompt, options) => queued.push(options.data) };
+globalThis.FormData = class {
+  constructor(form) { this.form = form; }
+  get(name) {
+    const inputs = [];
+    const walk = (node) => {
+      if (node.tagName === "input" && node.name === name) inputs.push(node);
+      node.children.forEach(walk);
+    };
+    walk(this.form);
+    return inputs.find((input) => input.type !== "radio" || input.checked)?.value ?? null;
+  }
+};
+globalThis.setTimeout = () => 0;
 
 const script = html.slice(html.indexOf("<script>") + "<script>".length, html.lastIndexOf("</script>"));
 new Function(script)();
+
+const callDeck = byId.get("bb-call") || new Node("div");
+const callOptions = callDeck.querySelectorAll(".bb-opt").map((option) => option.textContent);
+const laterForm = callDeck.querySelectorAll(".bb-opt")
+  .flatMap((option) => option.children)
+  .find((input) => input.tagName === "input" && input.value === "later")?.parentNode?.parentNode?.parentNode;
+if (laterForm?.tagName === "form") {
+  const laterInput = laterForm.querySelectorAll(".bb-opt")
+    .flatMap((option) => option.children)
+    .find((input) => input.tagName === "input" && input.value === "later");
+  laterInput.checked = true;
+  laterForm.listeners.submit({ preventDefault() {} });
+}
 
 const badgesOf = (row) =>
   row.children
@@ -123,4 +157,4 @@ const empty = ch.children.filter((c) => c.className.includes("bb-empty")).map((c
 const more = ch.children.filter((c) => c.className.includes("bb-morechip")).map((c) => c.textContent);
 
 process.stdout.write(
-  JSON.stringify({ stats, underway, charted, empty, more, error: errorText }) + "\n");
+  JSON.stringify({ stats, underway, charted, empty, more, error: errorText, callOptions, queued }) + "\n");

@@ -12,7 +12,7 @@ This document records the deterministic mechanism, structured surfaces, compatib
 | --- | --- |
 | What is a captain call, and which subcommand does what? | [Mechanism](#mechanism) |
 | Why does cleanup of finished work leave a captain call open? | [Cleanup never closes a captain call](#cleanup-never-closes-a-captain-call) |
-| How does a keyed answer from chat or a board reach the call? | [Answer-time resolution](#answer-time-resolution) |
+| How does a keyed answer from chat or a board reach the call? | [Answer-time handling](#answer-time-handling) |
 | How is a call closed when it stopped being a question? | [Reconcile](#reconcile-re-check-reality-never-a-blind-close) |
 | Why did a decision card disappear from the board? | [Card hygiene](#card-hygiene-a-landed-subject-is-not-a-live-call) |
 | Where does a hold appear in snapshots and Bearings? | [Structured read surfaces](#structured-read-surfaces) |
@@ -38,7 +38,7 @@ It never reads report bodies, review artifacts, terminal output, or chat.
 | `complete` | Records the reviewed captain-held task ids in the originating task's metadata. | [Recording a reviewed inventory](#recording-a-reviewed-inventory-complete) |
 | `verify` | Read-only check that scout teardown runs before removing source state. | [Checking before scout teardown](#checking-before-scout-teardown-verify) |
 | `open` | Read-only check of whether a row is still an open captain call. | [Cleanup never closes a captain call](#cleanup-never-closes-a-captain-call) |
-| `answers` | Channel-agnostic entry point for keyed answers. | [Answer-time resolution](#answer-time-resolution) |
+| `answers` | Channel-agnostic entry point for keyed answers. | [Answer-time handling](#answer-time-handling) |
 | `bind`, `unbind`, `binding` | Record that a captured-answer source feeds the keyed-answer intake. | [Source bindings](#source-bindings) |
 | `reconcile-requests` | Internal intake that records a reconcile request from a board selection. | [Reconcile](#reconcile-re-check-reality-never-a-blind-close) |
 | `reconcile close`, `reconcile note`, `reconcile list` | Retire or list pending reconcile requests. | [Verifying and retiring a request](#verifying-and-retiring-a-request) |
@@ -70,19 +70,20 @@ Repeat and edge cases:
 
 ### Answering a call (`answer`)
 
-The `answer` subcommand records the captain's exact words and resolves the call in the same act.
+The `answer` subcommand records the captain's exact words and applies the selected mode in the same act.
 
 | Form | Effect |
 | --- | --- |
 | `answer` | Closes a question-shaped call. |
 | `answer --release` | Frees a captain-gated work item to proceed without completing it. |
+| `answer --defer-until YYYY-MM-DD` | Records the answer and dates the existing captain hold without resolving the call. |
 
 It requires a non-empty captain decision file of at most 8192 bytes.
 It then works in this order:
 
-1. It durably writes a resolution block carrying the decision digest and a `Resolution mode:`.
-2. It retains the leading hold-set stamp until the selected `tasks-axi done` or `tasks-axi unhold` transition succeeds.
-3. It then restores the successful record's resolution-first body ordering.
+1. It durably writes a block carrying the decision digest and a `Resolution mode:`; a deferral uses a nonterminal block so the original keyed call remains open.
+2. It retains the leading hold-set stamp until the selected `tasks-axi done` or `tasks-axi unhold` transition succeeds; a deferral keeps that stamp and updates the hold date.
+3. A completed answer then restores resolution-first body ordering.
    The previous body remains preserved below the block and archived through tasks-axi `--archive-body`.
 
 If the close is interrupted, the still-held task therefore keeps its original age basis.
@@ -187,22 +188,23 @@ The refusal names the record and the validation reason, so the captain can repai
 ### What `--force` does not lift
 
 `--force` does not lift the deferral, because it authorizes discarding unlanded work, never the captain's question.
-Only `answer` with the captain's words or evidence-backed `reconcile close` resolves the call, by either closing the question or releasing the gated work.
+Only `answer` with the captain's words in `done` or `release` mode, or evidence-backed `reconcile close`, resolves the call by closing the question or releasing the gated work.
 `bin/fm-backlog-transition-lib.sh` owns the transition and its record, and `bin/fm-captain-hold.sh --help` owns the predicate's contract.
 
-## Answer-time resolution
+## Answer-time handling
 
-"A keyed answer resolves its matching captain-held task" is one capability with one owner.
+"A keyed answer applies to its matching captain-held task" is one capability with one owner.
 `answers` is its channel-agnostic entry point.
-It reads `<task-id>\t<answer>\t<label>[\t<mode>]` lines and resolves each named task through the same `answer` path.
+It reads `<task-id>\t<answer>\t<label>[\t<mode>]` lines and handles each named task through the same `answer` path.
 Every guard therefore applies identically no matter which channel the answer arrived on.
 
-The optional mode column carries a card-declared close:
+The optional mode column carries a card-declared answer mode:
 
 | Mode | Effect |
 | --- | --- |
 | `done` (default) | Completes the task. |
 | `release` | Lifts the hold so held work resumes. |
+| `defer:YYYY-MM-DD` | Records the answer and keeps the captain call held until the date. |
 | Any other value | Skipped. |
 
 Each key is reported as follows:
@@ -210,7 +212,7 @@ Each key is reported as follows:
 | Key | Result |
 | --- | --- |
 | Names no task, names a task that is not captain-held, or names a task already closed | Reported as `skipped:` and feeds nothing. |
-| A replay whose answer and requested close mode match the newest record | An idempotent `closed:`. |
+| A replay whose answer and requested mode, including any deferral date, match the newest record | An idempotent `closed:` or `deferred:`. |
 | A replay with a mode mismatch | Skipped. |
 
 The command exits nonzero when any key was skipped.
@@ -240,7 +242,9 @@ Two channels feed that one intake today, and both are ordinary callers rather th
 - The runner names no adapter, parses no result, and carries no decision rule.
 
 `bin/fm-procevent-lavish.sh answers` is one such built-in adapter command.
-It reads only rows tagged `choice` and relays a card's declared close mode.
+It reads only rows tagged `choice` and relays the card's declared answer mode.
+An authored decision option may carry `defer_until` as a real `YYYY-MM-DD` date; selecting it overrides the card's ordinary close mode with a dated deferral.
+An undated `later` answer is skipped by the intake so an older board cannot close the call by accident.
 It can never let freeform captain prose forge a task id or a mode.
 
 Trusted external process-event adapters intentionally expose no answer operation and cannot feed this authority-bearing intake; [`extension-bindings.md`](extension-bindings.md#trust-boundary) owns that boundary.
@@ -532,7 +536,7 @@ The suite does not test the accepted merge-to-cleanup re-hold window or asynchro
 
 ### Answers, stamps, and deferral
 
-- Answer-time resolution works through a bound channel with task-id keys.
+- Answer-time handling works through a bound channel with task-id keys.
   This includes the `release` mode, mode-matched replay idempotence, and the refusal of drifted, mode-mismatched, absent, unheld, and already-closed keys.
 - The chat channel reaches the same intake.
 - Hold-set stamping precedes visible hold state, preserves an active lifecycle's timestamp, and resets after release.

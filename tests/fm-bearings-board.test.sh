@@ -151,7 +151,8 @@ write_valid_payload() {  # <path>
       "decide": "Adopt it?",
       "options": [
         { "value": "yes", "label": "Adopt", "hint": "recommended" },
-        { "value": "no", "label": "Keep current" }
+        { "value": "no", "label": "Keep current" },
+        { "value": "later", "label": "Revisit on December 15", "defer_until": "2026-12-15" }
       ],
       "allow_freeform": true
     },
@@ -258,6 +259,20 @@ test_build_refuses_malformed_payloads_before_touching_the_board() {
   jq '.captains_call[0].options[0].label = ""' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
   set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
   [ "$rc" -ne 0 ] || fail "a captains_call option with an empty label was accepted"
+
+  for invalid_date in "2026-02-29" "2026-12-15T00:00:00Z" "later"; do
+    write_valid_payload "$data"
+    jq --arg until "$invalid_date" '.captains_call[0].options[2].defer_until = $until' \
+      "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+    set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
+    [ "$rc" -ne 0 ] || fail "an invalid board deferral date was accepted: $invalid_date"
+  done
+
+  write_valid_payload "$data"
+  jq '.captains_call[1].options[0].defer_until = "2026-12-15"' \
+    "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a non-decision board option was allowed to defer a captain call"
 
   write_valid_payload "$data"
   jq 'del(.charted[0].repo)' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
