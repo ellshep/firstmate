@@ -790,7 +790,7 @@ cmd_silent() {
 
 # Print `key<TAB>answer<TAB>label[<TAB>mode]` for each non-reconcile structured choice the
 # captain submitted in a captured result; the optional mode column relays the
-# card's declared close mode (`done` or `release`) to the keyed-answer intake.
+# card's declared mode (`done`, `release`, or a dated `defer`) to the keyed-answer intake.
 # Items come from the shared result parser above, in either emission form, and
 # only items whose `tag` field is `choice` are read.
 # The header owns the partial-output and failure contract.
@@ -854,7 +854,8 @@ cmd_choice_rows() {
       my $mode = "";
       if (exists $data->{close}) {
         next if !defined($data->{close}) || ref($data->{close})
-          || ($data->{close} ne "done" && $data->{close} ne "release");
+          || ($data->{close} ne "done" && $data->{close} ne "release"
+            && $data->{close} !~ /\Adefer:[0-9]{4}-[0-9]{2}-[0-9]{2}\z/);
         $mode = $data->{close};
       }
       my $label = defined $f{text} ? $f{text} : "";

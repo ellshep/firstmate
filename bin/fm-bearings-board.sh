@@ -62,6 +62,8 @@
 # carries no card type. Its meaning, and the reason it can never reach the
 # keyed-answer intake as a blind close, are owned by
 # docs/captain-hold-lifecycle.md.
+# A decision option's optional `defer_until` is a validated YYYY-MM-DD date;
+# the rendered board shows it and carries it with that selected answer.
 #
 # Validation is fail-closed: the payload must be valid JSON with
 # schema=fm-bearings-board.v1 and every renderer-consumed field must satisfy
@@ -153,7 +155,9 @@ validate_payload() {  # <data.json>
         | type == "object"
           and (.value | slug(128))
           and (.label | nonempty_string)
-          and optional_string("hint")] | all)
+          and optional_string("hint")
+          and ((has("defer_until") | not)
+            or (.defer_until | valid_filed and (contains("T") | not)))] | all)
       and (optional_string("about"))
       and (optional_string("decide"))
       and (optional_string("detail"))
@@ -162,6 +166,7 @@ validate_payload() {  # <data.json>
       and (if has("subject") then .type == "decision" else true end)
       and (optional_string("freeform_hint"))
       and ((has("close") | not) or (.close == "done" or .close == "release"))
+      and (if [.options[] | has("defer_until")] | any then .type == "decision" else true end)
       and ((has("allow_freeform") | not) or (.allow_freeform | type == "boolean"))
       and ((has("recommend_value") | not)
         or ((.recommend_value | slug(128))

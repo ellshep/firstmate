@@ -2250,14 +2250,24 @@ test_legacy_identities_keep_working() {
 # firstmate to look, and the recorded answer - because each of those was intact
 # on its own while the chain as a whole delivered nothing.
 test_board_answer_reaches_the_keyed_answer_intake() {
-  local home sid stub out queue show
+  local home sid stub out queue show snap
   home=$(make_home board-channel)
   sid=lavish-b0a4d0000000f1e2
   fm_test_track_procevent_home "$home" "$home/procevent-claims"
 
+  tasks_in "$home" add sample-board-origin "Review the sample board routes" \
+    --kind scout --repo sample --start >/dev/null
+  write_origin_meta "$home" sample-board-origin
+
   run_captain "$home" hold sample-board-call --title "Choose the sample board route" \
     --reason "captain board route choice pending" --repo sample >/dev/null \
     || fail "could not register the board call"
+  run_captain "$home" hold sample-board-later --title "Choose the sample later route" \
+    --reason "captain later route choice pending" --repo sample \
+    --origin sample-board-origin >/dev/null \
+    || fail "could not register the later board call"
+  run_captain "$home" complete sample-board-origin sample-board-later >/dev/null \
+    || fail "could not inventory the later board call"
 
   # One published Lavish poll response carrying the captain's structured answer,
   # in the shape the adapter's own reader parses: a declared field order, an
@@ -2269,8 +2279,9 @@ cat <<'OUT'
 session:
   status: feedback
   session_ended: false
-prompts[1]{tag,text,prompt}:
+prompts[2]{tag,text,prompt}:
   "choice","Take the north route","Context data: {\"schema\":\"fm-bearings-answer.v1\",\"question\":\"sample-board-call\",\"selection\":\"north\",\"note\":\"\"}"
+  "choice","Decide later","Context data: {\"schema\":\"fm-bearings-answer.v1\",\"question\":\"sample-board-later\",\"selection\":\"later\",\"note\":\"\",\"close\":\"defer:2026-12-15\"}"
 OUT
 SH
   chmod +x "$stub"
@@ -2295,7 +2306,53 @@ SH
   assert_contains "$show" "north" "the board answer lost the captain's selection"
   assert_contains "$show" "the captured result $sid sequence 1" \
     "the recorded answer did not name the board result that carried it"
-  pass "a board answer reaches the keyed-answer intake and wakes firstmate"
+  show=$(tasks_in "$home" show sample-board-later --full)
+  assert_contains "$show" "state: queued" "the later board answer closed the captain call"
+  assert_contains "$show" "hold_kind: captain" "the later board answer lost the captain hold"
+  assert_contains "$show" "hold_until: 2026-12-15" "the later board answer lost its date"
+  assert_contains "$show" "Resolution mode: deferred" "the later board answer lost its mode"
+  assert_contains "$show" "Deferral until: 2026-12-15" "the later board answer lost its recorded date"
+  assert_contains "$show" "Answer: later" "the later board answer lost the captain's exact selection"
+  snap=$(PATH="$home/fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+    FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_PROJECTS_OVERRIDE="$home/projects" FM_SNAPSHOT_NOW=2026-11-01T12:00:00Z \
+    "$ROOT/bin/fm-fleet-snapshot.sh" --json) || fail "fleet snapshot failed after board deferral"
+  printf '%s' "$snap" | jq -e '
+    .backlog.records[] | select(.id == "sample-board-later")
+    | .captain_actionable == false and .hold_bucket == "dated"
+      and .hold_until == "2026-12-15"
+  ' >/dev/null || fail "the later board answer did not remain a dated captain call"
+
+  out=$(run_lavish "$home" answers "$home/state/procevent-inbox/$sid.1.result" \
+    | run_captain "$home" answers --source "the captured result $sid sequence 1") \
+    || fail "an exact board capture replay failed: $out"
+  assert_contains "$out" "deferred: sample-board-later" \
+    "an exact later replay was not idempotent"
+  show=$(tasks_in "$home" show sample-board-later --full)
+  [ "$(printf '%s\n' "$show" | grep -o 'Resolution mode: deferred' | wc -l | tr -d ' ')" = 1 ] \
+    || fail "replaying a later answer added another resolution record"
+  if printf 'sample-board-later\tlater\tDecide later\tdone\n' \
+    | run_captain "$home" answers --source "the captured result $sid sequence 1" \
+      > "$home/later-mismatch.out" 2> "$home/later-mismatch.err"; then
+    fail "a later answer replay with done mode closed the call"
+  fi
+  show=$(tasks_in "$home" show sample-board-later --full)
+  assert_contains "$show" "state: queued" "a mismatched replay closed the deferred call"
+  printf 'later\n' > "$home/later-answer.txt"
+  if run_captain "$home" answer sample-board-later \
+    --decision-file "$home/later-answer.txt" --defer-until \
+      > "$home/missing-date.out" 2> "$home/missing-date.err"; then
+    fail "a missing deferral date defaulted to closing the call"
+  fi
+  show=$(tasks_in "$home" show sample-board-later --full)
+  assert_contains "$show" "state: queued" "a missing deferral date closed the call"
+  tasks_in "$home" "done" sample-board-later >/dev/null \
+    || fail "could not simulate an out-of-band close after deferral"
+  if run_captain "$home" verify sample-board-origin \
+    > "$home/later-verify.out" 2> "$home/later-verify.err"; then
+    fail "a deferred answer alone proved a closed captain call resolved"
+  fi
+  pass "board answers close normally or defer with a dated open hold and idempotent replay"
 }
 
 # The intake is channel-agnostic, so chat must reach it the same way a captured

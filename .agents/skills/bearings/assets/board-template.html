@@ -526,6 +526,7 @@ __FM_BEARINGS_BOARD_DATA__
       var body = el("span", "bb-opt__body");
       body.appendChild(el("span", "bb-opt__label", o.label));
       if (o.hint) body.appendChild(el("span", "bb-opt__hint", o.hint));
+      if (o.defer_until) body.appendChild(el("span", "bb-opt__hint", "Revisit " + o.defer_until));
       lab.appendChild(body);
       if (item.recommend_value && o.value === item.recommend_value) {
         lab.appendChild(el("span", "bb-opt__rec", "rec"));
@@ -568,14 +569,19 @@ __FM_BEARINGS_BOARD_DATA__
       }
       if (window.lavish && window.lavish.queuePrompt) {
         /* The versioned context keeps the selected option separate from its
-           note, while close carries the composer-declared completion mode. */
+           note, while close carries the declared answer mode. */
         var ctxData = {
           schema: "fm-bearings-answer.v1",
           question: item.key,
           selection: value || "",
           note: note
         };
-        if (item.close) ctxData.close = item.close;
+        var selectedOption = item.options.find(function (o) { return o.value === value; });
+        if (selectedOption && selectedOption.defer_until) {
+          ctxData.close = "defer:" + selectedOption.defer_until;
+        } else if (item.close) {
+          ctxData.close = item.close;
+        }
         window.lavish.queuePrompt(
           "Captain's Call answer - " + item.title + ": " + displayAnswer,
           { tag: "choice", text: item.title + " -> " + displayAnswer, element: form,

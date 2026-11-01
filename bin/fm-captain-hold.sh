@@ -22,7 +22,7 @@
 # Usage:
 #   fm-captain-hold.sh hold <task-id> --reason <reason> \
 #     [--title <title>] [--repo <repo>] [--origin <origin-id>] [--until YYYY-MM-DD]
-#   fm-captain-hold.sh answer <task-id> --decision-file <path> [--release]
+#   fm-captain-hold.sh answer <task-id> --decision-file <path> [--release | --defer-until YYYY-MM-DD]
 #   fm-captain-hold.sh answers [<legacy-origin> | --any-origin] --source <provenance>   (keyed answers on stdin)
 #   fm-captain-hold.sh reconcile-requests --source-id <source-id> --source <provenance>   (task ids on stdin)
 #   fm-captain-hold.sh bind <source-id> [<legacy-origin> | --any-origin]
@@ -57,15 +57,17 @@
 # --until`, so a "revisit later" answer is stored as a date instead of a live
 # card.
 #
-# `answer` records the captain's exact words and resolves the call in the same
-# act. It requires a non-empty captain decision file of at most 8192 bytes and
-# writes a resolution block while preserving the leading hold-set stamp until
-# the close succeeds (the previous body is preserved and archived through
+# `answer` records the captain's exact words and applies the requested mode in
+# the same act. It requires a non-empty captain decision file of at most 8192
+# bytes and writes an answer block while preserving the leading hold-set stamp
+# until a close succeeds (the previous body is preserved and archived through
 # tasks-axi --archive-body). It closes a question with `tasks-axi done` - or,
 # with `--release`, lifts the hold with `tasks-axi unhold` so a captain-gated
-# WORK item resumes without closing - and restores resolution-first body
-# ordering. An exact retry also completes unfinished ordering normalization and
-# is idempotent only when its requested close mode
+# WORK item resumes without closing. With `--defer-until`, it records the answer
+# and dates the existing hold without resolving the call. A completed answer
+# restores resolution-first body ordering. An exact retry also completes
+# unfinished ordering normalization and is idempotent only when its requested
+# mode
 # matches the newest record; a changed decision or a mode mismatch is rejected.
 # A re-held task may record a new answer on top. On a task already closed outside this script,
 # `answer` records the missing resolution block (the old `repair` path) only
@@ -76,17 +78,18 @@
 # `held:` bit, prove the captain owned it.
 #
 # ONE KEYED-ANSWER INTAKE, FED BY EVERY CHANNEL.
-# "A keyed answer resolves its matching captain-held task" is a single
+# "A keyed answer applies to its matching captain-held task" is a single
 # capability, owned here and nowhere else. `answers` reads
-# `<task-id>\t<answer>\t<label>[\t<mode>]` lines on stdin and resolves each named
+# `<task-id>\t<answer>\t<label>[\t<mode>]` lines on stdin and handles each named
 # task through the very same `answer` path above, so every guard applies
 # identically no matter which channel the answer arrived on. The key IS the
-# task id - no identity arithmetic. The optional fourth field selects the close:
+# task id - no identity arithmetic. The optional fourth field selects the mode:
 # empty or `done` completes the task, `release` lifts the hold so held work
-# resumes; anything else is skipped. A key that names no task, a task that is
+# resumes, and `defer:YYYY-MM-DD` dates the existing hold; anything else is
+# skipped. A key that names no task, a task that is
 # not held for the captain, or a task already closed is reported as `skipped:`
 # and feeds nothing. A replayed delivery whose answer digest and requested
-# close mode both match the newest record is reported `closed:` and is a no-op;
+# mode both match the newest record is reported `closed:` or `deferred:` and is a no-op;
 # a mode mismatch is skipped. The command exits nonzero when any key was
 # skipped. `--source` is provenance text recorded in the
 # durable decision, never a behavior switch: this command has no per-channel
@@ -197,8 +200,11 @@
 # one captain call. See "record divergence" beside command_diverged below.
 #
 # Resolution records: the block written into the body names this script, the
-# decision digest, and a `Resolution mode:` of answered, released, repaired, or
-# reconciled. Records written by the retired fm-decision-hold.sh (routed,
+# decision digest, and a `Resolution mode:` of answered, released, repaired,
+# reconciled, or deferred. A dated deferral has a separate nonterminal record,
+# so it does not consume the parent's keyed decision occurrence or count as a
+# closed answer.
+# Records written by the retired fm-decision-hold.sh (routed,
 # declined, answered, repaired) are recognized everywhere a record is read, so
 # nothing already closed needs rewriting.
 #
@@ -465,10 +471,19 @@ meta_value() {  # <meta> <key>
 # A resolution record written by this script or by the retired
 # fm-decision-hold.sh. Both carry the same leader-then-captain-decision shape.
 body_has_resolution_record() {  # <task-body>
+  [ "$(recorded_resolution_mode "$1" || true)" != deferred ] || return 1
   case "$1" in
     *"Resolution recorded by fm-captain-hold."*"Captain decision:"*) return 0 ;;
     *"Resolution recorded by fm-decision-hold."*"Captain decision:"*) return 0 ;;
     *"Resolution recorded by fm-captain-hold."*"Reconciliation evidence:"*) return 0 ;;
+  esac
+  return 1
+}
+
+body_has_deferral_record() {  # <task-body>
+  [ "$(recorded_resolution_mode "$1" || true)" = deferred ] || return 1
+  case "$1" in
+    *"Deferral recorded by fm-captain-hold."*"Captain decision:"*) return 0 ;;
   esac
   return 1
 }
@@ -507,6 +522,17 @@ recorded_resolution_mode() {  # <task-body>
   printf '%s' "$rest"
 }
 
+recorded_deferral_until() {  # <task-body>
+  local rest=$1
+  case "$rest" in
+    *"Deferral until: "*) rest=${rest#*"Deferral until: "} ;;
+    *) return 1 ;;
+  esac
+  rest=${rest%%\\n*}
+  rest=${rest%%$'\n'*}
+  printf '%s' "$rest"
+}
+
 closed_answer_replay_mode_compatible() {  # <mode> <task-body>
   case "$1" in
     answered|repaired|routed) return 0 ;;
@@ -517,11 +543,14 @@ closed_answer_replay_mode_compatible() {  # <mode> <task-body>
 # The record's label is what keeps an evidence-backed reconciliation from
 # reading as the captain's own words. `reconciled` closes a call that went moot
 # and carries verified evidence; every other mode carries what the captain said.
-resolution_block() {  # <mode>
-  local label='Captain decision:'
+resolution_block() {  # <mode> [defer-until]
+  local label='Captain decision:' leader='Resolution recorded by fm-captain-hold.'
   [ "$1" != reconciled ] || label='Reconciliation evidence:'
-  printf 'Resolution recorded by fm-captain-hold.\nDecision digest: %s\nResolution mode: %s\n\n%s\n%s\n' \
-    "$DECISION_DIGEST" "$1" "$label" "$DECISION_TEXT"
+  [ "$1" != deferred ] || leader='Deferral recorded by fm-captain-hold.'
+  printf '%s\nDecision digest: %s\nResolution mode: %s\n' \
+    "$leader" "$DECISION_DIGEST" "$1"
+  [ -z "${2:-}" ] || printf 'Deferral until: %s\n' "$2"
+  printf '\n%s\n%s\n' "$label" "$DECISION_TEXT"
 }
 
 # Durable state of one captain call: an active captain hold (annotations
@@ -1161,9 +1190,9 @@ command_hold() {
 # Record a resolution block beneath any leading active hold-set stamp,
 # preserving the previous body below it and archiving the pristine original.
 # Successful closure removes the stamp to restore resolution-first ordering.
-write_resolution_record() {  # <task-id> <mode> <shown-body>
+write_resolution_record() {  # <task-id> <mode> <shown-body> [defer-until]
   local id=$1 mode=$2 body=$3 new_body tmp hold_set
-  new_body=$(resolution_block "$mode")
+  new_body=$(resolution_block "$mode" "${4:-}")
   body=$(decode_shown_value "$body") \
     || fail "could not decode the existing body for $id"
   hold_set=$(body_hold_set_timestamp "$body")
@@ -1251,18 +1280,27 @@ remove_interrupted_answer_stamp() {  # <task-id>
 }
 
 command_answer() {
-  local id=${1:-} decision_file='' release=0 show state hold_kind body outcome recorded_mode occurrence
+  local id=${1:-} decision_file='' release=0 defer_until='' defer_supplied=0 show state hold_kind body outcome recorded_mode occurrence hold_reason
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --decision-file) shift; decision_file=${1:-} ;;
       --release) release=1 ;;
+      --defer-until) shift; defer_supplied=1; defer_until=${1:-} ;;
       *) usage >&2; exit 2 ;;
     esac
     shift
   done
   validate_slug task-id "$id"
+  [ "$defer_supplied" = 0 ] || [ -n "$defer_until" ] || fail "--defer-until requires a date"
+  [ "$release" = 0 ] || [ "$defer_supplied" = 0 ] || fail "--release and --defer-until cannot be combined"
+  if [ -n "$defer_until" ]; then
+    case "$defer_until" in
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) : ;;
+      *) fail "--defer-until must be a YYYY-MM-DD date: $defer_until" ;;
+    esac
+  fi
   load_decision "$decision_file"
   acquire_task_control_lock "$id"
   require_tasks_axi
@@ -1271,12 +1309,15 @@ command_answer() {
   state=$(show_field "$show" state)
   hold_kind=$(show_field_value "$show" hold_kind)
   body=$(show_field "$show" body)
-  if [ "$release" = 1 ]; then outcome=released; else outcome=answered; fi
+  if [ -n "$defer_until" ]; then outcome=deferred
+  elif [ "$release" = 1 ]; then outcome=released
+  else outcome=answered; fi
   # The occurrence the parent line names: the record about to be written is
   # one past those already in the body, and a retry names the newest one.
   occurrence=$(( $(resolution_record_count "$body") + 1 ))
 
   if [ "$state" = "done" ]; then
+    [ -z "$defer_until" ] || fail "task $id is already closed; --defer-until cannot reopen it"
     if body_has_resolution_record "$body"; then
       # An exact compatible retry is an idempotent no-op; drift is rejected.
       [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
@@ -1320,20 +1361,45 @@ command_answer() {
     # its own record on top. Either way the close mode is the caller's flag,
     # checked against an interrupted close's recorded mode so a retry cannot
     # silently flip a release into a close.
-    if body_has_resolution_record "$body" \
+    if { body_has_resolution_record "$body" || body_has_deferral_record "$body"; } \
       && [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ]; then
       recorded_mode=$(recorded_resolution_mode "$body" || true)
       case "$recorded_mode" in
+        deferred)
+          [ -n "$defer_until" ] && [ "$(recorded_deferral_until "$body" || true)" = "$defer_until" ] \
+            || fail "task $id records this answer as a deferral to $(recorded_deferral_until "$body" || true); retry with the matching --defer-until"
+          ;;
         released) [ "$release" = 1 ] || fail "task $id records this answer as a release; retry with --release" ;;
-        answered|routed) [ "$release" = 0 ] || fail "task $id records this answer as a close; retry without --release" ;;
+        answered|routed) [ "$release" = 0 ] && [ -z "$defer_until" ] || fail "task $id records this answer as a close; retry without --release or --defer-until" ;;
         *) fail "task $id records this resolution with mode ${recorded_mode:-unknown}; it is not a captain-answer replay" ;;
       esac
+      if [ "$recorded_mode" = deferred ]; then
+        if [ "$(show_field_value "$show" hold_until)" != "$defer_until" ]; then
+          [ -z "$(show_field_value "$show" hold_until)" ] \
+            || fail "task $id has a different current hold date; refusing to restore an older deferral"
+          hold_reason=$(show_field_value "$show" hold_reason)
+          [ -n "$hold_reason" ] || fail "task $id has no hold reason to preserve for deferral"
+          tasks_axi hold "$id" --reason "$hold_reason" --kind captain --until "$defer_until" >/dev/null \
+            || fail "could not defer captain-held task $id"
+        fi
+        printf 'deferred: %s\n' "$id"
+        return 0
+      fi
       if ! close_answered "$id" "$release"; then
         fail "could not close answered captain-held task $id"
       fi
       remove_interrupted_answer_stamp "$id"
       publish_parent_resolution_then_retire "$id" $((occurrence - 1)) "$outcome"
       printf '%s: %s\n' "$outcome" "$id"
+      return 0
+    fi
+    if [ -n "$defer_until" ]; then
+      hold_reason=$(show_field_value "$show" hold_reason)
+      [ -n "$hold_reason" ] || fail "task $id has no hold reason to preserve for deferral"
+      write_resolution_record "$id" "$outcome" "$body" "$defer_until"
+      tasks_axi hold "$id" --reason "$hold_reason" --kind captain --until "$defer_until" >/dev/null \
+        || fail "could not defer captain-held task $id"
+      printf 'deferred: %s\n' "$id"
       return 0
     fi
     write_resolution_record "$id" "$outcome" "$body"
@@ -1462,7 +1528,8 @@ sanitize_reconcile_provenance() {
 
 command_answers() {
   local origin='' source='' row rest key answer label mode id show state hold_kind body digest legacy_digest legacy_key
-  local recorded_digest recorded_mode occurrence tmp err closed=0 skipped=0 reason release_flag tab=$'\t'
+  local recorded_digest recorded_mode occurrence tmp err closed=0 deferred=0 skipped=0 reason defer_until tab=$'\t'
+  local -a answer_flags=()
   local resolve_rc
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -1504,16 +1571,34 @@ command_answers() {
       skipped=$((skipped + 1))
       continue
     fi
-    release_flag=''
+    answer_flags=()
+    defer_until=''
     case "${mode:-}" in
       ''|done) : ;;
-      release) release_flag=--release ;;
+      release) answer_flags=(--release) ;;
+      defer:*)
+        defer_until=${mode#defer:}
+        case "$defer_until" in
+          [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) answer_flags=(--defer-until "$defer_until") ;;
+          *) defer_until='' ;;
+        esac
+        if [ -z "$defer_until" ]; then
+          printf 'skipped: %s (invalid deferral date)\n' "$key"
+          skipped=$((skipped + 1))
+          continue
+        fi
+        ;;
       *)
         printf 'skipped: %s (unknown close mode %s)\n' "$key" "$(sanitize_field "$mode")"
         skipped=$((skipped + 1))
         continue
         ;;
     esac
+    if [ "$answer" = later ] && [ -z "$defer_until" ]; then
+      printf 'skipped: %s (later requires a dated deferral)\n' "$key"
+      skipped=$((skipped + 1))
+      continue
+    fi
     resolve_rc=0
     id=$(resolve_entry "$origin" "$key" 2>"$err") || resolve_rc=$?
     id=${id%% *}
@@ -1556,14 +1641,23 @@ command_answers() {
     body=$(show_field "$show" body)
     recorded_digest=$(recorded_decision_digest "$body" || true)
     recorded_mode=$(recorded_resolution_mode "$body" || true)
-    if body_has_resolution_record "$body" \
+    if { body_has_resolution_record "$body" || body_has_deferral_record "$body"; } \
       && { [ "$recorded_digest" = "$digest" ] \
         || { case "$body" in *"Resolution recorded by fm-decision-hold."*) true ;; *) false ;; esac \
           && [ -n "$legacy_digest" ] && [ "$recorded_digest" = "$legacy_digest" ]; }; }; then
-      if { [ -z "$release_flag" ] && [ "$state" = "done" ] \
+      if { [ -z "${answer_flags[0]-}" ] && [ "$state" = "done" ] \
           && closed_answer_replay_mode_compatible "$recorded_mode" "$body"; } \
-        || { [ "$release_flag" = --release ] && [ "$state" != "done" ] \
-          && [ "$hold_kind" != captain ] && [ "$recorded_mode" = released ]; }; then
+        || { [ "${answer_flags[0]-}" = --release ] && [ "$state" != "done" ] \
+          && [ "$hold_kind" != captain ] && [ "$recorded_mode" = released ]; } \
+        || { [ -n "$defer_until" ] && [ "$state" != "done" ] \
+          && [ "$hold_kind" = captain ] && [ "$recorded_mode" = deferred ] \
+          && [ "$(recorded_deferral_until "$body" || true)" = "$defer_until" ] \
+          && [ "$(show_field_value "$show" hold_until)" = "$defer_until" ]; }; then
+        if [ "$recorded_mode" = deferred ]; then
+          printf 'deferred: %s\n' "$id"
+          deferred=$((deferred + 1))
+          continue
+        fi
         occurrence=$(resolution_record_count "$body")
         case "$recorded_mode" in
           repaired) publish_parent_resolution_then_retire "$id" "$occurrence" "answered (repaired)" ;;
@@ -1585,13 +1679,18 @@ command_answers() {
       skipped=$((skipped + 1))
       continue
     fi
-    # shellcheck disable=SC2086  # release_flag is empty or a single literal flag.
-    if "$0" answer "$id" --decision-file "$tmp" $release_flag </dev/null >/dev/null 2>"$err"; then
+    if "$0" answer "$id" --decision-file "$tmp" \
+      "${answer_flags[@]+"${answer_flags[@]}"}" </dev/null >/dev/null 2>"$err"; then
       # A parent-channel delivery problem is reported on stderr by the answer
       # path even when the close succeeded; keep it visible.
       [ ! -s "$err" ] || cat "$err" >&2
-      printf 'closed: %s\n' "$id"
-      closed=$((closed + 1))
+      if [ -n "$defer_until" ]; then
+        printf 'deferred: %s\n' "$id"
+        deferred=$((deferred + 1))
+      else
+        printf 'closed: %s\n' "$id"
+        closed=$((closed + 1))
+      fi
     else
       reason=$(tr -d '\n' < "$err" | sed 's/^fm-captain-hold: //')
       printf 'skipped: %s (%s)\n' "$id" "$reason"
@@ -1599,7 +1698,7 @@ command_answers() {
     fi
   done
   rm -f -- "$tmp" "$err"
-  printf 'answers: closed=%s skipped=%s\n' "$closed" "$skipped"
+  printf 'answers: closed=%s deferred=%s skipped=%s\n' "$closed" "$deferred" "$skipped"
   [ "$skipped" -eq 0 ]
 }
 
