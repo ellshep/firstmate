@@ -1076,6 +1076,13 @@ With the flag absent the wedge timer spends no current-state read for it and kee
 The flag is a home-local supervision-noise preference and is not inherited by secondmate homes.
 [`architecture.md`](architecture.md) owns the deferral contract and `bin/fm-classify-lib.sh`'s `crew_run_is_validating` owns which verdicts count.
 
+## Shelved task resume
+
+`bin/fm-shelve.sh` records a deferred ship's branch, head commit, note path, and UTC snapshot time in `data/<id>/shelved.meta` while leaving `data/<id>/brief.md` intact.
+On a later fresh dispatch, `bin/fm-spawn.sh` requires that exact commit at `origin/<branch>`, seeds the clean copy from it, and appends a pointer to `data/<id>/resume.md` in the launch brief.
+The original brief remains the task instruction source, and the worker creates its task branch from the saved commit.
+See [`fm-shelve.sh`](../bin/fm-shelve.sh) for the ordered snapshot, hold, and cleanup mechanics.
+
 ## Spawn base from the primary checkout (config/spawn-base-primary-checkout)
 
 The optional local, gitignored `config/spawn-base-primary-checkout` presence flag opts this home into a default-off base for fresh task worktrees on projects that land work locally.

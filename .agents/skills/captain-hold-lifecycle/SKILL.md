@@ -35,6 +35,7 @@ A merge approval uses that existing release path because approval permits the me
 Closing a held row at merge approval instead records completion before landing, so the backlog claims completion before the work actually ships.
 When the answer changes what a task must build, follow `AGENTS.md` section 7's mid-task ask rule to preserve the captain's words in the brief and steer the worker.
 When the captain says "later", record those words with `bin/fm-captain-hold.sh answer <id> --decision-file <path> --defer-until <date>` so the item leaves the live Captain's Call and resurfaces on its date.
+When shelving is requested for a deferred ship that still holds a pooled copy, including when copies run short, use `bin/fm-shelve.sh` to snapshot and release it under the existing cleanup guard.
 An undated "later" answer needs the captain's date before it can be applied; the keyed intake skips it rather than closing the call.
 "A keyed answer applies to its matching captain-held task" is one capability with one owner, `bin/fm-captain-hold.sh answers`, and every channel that carries a captain answer feeds it the same task id and answer; a channel never maps keys to tasks, records a decision, or resolves anything itself.
 Chat already feeds it through `bin/fm-send.sh --resolve-key`, and a captured-answer source feeds it once bound with `bin/fm-captain-hold.sh bind <source-id>`; bind before arming the source, and key each structured question by the held task's id.

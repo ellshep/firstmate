@@ -60,6 +60,9 @@
 #   base_branch= in state/<id>.meta, which a relaunch reuses and later review and
 #   cleanup read; it is refused on secondmates and relaunches, and without it
 #   nothing changes.
+#   A fresh ship with data/<id>/shelved.meta verifies the saved branch and head,
+#   resets the clean copy to that exact origin commit, and points its launch
+#   brief at data/<id>/resume.md. The original brief remains intact.
 #   Ship/scout launches always put fm-dod-lib.sh's current worker role scope
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
@@ -4238,10 +4241,43 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   SOURCE_BRIEF=$BRIEF
   BRIEF="$DATA/$ID/launch-brief.md"
   BRIEF_TMP="$DATA/$ID/.launch-brief.md.${BASHPID:-$$}"
+  SPAWN_SHELVED_HEAD=
+  SPAWN_SHELVED_RECORD="$DATA/$ID/shelved.meta"
+  if [ "$KIND" = ship ] && [ "$RELAUNCH" -eq 0 ] &&
+    { [ -e "$SPAWN_SHELVED_RECORD" ] || [ -L "$SPAWN_SHELVED_RECORD" ]; }; then
+    [ "$MODE" != local-only ] || {
+      echo "error: a local-only task cannot resume a published snapshot branch" >&2
+      exit 1
+    }
+    [ -f "$SPAWN_SHELVED_RECORD" ] && [ ! -L "$SPAWN_SHELVED_RECORD" ] || {
+      echo "error: shelved snapshot for $ID is not a regular file" >&2
+      exit 1
+    }
+    [ "$(grep -c '^branch=' "$SPAWN_SHELVED_RECORD")" = 1 ] &&
+      [ "$(grep -c '^head=' "$SPAWN_SHELVED_RECORD")" = 1 ] &&
+      [ "$(grep -c '^resume=' "$SPAWN_SHELVED_RECORD")" = 1 ] || {
+      echo "error: shelved snapshot for $ID has missing or duplicate fields" >&2
+      exit 1
+    }
+    SPAWN_SHELVED_BRANCH=$(sed -n 's/^branch=//p' "$SPAWN_SHELVED_RECORD")
+    SPAWN_SHELVED_HEAD=$(sed -n 's/^head=//p' "$SPAWN_SHELVED_RECORD")
+    SPAWN_SHELVED_NOTE=$(sed -n 's/^resume=//p' "$SPAWN_SHELVED_RECORD")
+    [ "$SPAWN_SHELVED_BRANCH" = "$BRANCH" ] &&
+      [[ "$SPAWN_SHELVED_HEAD" =~ ^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$ ]] &&
+      [ "$SPAWN_SHELVED_NOTE" = "$DATA/$ID/resume.md" ] &&
+      [ -s "$SPAWN_SHELVED_NOTE" ] && [ ! -L "$SPAWN_SHELVED_NOTE" ] || {
+      echo "error: shelved snapshot for $ID disagrees with its task branch or resume note" >&2
+      exit 1
+    }
+  fi
   {
     fm_brief_worker_role "$STATE" "$ID" "$FM_ROOT" &&
       printf '\n' &&
       cat "$SOURCE_BRIEF" &&
+      if [ -n "$SPAWN_SHELVED_HEAD" ]; then
+        printf '\n## Shelved task resume\nThe clean task copy starts at saved branch %s, commit %s.\nRead %s before continuing the original task instructions.\n' \
+          "$BRANCH" "$SPAWN_SHELVED_HEAD" "$SPAWN_SHELVED_NOTE"
+      fi &&
       if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
         fm_brief_intent_overlay "$CAPTAIN_INTENT"
       fi
@@ -4661,7 +4697,9 @@ freshen_spawn_worktree_base() { # <worktree> <base-branch> <project> <mode>; 2 w
     echo "error: could not fetch origin for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
     return 1
   fi
-  if [ -n "$base" ]; then
+  if [ -n "${SPAWN_SHELVED_HEAD:-}" ]; then
+    default=$BRANCH
+  elif [ -n "$base" ]; then
     default=$base
   else
     if ! git -C "$worktree" remote set-head origin --auto >/dev/null 2>&1; then
@@ -4682,6 +4720,10 @@ freshen_spawn_worktree_base() { # <worktree> <base-branch> <project> <mode>; 2 w
     echo "error: '$target' is not a commit for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
     return 1
   }
+  if [ -n "${SPAWN_SHELVED_HEAD:-}" ] && [ "$expected" != "$SPAWN_SHELVED_HEAD" ]; then
+    echo "error: saved branch $BRANCH moved from snapshot head $SPAWN_SHELVED_HEAD to $expected; refusing to launch a different draft" >&2
+    return 1
+  fi
   reset_ref=$target
   if [ -z "$base" ] && [ -e "$CONFIG/spawn-base-primary-checkout" ] \
     && spawn_base_from_primary_checkout "$worktree" "$project" "$default" "$expected" "$mode"; then
@@ -6320,6 +6362,10 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     fi
     SPAWN_SLOT_CLAIMED=1
   fi
+fi
+if [ -n "${SPAWN_SHELVED_HEAD:-}" ] && [ "$WT" = "$PROJ_ABS" ]; then
+  echo "error: a shelved task needs an isolated worktree to restore its saved branch; backend $BACKEND selected the project checkout" >&2
+  exit 1
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$BACKEND" != t3code ]; then
   freshen_spawn_worktree_base "$WT" "$BASE_BRANCH" "$PROJ_ABS" "$MODE" || exit 1
