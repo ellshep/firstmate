@@ -65,6 +65,30 @@ run_spawn() {
     "$id" "$PROJECT_DIR" "$@"
 }
 
+test_shelved_ship_resumes_from_saved_branch() {
+  local rec id out status head
+  id='pool-shelved-r1'
+  rec=$(make_case shelved "$id")
+  read_case_record "$rec"
+  git -C "$CASE_DIR/publisher" checkout --quiet -b "fm/$id" "$INITIAL_SHA"
+  printf 'saved draft\n' > "$CASE_DIR/publisher/draft.txt"
+  git -C "$CASE_DIR/publisher" add draft.txt
+  git -C "$CASE_DIR/publisher" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm draft
+  git -C "$CASE_DIR/publisher" push --quiet origin "fm/$id"
+  head=$(git -C "$CASE_DIR/publisher" rev-parse HEAD)
+  printf 'Remaining: finish draft.\nBranch: fm/%s.\n' "$id" > "$HOME_DIR/data/$id/resume.md"
+  printf 'branch=fm/%s\nhead=%s\nresume=%s/data/%s/resume.md\nshelved_at=2026-11-02T00:00:00Z\n' \
+    "$id" "$head" "$HOME_DIR" "$id" > "$HOME_DIR/data/$id/shelved.meta"
+
+  out=$(run_spawn "$id" --mode direct-PR --yolo off)
+  status=$?
+  expect_code 0 "$status" "shelved spawn failed: $out"
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$head" ] || fail 'shelved spawn did not seed the saved head'
+  assert_grep "Read $HOME_DIR/data/$id/resume.md" "$HOME_DIR/data/$id/launch-brief.md" \
+    'launch brief omitted the resume note'
+  pass 'fresh dispatch seeds the saved branch and includes its resume note'
+}
+
 test_remote_seeded_home_spawns_from_treehouse_pool() {
   local rec id out status lock
   id='pool-remote-seeded-r13'
@@ -1433,6 +1457,11 @@ test_opt_in_still_refuses_an_unclean_slot_first() {
   pass "with the opt-in an unclean slot is still refused, untouched, before any base is chosen"
 }
 
+if [ "${FM_TEST_ONLY:-}" = shelved ]; then
+  test_shelved_ship_resumes_from_saved_branch
+  exit 0
+fi
+
 test_remote_seeded_home_spawns_from_treehouse_pool
 test_pool_slot_claim_follows_the_spawn_outcome
 test_pool_slot_recorded_by_idle_task_refuses_spawn
@@ -1467,5 +1496,6 @@ test_default_keeps_origin_tip_while_the_primary_leads
 test_opt_in_base_follows_the_delivery_and_the_review_follows_the_base
 test_opt_in_keeps_a_named_base_branch_on_origin
 test_opt_in_still_refuses_an_unclean_slot_first
+test_shelved_ship_resumes_from_saved_branch
 
 echo "# all fm-spawn-pool-base-freshen tests passed"
