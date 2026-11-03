@@ -933,8 +933,9 @@ fm_composer_classify_content() {  # <bordered> <content> [idle_re] [idle_case] [
 # the remainder as typed characters. The worker never typed it and never sees
 # it, but the composer now PROVENLY holds pending text, so every later doorbell
 # is skipped (bin/fm-task-inbox-lib.sh). Observed leaks: `<65;89;31M`,
-# `;89;31M`, `5;112;35M`, `2;35M`, `3;36M`, and one scroll gesture repeating
-# its notch three times.
+# `;89;31M`, `5;112;35M`, `2;35M`, `3;36M`, one scroll gesture repeating
+# its notch three times, and `[<65;123;36M` repeated six times in one Codex
+# composer after the ESC introducer was lost.
 #
 # FM_COMPOSER_STRAY_MOUSE_RE is the ONE spelling of a leaked fragment, and it
 # is deliberately NARROWER than every real report suffix, because the two
@@ -953,7 +954,7 @@ fm_composer_classify_content() {  # <bordered> <content> [idle_re] [idle_case] [
 # narrow the composer row against its own borders and the classifier would
 # rightly call the result ambiguous.
 _FM_COMPOSER_STRAY_FIELD='[0-9][0-9]?[0-9]?[0-9]?'
-FM_COMPOSER_STRAY_MOUSE_RE="<?[0-9]?[0-9]?[0-9]?[0-9]?;$_FM_COMPOSER_STRAY_FIELD(;$_FM_COMPOSER_STRAY_FIELD)?M"
+FM_COMPOSER_STRAY_MOUSE_RE="[[]?<?[0-9]?[0-9]?[0-9]?[0-9]?;$_FM_COMPOSER_STRAY_FIELD(;$_FM_COMPOSER_STRAY_FIELD)?M"
 
 # fm_composer_stray_mouse_reports: every fragment on stdin, one per line.
 fm_composer_stray_mouse_reports() {
