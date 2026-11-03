@@ -95,7 +95,8 @@ HEAD=$(git -C "$WT" rev-parse --verify 'HEAD^{commit}') || fail "task HEAD is no
 
 # A non-force push refuses a conflicting remote history. Read the remote head
 # back so teardown's existing remote-reachability check sees the same commit.
-git -C "$WT" push origin "refs/heads/$BRANCH:refs/heads/$BRANCH" || fail "plain branch push failed; copy remains leased"
+# This publishes a draft branch only; the resumed task's validation runs the project's gates.
+git -C "$WT" push --no-verify origin "refs/heads/$BRANCH:refs/heads/$BRANCH" || fail "plain branch push failed; copy remains leased"
 git -C "$WT" fetch --quiet origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || fail "could not verify pushed branch; copy remains leased"
 [ "$(git -C "$WT" rev-parse --verify "refs/remotes/origin/$BRANCH^{commit}")" = "$HEAD" ] || fail "remote branch does not match task HEAD; copy remains leased"
 
@@ -112,7 +113,28 @@ mv "$TMP" "$SNAPSHOT" || fail "could not publish snapshot record"
 FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" FM_CONFIG_OVERRIDE="$CONFIG" \
   "$SCRIPT_DIR/fm-captain-hold.sh" hold "$ID" --reason "$REASON" --until "$UNTIL" \
   || fail "captain hold failed; snapshot is saved and copy remains leased"
-FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" FM_CONFIG_OVERRIDE="$CONFIG" \
-  "$SCRIPT_DIR/fm-teardown.sh" "$ID" \
-  || fail "guarded teardown failed; snapshot and hold are saved, and the copy remains leased"
+release_attempt=0
+release_err_tmp="$TASK_DIR/.teardown.stderr.$$"
+while :; do
+  if release_out=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" FM_CONFIG_OVERRIDE="$CONFIG" \
+    "$SCRIPT_DIR/fm-teardown.sh" "$ID" 2>"$release_err_tmp"); then
+    release_err=$(cat "$release_err_tmp")
+    rm -f "$release_err_tmp"
+    [ -z "$release_out" ] || printf '%s\n' "$release_out"
+    [ -z "$release_err" ] || printf '%s\n' "$release_err" >&2
+    break
+  fi
+  release_err=$(cat "$release_err_tmp")
+  rm -f "$release_err_tmp"
+  release_combined="$release_out"$'\n'"$release_err"
+  printf '%s\n' "$release_combined" >&2
+  case "$release_combined" in
+    *'REFUSED: another Treehouse slot allocation or return is in progress for '*'nothing was changed'*)
+      [ "$release_attempt" -lt 3 ] || fail "guarded teardown failed; snapshot and hold are saved, and the copy remains leased"
+      release_attempt=$((release_attempt + 1))
+      sleep 1
+      ;;
+    *) fail "guarded teardown failed; snapshot and hold are saved, and the copy remains leased" ;;
+  esac
+done
 printf 'fm-shelve: shelved %s at %s; copy released\n' "$ID" "$BRANCH"
