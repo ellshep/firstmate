@@ -114,14 +114,21 @@ FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" FM_CONFIG
   "$SCRIPT_DIR/fm-captain-hold.sh" hold "$ID" --reason "$REASON" --until "$UNTIL" \
   || fail "captain hold failed; snapshot is saved and copy remains leased"
 release_attempt=0
+release_err_tmp="$TASK_DIR/.teardown.stderr.$$"
 while :; do
   if release_out=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" FM_CONFIG_OVERRIDE="$CONFIG" \
-    "$SCRIPT_DIR/fm-teardown.sh" "$ID" 2>&1); then
+    "$SCRIPT_DIR/fm-teardown.sh" "$ID" 2>"$release_err_tmp"); then
+    release_err=$(cat "$release_err_tmp")
+    rm -f "$release_err_tmp"
     [ -z "$release_out" ] || printf '%s\n' "$release_out"
+    [ -z "$release_err" ] || printf '%s\n' "$release_err" >&2
     break
   fi
-  printf '%s\n' "$release_out" >&2
-  case "$release_out" in
+  release_err=$(cat "$release_err_tmp")
+  rm -f "$release_err_tmp"
+  release_combined="$release_out"$'\n'"$release_err"
+  printf '%s\n' "$release_combined" >&2
+  case "$release_combined" in
     *'REFUSED: another Treehouse slot allocation or return is in progress for '*'nothing was changed'*)
       [ "$release_attempt" -lt 3 ] || fail "guarded teardown failed; snapshot and hold are saved, and the copy remains leased"
       release_attempt=$((release_attempt + 1))
