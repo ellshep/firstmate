@@ -1708,7 +1708,8 @@ test_stray_only_recognizes_observed_leaks() {
   # Every fragment shape recorded from a live wedge, plus a repeated scroll
   # notch (one gesture emits several).
   for content in '3;36M' '2;35M' '<65;89;31M' ';89;31M' '5;112;35M' \
-                 '<65;77;26M<65;77;26M<65;77;26M'; do
+                 '<65;77;26M<65;77;26M<65;77;26M' \
+                 '[<65;123;36M[<65;123;36M[<65;123;36M[<65;123;36M[<65;123;36M[<65;123;36M'; do
     screen=$(stray_screen "$content")
     [ "$(fm_composer_classify_screen "$STRAY_CAPS" "$screen" 2)" = pending ] \
       || fail "fixture for '$content' did not read pending"
@@ -1726,6 +1727,7 @@ test_stray_only_refuses_human_text() {
   # a suffix with no semicolon, and a fragment with real words around it.
   for content in 'hello captain' 'fix the 2;35M thing' 'deploy at 3;36M then wait' \
                  'run ci; retry 2;35M later' 'rebase onto main; then 1;2M' \
+                 '[' 'check [ before sending [<65;123;36M' \
                  '1;2;3;4M' '12345;6;7M' 'M' '31M' '2;35Mx' '2;35m'; do
     screen=$(stray_screen "$content")
     [ "$(fm_composer_classify_screen "$STRAY_CAPS" "$screen" 2)" = pending ] \
@@ -1755,7 +1757,7 @@ test_stray_only_requires_a_proven_pending_composer() {
 
 test_stray_only_preserves_adjacent_fragment_sequence() {
   local content screen out
-  content='<65;77;26M<65;77;26M'
+  content='[<65;123;36M[<65;123;36M'
   screen=$(stray_screen "$content")
   out=$(fm_composer_stray_only "$STRAY_CAPS" "$screen" 2) \
     || fail "an adjacent repeated fragment was not recognized"
@@ -1766,7 +1768,7 @@ test_stray_only_preserves_adjacent_fragment_sequence() {
 
 test_stray_strip_preserves_row_geometry() {
   local screen stripped before after
-  screen=$(stray_screen '3;36M')
+  screen=$(stray_screen '[<65;123;36M[<65;123;36M')
   stripped=$(printf '%s\n' "$screen" | fm_composer_strip_stray_mouse_reports)
   before=$(printf '%s\n' "$screen" | LC_ALL=C awk 'NR==3 {print length($0)}')
   after=$(printf '%s\n' "$stripped" | LC_ALL=C awk 'NR==3 {print length($0)}')
@@ -1775,7 +1777,7 @@ test_stray_strip_preserves_row_geometry() {
   [ "$(printf '%s\n' "$screen" | wc -l)" = "$(printf '%s\n' "$stripped" | wc -l)" ] \
     || fail "blanking a fragment changed the screen's row count"
   case "$stripped" in
-    *3\;36M*) fail "the fragment survived the strip" ;;
+    *\[\<65\;123\;36M*) fail "the fragment survived the strip" ;;
   esac
   pass "fm_composer_strip_stray_mouse_reports: fragments are blanked in place, never narrowed away"
 }
