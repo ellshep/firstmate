@@ -190,15 +190,20 @@ seconds_until() {  # <deadline-epoch>
 }
 
 # Every lock this script takes goes through here: bounded by the caller's
-# remaining budget, 124 when a live holder still owns it at the deadline
-# (FM_LOCK_HELD_PID names it). An unbounded wait here is what let a wedged
-# harvest keep the detached worker alive for hours past its own timeout.
+# remaining budget, 124 when the lock is still contended at the deadline
+# (FM_LOCK_HELD_PID names the holder only when it is confirmed live). An
+# unbounded wait here is what let a wedged harvest keep the detached worker
+# alive for hours past its own timeout.
 take_lock() {  # <lockdir> <seconds>
   fm_lock_acquire_wait_bounded "$1" "$2"
 }
 
 held_by() {  # human-readable holder of the lock the last take_lock refused
-  printf 'pid %s' "${FM_LOCK_HELD_PID:-unknown}"
+  if [ -n "${FM_LOCK_HELD_PID:-}" ]; then
+    printf 'pid %s' "$FM_LOCK_HELD_PID"
+  else
+    printf 'an owner that could not be confirmed live'
+  fi
 }
 
 # Is a `running` record a stage that is genuinely still in flight? Two
