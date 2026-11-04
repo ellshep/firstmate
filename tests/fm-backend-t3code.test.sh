@@ -1908,6 +1908,31 @@ test_spawn_abort_returns_lease_only_after_archive() {  # <ok|fail>
   fi
 }
 
+# A fresh non-secondmate spawn leases its worktree durably (T3CODE_LEASED=1)
+# and creates its T3 thread before propagate_env_local runs; when that copy
+# fails, spawn_abort_cleanup's SPAWN_WORKTREE_ABORT_CLEANUP block already
+# returns the lease once (SPAWN_WORKTREE_RETURNED=1), so the later
+# T3CODE_LEASED fallback at the end of the function must not return it a
+# second time - a second `treehouse return --force` on a slot the pool may
+# since have handed to another task would forcibly release that other task's
+# live work.
+test_spawn_t3code_env_copy_abort_returns_lease_once() {
+  local id out rc return_count
+  id=$(t3_uid t3envcopyz)
+  t3_case spawn-t3code-env-copy-abort
+  t3_worker_setup "$id"
+  # rm -f refuses a non-empty directory, so propagate_env_local's unconditional
+  # `rm -f "$worktree/.fm-env-local.tmp"` fails deterministically, well after
+  # the lease and the thread it is guarding already exist.
+  mkdir -p "$WORKER_WT/.fm-env-local.tmp/blocker"
+  out=$(t3_worker_spawn "$id" claude --model claude-sonnet-5); rc=$?
+  [ "$rc" -ne 0 ] || fail "a spawn whose environment copy cannot be prepared should abort"$'\n'"$out"
+  assert_contains "$out" "could not remove stale temporary environment copy" "the abort did not name the env-copy failure"
+  return_count=$(grep -c '"args":"return --force' "$LOG")
+  [ "$return_count" -eq 1 ] || fail "a T3-leased worktree returned $return_count times after an env-copy abort, want exactly 1 (double free)"$'\n'"$out"
+  pass "fm-spawn.sh --backend t3code: an env-copy abort for a leased worktree returns the lease exactly once"
+}
+
 test_uncertain_thread_launch_keeps_lease() {
   local id out rc
   id=$(t3_uid t3uncertain)
@@ -2797,6 +2822,7 @@ test_spawn_refuses_launch_settings_t3_cannot_honor launch-env-allowlist HOME "co
 test_spawn_refuses_raw_launch_command
 test_spawn_abort_returns_lease_only_after_archive ok
 test_spawn_abort_returns_lease_only_after_archive fail
+test_spawn_t3code_env_copy_abort_returns_lease_once
 test_uncertain_thread_launch_keeps_lease
 test_spawn_never_writes_inherited_git_config
 test_spawn_secondmate_refuses_symlinked_claude_settings
