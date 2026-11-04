@@ -1980,6 +1980,9 @@ spawn_abort_cleanup() {
     fm_backend_t3code_home_env_cleanup "$PROJ_ABS" \
       || echo "warning: could not remove the T3 environment this spawn wrote into $PROJ_ABS for $ID; remove it before the home runs again" >&2
   fi
+  if [ "$T3CODE_LEASED" = 1 ] && [ "$SPAWN_WORKTREE_RETURNED" = 1 ]; then
+    T3CODE_LEASED=0
+  fi
   if [ "$T3CODE_LEASED" = 1 ] && [ -n "${WT:-}" ]; then
     T3CODE_LEASED=0
     rm -f "$WT/.claude/settings.local.json" 2>/dev/null || true

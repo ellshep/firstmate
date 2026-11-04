@@ -11,6 +11,7 @@ GRANT="$ROOT/bin/fm-wake-grant.sh"
 WATCH="$ROOT/bin/fm-watch.sh"
 TMP_ROOT=$(fm_test_tmproot fm-inactive-reconcile)
 fm_git_identity fmtest fmtest@example.invalid
+REAL_NODE=$(command -v node || true)
 
 set_mtime() { # <epoch> <path>
   local epoch=$1 path=$2 stamp
@@ -205,6 +206,40 @@ assert_withheld() {
   ! grep -q inactive-outcome: "$MAIN/state/.wake-queue" 2>/dev/null || fail "$1: supervisor woke"
 }
 
+# Installs a fake `node` in <world>/fakebin that answers T3's `state` MCP
+# call for exactly <thread-id>: the first probe (task_holds_live_work's own
+# agent-state read) reports a running turn, the second (fm_busy_classify_meta's
+# independent native-busy read) reports the thread archived. Those are two
+# separate live reads against the real T3 server, so a flaky second read can
+# disagree with the first even while the agent is genuinely still alive - the
+# exact race task_holds_live_work's t3code-native-unknown arm exists to cover.
+# Every other `node` invocation (notably the adapter's own `node -e` JSON
+# parse of the JSON this fake prints) is handed to the real interpreter.
+write_t3code_fake_node() { # <world> <thread-id>
+  local fake="$1/fakebin"
+  mkdir -p "$fake"
+  cat > "$fake/node" <<SH
+#!/usr/bin/env bash
+case "\$1" in
+  *fm-t3-mcp.mjs)
+    shift
+    if [ "\$1" = state ] && [ "\$2" = --thread ] && [ "\$3" = "\${FM_FAKE_T3_THREAD:-}" ]; then
+      count=\$(( \$(cat "\${FM_FAKE_T3_COUNTER:?}" 2>/dev/null || echo 0) + 1 ))
+      printf '%s\n' "\$count" > "\$FM_FAKE_T3_COUNTER"
+      if [ "\$count" -eq 1 ]; then
+        printf '{"ok":true,"status":"running"}\n'
+      else
+        printf '{"ok":true,"archived":true}\n'
+      fi
+      exit 0
+    fi
+    ;;
+esac
+exec "$REAL_NODE" "\$@"
+SH
+  chmod +x "$fake/node"
+}
+
 test_busy_agent_withholds_terminal_outcome() {
   run_live_child busy-agent busy -10
   assert_withheld "busy agent"
@@ -228,6 +263,22 @@ test_idle_agent_with_rewritten_meta_keeps_terminal_outcome() {
   run_live_child rewritten-meta idle -10 rewrite
   [ "$(outcome_count "$MAIN" pending)" = 1 ] || fail "rewritten meta withheld the terminal outcome"
   pass "idle finished agent with rewritten meta keeps the terminal outcome"
+}
+
+test_t3code_native_unknown_withholds_terminal_outcome() {
+  local status_epoch thread_id
+  [ -n "$REAL_NODE" ] || { echo "skip: node absent, cannot validate the t3code-native regression"; return 0; }
+  make_world t3code-native-unknown
+  status_epoch=$(( $(date +%s) - 600 ))
+  thread_id="thread-t3-$$"
+  write_child "$MAIN" child "done[at=$status_epoch]: PR https://example.test/owner/repo/pull/1 checks green" "s$((status_epoch - 10)).1.1"
+  printf 'backend=t3code\nt3_thread_id=%s\n' "$thread_id" >> "$MAIN/state/child.meta"
+  age "$MAIN/state/child.meta" "$MAIN/state/child.status"
+  write_t3code_fake_node "$WORLD" "$thread_id"
+  FM_FAKE_T3_THREAD=$thread_id FM_FAKE_T3_COUNTER="$WORLD/t3-probe-count" \
+    FM_FAKE_CREW_STATE='done' run_reconcile "$MAIN" --startup
+  assert_withheld "t3code ambiguous native status"
+  pass "a live T3 agent with an ambiguous native status withholds the terminal outcome"
 }
 
 test_dead_agent_keeps_terminal_outcome() {
@@ -1453,6 +1504,7 @@ test_busy_agent_withholds_terminal_outcome
 test_relaunched_idle_agent_withholds_terminal_outcome
 test_idle_finished_agent_keeps_terminal_outcome
 test_idle_agent_with_rewritten_meta_keeps_terminal_outcome
+test_t3code_native_unknown_withholds_terminal_outcome
 test_dead_agent_keeps_terminal_outcome
 test_branch_ack_retires_inactive_outcome_receipt
 test_unpushed_ci_ready_done_is_not_published
