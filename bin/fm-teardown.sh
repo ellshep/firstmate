@@ -325,9 +325,9 @@
 #     root still exists, so the account's healthy LaunchAgent worker and every
 #     live remote secondmate worker are out of scope. Best effort: a sweep
 #     failure never blocks this teardown.
-#   Fix 4 - stop running database containers whose own metadata binds them to
-#     this task's worktree before returning the copy. Runtime failures are
-#     reported but never turn an otherwise eligible teardown into a refusal.
+#   Fix 4 - stop running database containers, then remove Supabase containers
+#     and volumes whose labels identify this task's worktree and stack.
+#     Runtime failures warn but never refuse an otherwise eligible teardown.
 #
 # Completion guard. Every refusal above exits non-zero on purpose, so a caller
 # treats exit 0 as proof the whole sequence ran. Bash breaks that on its own:
@@ -2604,12 +2604,9 @@ stop_worktree_databases() {  # <worktree> <project clone>
   if ! command -v jq >/dev/null 2>&1; then
     echo "teardown: cannot inspect worktree containers for $ID (jq unavailable)" >&2
   else
-    local found_runtime=0
     for runtime in podman docker; do
       command -v "$runtime" >/dev/null 2>&1 || continue
-      found_runtime=1
       if ! ids=$("$runtime" ps -q 2>/dev/null); then
-        echo "teardown: $runtime runtime unavailable; worktree containers could not be checked for $ID" >&2
         continue
       fi
       while IFS= read -r id; do
@@ -2651,9 +2648,6 @@ stop_worktree_databases() {  # <worktree> <project clone>
         fi
       done <<< "$ids"
     done
-    if [ "$found_runtime" -eq 0 ]; then
-      echo "teardown: no container runtime available; worktree containers could not be checked for $ID" >&2
-    fi
   fi
   command -v supabase >/dev/null 2>&1 || return 0
   while IFS= read -r config; do
@@ -2674,6 +2668,72 @@ stop_worktree_databases() {  # <worktree> <project clone>
       echo "teardown: Supabase project $project_id could not be stopped for $ID" >&2
     fi
   done < <(find "$wt" -type f -path '*/supabase/config.toml' -not -path '*/node_modules/*' -print 2>/dev/null)
+  return 0
+}
+
+remove_worktree_supabase_stacks() {  # <worktree>
+  local wt=$1 runtime ids id details project workdir volumes volume
+  local projects=$'\n' foreign_projects=$'\n'
+  [ -d "$wt" ] || return 0
+  command -v jq >/dev/null 2>&1 || {
+    echo "warning: jq unavailable; cannot remove Supabase stacks for $ID" >&2
+    return 0
+  }
+  for runtime in podman docker; do
+    command -v "$runtime" >/dev/null 2>&1 || continue
+    # A stopped Supabase stack still has containers, so include all states.
+    ids=$("$runtime" ps -aq 2>/dev/null) || continue
+    [ -n "$ids" ] || continue
+    while IFS= read -r id; do
+      [ -n "$id" ] || continue
+      details=$("$runtime" inspect "$id" 2>/dev/null) || {
+        echo "warning: $runtime could not inspect container $id for $ID" >&2
+        continue
+      }
+      project=$(printf '%s\n' "$details" | jq -r '.[0].Config.Labels["com.supabase.cli.project"] // empty' 2>/dev/null) || {
+        echo "warning: $runtime could not read Supabase labels on $id for $ID" >&2
+        continue
+      }
+      [ -n "$project" ] || continue
+      workdir=$(printf '%s\n' "$details" | jq -r '.[0].Config.Labels["com.supabase.cli.workdir"] // empty' 2>/dev/null) || {
+        echo "warning: $runtime could not read Supabase workdir on $id for $ID" >&2
+        continue
+      }
+      case "$workdir" in
+        "$wt"|"$wt"/*)
+          case "$projects" in *$'\n'"$project"$'\n'*) ;; *) projects+="$project"$'\n' ;; esac
+          if ! "$runtime" rm -f "$id" >/dev/null 2>&1; then
+            echo "warning: $runtime could not remove Supabase container $id for $ID" >&2
+          fi
+          ;;
+        *)
+          case "$foreign_projects" in *$'\n'"$project"$'\n'*) ;; *) foreign_projects+="$project"$'\n' ;; esac
+          ;;
+      esac
+    done <<< "$ids"
+    while IFS= read -r project; do
+      [ -n "$project" ] || continue
+      # A reused project label cannot prove volume ownership when another
+      # worktree still has a container for that project.
+      case "$foreign_projects" in
+        *$'\n'"$project"$'\n'*)
+          echo "warning: $runtime kept Supabase volumes for shared project $project for $ID" >&2
+          continue ;;
+      esac
+      volumes=$("$runtime" volume ls -q --filter "label=com.supabase.cli.project=$project" 2>/dev/null) || {
+        echo "warning: $runtime could not list Supabase volumes for $project for $ID" >&2
+        continue
+      }
+      while IFS= read -r volume; do
+        [ -n "$volume" ] || continue
+        if ! "$runtime" volume rm "$volume" >/dev/null 2>&1; then
+          echo "warning: $runtime could not remove Supabase volume $volume for $ID" >&2
+        fi
+      done <<< "$volumes"
+    done <<< "$projects"
+    projects=$'\n'
+    foreign_projects=$'\n'
+  done
   return 0
 }
 
@@ -4095,6 +4155,7 @@ fi
 
 if [ "$KIND" != secondmate ] && teardown_owns_worktree; then
   stop_worktree_databases "$WT" "$PROJ"
+  remove_worktree_supabase_stacks "$WT"
 fi
 if [ "$KIND" = ship ] && teardown_owns_worktree && [ -e "$CONFIG/pipeline-spend" ]; then
   FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" FM_CONFIG_OVERRIDE="$CONFIG" \
