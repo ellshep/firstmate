@@ -24,11 +24,16 @@
 # contract is decided: --mode, --yolo, and the ship branch resolved from
 # --branch-prefix are written into the meta alongside the kind= flip. Firstmate resolves all three at promotion time, having just
 # read the scout's report (AGENTS.md section 7); data/projects.md holds the
-# captain's standing posture as context, and this script never looks that posture
-# up. The registry IS read for one thing only: the project's forge binding, which
-# is a project fact rather than a per-task decision, so promotion takes it from
-# there instead of asking firstmate to remember it.
-# no-mistakes-prod-only is a registry policy rather than a task mode and is refused.
+# captain's standing posture, which promotion also reads to guard a weaker
+# --mode exactly as bin/fm-spawn.sh and bin/fm-brief.sh do (AGENTS.md section 7):
+# a --mode less rigorous than the project's resolved default (an unregistered
+# project resolves to no-mistakes) requires --mode-reason, recorded as
+# mode_reason= in the meta alongside mode=. The registry is also read for the
+# project's forge binding, which is a project fact rather than a per-task
+# decision, so promotion takes it from there instead of asking firstmate to
+# remember it.
+# no-mistakes-prod-only is a registry policy rather than a task mode, is refused
+# as --mode, and is excluded from the weaker-mode guard above like its siblings.
 # When this home has an automatic backlog, --title supplies the ship row's
 # current work title; promotion retains the scout's id and In-flight ownership.
 # A scout spawned on a named base records base_branch= in its meta; promotion
@@ -50,7 +55,7 @@
 # no-mistakes mode only (bin/fm-project-mode.sh --pr; bin/fm-dod-lib.sh's
 # fm_pr_text_valid owns where it is accepted); the ship's Definition of done then
 # carries it.
-# Usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--title <ship-title>] [--branch-prefix <prefix>] [--upstream-consent <host>/<owner>/<repo>]
+# Usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--title <ship-title>] [--branch-prefix <prefix>] [--upstream-consent <host>/<owner>/<repo>] [--mode-reason <reason>]
 # --upstream-consent records the captain's one-off approval for this task to
 # publish to firstmate's own upstream repository; promotion applies the same
 # self-repository publication gate as bin/fm-spawn.sh (bin/fm-role-lib.sh), so
@@ -93,6 +98,7 @@ FORGE=none
 PR_TEXT=auto
 UPSTREAM_CONSENT=
 UPSTREAM_CONSENT_SET=0
+MODE_REASON=
 POS=()
 want_value=
 for a in "$@"; do
@@ -106,6 +112,7 @@ for a in "$@"; do
       title) TITLE=$a ;;
       branch-prefix) BRANCH_PREFIX=$a ;;
       upstream-consent) UPSTREAM_CONSENT=$a; UPSTREAM_CONSENT_SET=1 ;;
+      mode-reason) MODE_REASON=$a ;;
     esac
     want_value=
     continue
@@ -121,6 +128,8 @@ for a in "$@"; do
     --branch-prefix=*) BRANCH_PREFIX=${a#--branch-prefix=} ;;
     --upstream-consent) want_value="upstream-consent" ;;
     --upstream-consent=*) UPSTREAM_CONSENT=${a#--upstream-consent=}; UPSTREAM_CONSENT_SET=1 ;;
+    --mode-reason) want_value="mode-reason" ;;
+    --mode-reason=*) MODE_REASON=${a#--mode-reason=} ;;
     *) POS+=("$a") ;;
   esac
 done
@@ -252,6 +261,15 @@ else
     exit 1
   }
 fi
+delivery_rigor_rank() { # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task mode
+  case "$1" in
+  no-mistakes) echo 3 ;;
+  direct-PR) echo 2 ;;
+  local-only) echo 1 ;;
+  *) echo 0 ;;
+  esac
+}
+
 # Unlike the mode and yolo above, the forge is not a per-task decision: it is the
 # captain's project binding, so promotion takes it from the registry rather than
 # from a flag firstmate must remember.
@@ -269,6 +287,20 @@ if [ -n "$PROMOTE_PROJECT" ]; then
     exit 1
   fi
   [ "$MODE" != no-mistakes ] || PR_TEXT=${PROMOTE_STANDING_PR:-auto}
+  # The registry holds the captain's standing posture, so dropping below it is
+  # allowed (a current explicit firstmate decision wins) but never silent. An
+  # unregistered project resolves to the same no-mistakes standing default, which
+  # is why the notice names the standing posture rather than the registry line. A
+  # conditional policy is excluded: both of its legs are legitimate classifications.
+  PROMOTE_STANDING_MODE=$("$FM_ROOT/bin/fm-project-mode.sh" --raw "$PROMOTE_PROJECT_NAME" 2>/dev/null | cut -d' ' -f1) || PROMOTE_STANDING_MODE=
+  if [ -n "$PROMOTE_STANDING_MODE" ] && [ "$PROMOTE_STANDING_MODE" != no-mistakes-prod-only ] &&
+    [ "$(delivery_rigor_rank "$MODE")" -lt "$(delivery_rigor_rank "$PROMOTE_STANDING_MODE")" ]; then
+    case "$MODE_REASON" in *$'\n'*|*$'\r'*) echo 'error: --mode-reason must be one line' >&2; exit 1 ;; esac
+    [ -n "$(printf '%s' "$MODE_REASON" | tr -d '[:space:]')" ] || {
+      echo "error: --mode $MODE is weaker than resolved default $PROMOTE_STANDING_MODE for $PROMOTE_PROJECT_NAME; pass --mode-reason" >&2
+      exit 1
+    }
+  fi
 fi
 BASE_BRANCH=$(sed -n 's/^base_branch=//p' "$META" | head -n 1)
 fm_base_branch_valid "$BASE_BRANCH" "$MODE" "$FORGE" "fm-promote.sh $ID" || exit 1
@@ -431,10 +463,11 @@ if [ "$PROMOTE_BACKLOG" = 1 ]; then
 fi
 
 TMP="$STATE/.$ID.meta.promote.${BASHPID:-$$}"
-grep -v -e '^kind=' -e '^mode=' -e '^yolo=' -e '^branch=' -e '^upstream_consent=' "$META" > "$TMP"
+grep -v -e '^kind=' -e '^mode=' -e '^mode_reason=' -e '^yolo=' -e '^branch=' -e '^upstream_consent=' "$META" > "$TMP"
 {
   echo "kind=ship"
   echo "mode=$MODE"
+  [ -z "$MODE_REASON" ] || echo "mode_reason=$MODE_REASON"
   echo "yolo=$YOLO"
   echo "branch=$BRANCH"
   [ -z "$UPSTREAM_CONSENT" ] || echo "upstream_consent=$UPSTREAM_CONSENT"

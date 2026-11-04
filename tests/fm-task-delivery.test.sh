@@ -301,6 +301,52 @@ test_promote_requires_and_records_the_delivery_contract() {
   pass "fm-promote: promotion requires the delivery contract and records it exactly once"
 }
 
+# The registry is the captain's standing posture here too: a promotion that
+# decides a weaker --mode than the project's resolved default requires the same
+# explicit reason bin/fm-spawn.sh and bin/fm-brief.sh require, and records it
+# into the meta alongside mode=. An unregistered project resolves to the same
+# no-mistakes standing default, so a downgrade there is announced too. A
+# conditional policy is excluded because both of its legs are legitimate
+# classifications.
+test_promote_requires_reason_for_rigor_downgrade() {
+  local rec home proj fakebin out label mode registry expect registered n=0 id meta
+  while IFS='|' read -r label registry mode expect registered; do
+    [ -n "$label" ] || continue
+    n=$((n + 1))
+    rec=$(make_home "promote-deviation-$n" "$registry")
+    IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+    id="promote-dev-$n"
+    meta="$home/state/$id.meta"
+    printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$proj" > "$meta"
+    out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode "$mode" --yolo off 2>&1)
+    case "$expect" in
+      notice)
+        assert_contains "$out" "--mode-reason" \
+          "$label: unexplained downgrade was not refused"
+        assert_contains "$out" "resolved default $registered" \
+          "$label: refusal did not name the compared standing mode"
+        assert_grep 'kind=scout' "$meta" "$label: the refused downgrade still promoted the task"
+        out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+          "$PROMOTE" "$id" --mode "$mode" --yolo off --mode-reason 'fixture delivery choice' 2>&1)
+        assert_not_contains "$out" "pass --mode-reason" \
+          "$label: reasoned downgrade was still refused" ;;
+      quiet)
+        assert_not_contains "$out" "pass --mode-reason" \
+          "$label: required a reason when the mode was not weaker" ;;
+    esac
+  done <<'ROWS'
+no-mistakes project promoted to direct-PR|- proj [no-mistakes] - fixture (added 2026-01-01)|direct-PR|notice|no-mistakes
+no-mistakes project promoted to local-only|- proj [no-mistakes] - fixture (added 2026-01-01)|local-only|notice|no-mistakes
+no-mistakes project promoted to no-mistakes|- proj [no-mistakes] - fixture (added 2026-01-01)|no-mistakes|quiet|no-mistakes
+local-only project promoted to no-mistakes|- proj [local-only] - fixture (added 2026-01-01)|no-mistakes|quiet|local-only
+conditional policy promoted to direct-PR|- proj [no-mistakes-prod-only] - fixture (added 2026-01-01)|direct-PR|quiet|no-mistakes-prod-only
+unregistered project resolves to the no-mistakes standing default|- other [no-mistakes] - fixture (added 2026-01-01)|direct-PR|notice|no-mistakes
+ROWS
+  pass "fm-promote: a weaker mode needs a matching reason; equal or stronger modes do not"
+}
+
 # A home with config/spawn-base-primary-checkout can start a scout from the
 # primary checkout's default branch, which may carry commits origin has never
 # received, so a promotion to a publishing mode names origin's default branch as
@@ -2013,6 +2059,7 @@ test_spawn_refuses_a_brief_mode_mismatch
 test_spawn_requires_reason_for_rigor_downgrade
 test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract
+test_promote_requires_reason_for_rigor_downgrade
 test_promote_names_origin_for_a_publishing_mode_in_an_opted_in_home
 test_promote_refuses_a_symlinked_task_record
 test_promotion_delivers_the_real_definition_of_done
