@@ -614,7 +614,7 @@ task_holds_live_work() { # <id> <meta> <timeout> <last-status-line>; 0 when the 
     _ "$SCRIPT_DIR/fm-backend.sh" "$SCRIPT_DIR/fm-busy-lib.sh" "$backend" "$target" "$meta" "$id" "$STATE") || rc=$?
   [ "$rc" -ne 124 ] || return 3
   case "$verdict" in
-    'alive busy'*) return 0 ;;
+    'alive busy'*|'alive unknown t3code-native'*) return 0 ;;
     alive*)
       spawn_epoch=$(meta_field "$meta" spawn_gen)
       spawn_epoch=${spawn_epoch#s}

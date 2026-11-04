@@ -1923,7 +1923,9 @@ spawn_abort_cleanup() {
   if [ "$SPAWN_ENDPOINT_ABORT_CLEANUP" = 1 ]; then
     SPAWN_ENDPOINT_ABORT_CLEANUP=0
     [ "$BACKEND" = zellij ] && tab_id=$ZELLIJ_TAB_ID
-    if ! fm_backend_kill "$BACKEND" "$T" "$tab_id" "fm-$ID"; then
+    if fm_backend_kill "$BACKEND" "$T" "$tab_id" "fm-$ID"; then
+      SPAWN_ENDPOINT_CLOSED=1
+    else
       echo "error: could not close endpoint '$T' after the environment copy failure" >&2
       endpoint_closed=0
       status=1
@@ -2055,6 +2057,9 @@ spawn_abort_cleanup() {
         echo "warning: another spawn of $ID holds its spawn lock; leaving its $HARNESS wiring, temp root, and staged launch file in place" >&2
       fi
     fi
+  fi
+  if [ "$HERDR_LEASED" = 1 ] && [ "$SPAWN_WORKTREE_RETURNED" = 1 ]; then
+    HERDR_LEASED=0
   fi
   # A durable Herdr lease outlives the pane, unlike the process lease the
   # interactive command used to take, so an abort that leaves no record returns
