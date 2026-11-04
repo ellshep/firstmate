@@ -1432,7 +1432,7 @@ test_watcher_exits_on_state_teardown_during_startup() {
   # A state directory torn down and recreated at the same path just after the
   # watcher claimed its lock - before the main loop - is still a teardown: the
   # empty lock in the recreated directory was never released by a successor.
-  local dir state fakebin out pid end stopped rc
+  local dir state fakebin out pid end stopped rc i
   dir=$(make_case startup-teardown)
   state="$dir/state"
   fakebin="$dir/fakebin"
@@ -1447,7 +1447,17 @@ test_watcher_exits_on_state_teardown_during_startup() {
     [ -e "$state/.watch.lock/watcher-path" ] && kill -STOP "$pid" 2>/dev/null && { stopped=1; break; }
   done
   [ "$stopped" -eq 1 ] || fail "watcher never finished claiming its lock: $(cat "$out")"
-  rm -rf "$state"
+  # The watcher's first loop iteration can detach a side-band helper (e.g. the
+  # home-summary refresh) before kill -STOP above takes effect; that helper is
+  # a separate process so the STOP does not pause it, and it can still be
+  # writing into $state here. Retry the removal until it actually succeeds
+  # instead of recreating a directory that still holds leftover lock evidence.
+  i=0
+  while ! rm -rf "$state" 2>/dev/null && [ "$i" -lt 100 ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -e "$state" ] && fail "could not tear down the state directory (left behind by a detached helper)"
   mkdir -p "$state"
   kill -CONT "$pid" 2>/dev/null || true
   # wait_for_exit returns the watcher's own status, or TERMs a watcher that
