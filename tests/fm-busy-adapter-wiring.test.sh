@@ -508,10 +508,10 @@ test_codex_unverified_until_a_semantic_source_exists() {
   assert_absent "$WT_DIR/.codex/hooks.json" "codex must not install unverified busy hooks"
   assert_contains "$out" 'spawned '"$id"' harness=codex' "codex spawn did not complete normally"
   out=$(classify codex "$id" "$state")
-  [ "$out" = "unknown codex-unverified" ] || fail "codex must classify 'unknown codex-unverified', got '$out'"
+  [ "$out" = "unknown capture-failed" ] || fail "codex without a viewport must classify unknown, got '$out'"
   out=$(fm_busy_classify tmux fake:w codex "$id" "$state" '• Working (6s • esc to interrupt)')
-  [ "$out" = "unknown codex-unverified" ] || fail "codex must not fall back to footer text, got '$out'"
-  pass "codex classifies unknown until a semantic source is verified, never idle or footer-matched"
+  [ "$out" = "unknown capture-failed" ] || fail "codex must not use a scrollback tail, got '$out'"
+  pass "codex leaves push sources unarmed and requires a visible viewport"
 }
 
 # Gemini's hooks are PROJECT hooks in the worktree's own .gemini/settings.json,
@@ -1110,7 +1110,7 @@ test_secondmate_codex_and_grok_do_not_arm_a_parent_turnend() {
   assert_not_contains "$launch" "turn-ended" "codex secondmate launch referenced a parent turn-ended signal"
   assert_not_contains "$launch" "notify=" "codex secondmate launch included the parent turn-end notify hook"
   out=$(classify codex "$id" "$state")
-  [ "$out" = "unknown codex-unverified" ] || fail "codex secondmate must stay unknown, got '$out'"
+  [ "$out" = "unknown capture-failed" ] || fail "codex secondmate without a viewport must stay unknown, got '$out'"
 
   case_dir="$TMP_ROOT/sm-grok"
   id='sm-grok'

@@ -1,0 +1,8 @@
+Would you like to run this command?
+
+  1. Yes, proceed
+  2. No, and tell Codex what to do differently
+
+› Ask Codex to do anything
+
+  ? for shortcuts

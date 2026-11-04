@@ -666,6 +666,26 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "tests/fixtures/codex-approval-visible.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/codex-busy-visible.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/codex-idle-agents-visible.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/codex-idle-visible.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/codex-unrecognized-visible.txt",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": ".agents/skills/agent-skill-trigger-index/SKILL.md",
       "audience": "agent-runtime"
     },

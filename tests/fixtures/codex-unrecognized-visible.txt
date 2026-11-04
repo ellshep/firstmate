@@ -1,0 +1,4 @@
+• Ran a command
+  └ Waiting for output
+
+  ? for shortcuts
