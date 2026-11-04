@@ -269,6 +269,21 @@ test_update_body_guards() {
   pass "fm-tasks-axi update appends and refuses empty or shrinking replacements unless forced"
 }
 
+test_update_append_body_preserves_utf8() {
+  local dir shown
+  dir=$(make_split body-utf8)
+  wrapper_from_code "$dir" add note-u "Note" --body 'A "quoted" café note with accents.' >/dev/null \
+    || fail "could not create an accented, quote-containing note"
+  printf 'Additional café detail.\n' > "$dir/more.txt"
+  wrapper_from_code "$dir" update note-u --append-body "$dir/more.txt" >/dev/null || fail "append body failed"
+  shown=$(wrapper_from_code "$dir" show note-u --full)
+  assert_contains "$shown" 'café note with accents' \
+    "append-body corrupted the accented character in the preserved note"
+  assert_contains "$shown" 'Additional café detail' \
+    "append-body corrupted the accented character in the appended text"
+  pass "fm-tasks-axi update --append-body preserves UTF-8 bytes decoded from a JSON-quoted body"
+}
+
 test_guard_reports_regular_code_root_backlog
 test_guard_reports_foreign_link_and_archive
 test_guard_silent_for_single_home
@@ -280,6 +295,7 @@ if [ "$HAVE_TASKS_AXI" = 1 ]; then
   test_wrapper_refuses_add_start
   test_wrapper_single_home
   test_update_body_guards
+  test_update_append_body_preserves_utf8
 else
   echo "skip: tasks-axi not found; home-addressing cases not run"
 fi

@@ -180,7 +180,7 @@ if [ "${1:-}" = update ] && { [ -n "$BODY_FILE" ] || [ -n "$APPEND_BODY" ]; }; t
   current=$(tasks-axi show "${2:-}" --full) || fail "could not read current body for ${2:-}"
   old_file=$(mktemp "${TMPDIR:-/tmp}/fm-tasks-old-body.XXXXXX") || fail "could not stage current body"
   trap 'rm -f "$old_file" "${merged:-}"' EXIT
-  printf '%s\n' "$current" | perl -MJSON::PP -ne 'if (/^  body: (.*)$/) { $body=$1; print $body =~ /^"/ ? JSON::PP::decode_json($body) : $body; $found=1 } END { exit !$found }' > "$old_file" || fail "could not decode current body for ${2:-}"
+  printf '%s\n' "$current" | perl -MJSON::PP -ne 'BEGIN { binmode STDOUT, ":raw" } if (/^  body: (.*)$/) { $body=$1; my $value = $body =~ /^"/ ? JSON::PP::decode_json($body) : $body; utf8::encode($value) if utf8::is_utf8($value); print $value; $found=1 } END { exit !$found }' > "$old_file" || fail "could not decode current body for ${2:-}"
   old_bytes=$(wc -c < "$old_file" | tr -d ' ')
   if [ -n "$APPEND_BODY" ]; then
     merged=$(mktemp "${TMPDIR:-/tmp}/fm-tasks-body.XXXXXX") || fail "could not stage appended body"

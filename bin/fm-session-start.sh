@@ -321,9 +321,11 @@ if [ -z "${FM_SESSION_START_STAGE_FILE:-}" ]; then
         env FM_SESSION_START_STAGE_FILE="$SESSION_START_STAGE_FILE" \
         "$SCRIPT_DIR/fm-session-start.sh" --reemit > "${REEMIT_FULL_TMP:-/dev/stdout}"
     fi
-    if [ -n "$REEMIT_FULL_TMP" ]; then
-      mv -f "$REEMIT_FULL_TMP" "$REEMIT_FULL" 2>/dev/null || REEMIT_FULL=
-    else
+    if [ -z "$REEMIT_FULL_TMP" ]; then
+      REEMIT_FULL=
+    elif ! mv -f "$REEMIT_FULL_TMP" "$REEMIT_FULL" 2>/dev/null; then
+      cat "$REEMIT_FULL_TMP"
+      rm -f "$REEMIT_FULL_TMP" 2>/dev/null || true
       REEMIT_FULL=
     fi
     if [ -n "$REEMIT_FULL" ]; then
