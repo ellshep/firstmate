@@ -2591,16 +2591,20 @@ EOF
   return 1
 }
 
-stop_worktree_databases() {  # <worktree> <project clone>
-  local wt=$1 project=$2 runtime ids id details config config_dir project_id source_ids source_id
-  local project_labels label shared_container_label
-  [ -d "$wt" ] || return 0
-  source_ids=$'\n'
+collect_supabase_source_project_ids() {  # <project clone>
+  local project_clone=$1 config source_id
+  SUPABASE_SOURCE_PROJECT_IDS=$'\n'
   while IFS= read -r config; do
     [ -n "$config" ] || continue
     source_id=$(sed -nE 's/^[[:space:]]*project_id[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$config" | head -1)
-    [ -n "$source_id" ] && source_ids+="$source_id"$'\n'
-  done < <(find "$project" -type f -path '*/supabase/config.toml' -not -path '*/node_modules/*' -print 2>/dev/null)
+    [ -n "$source_id" ] && SUPABASE_SOURCE_PROJECT_IDS+="$source_id"$'\n'
+  done < <(find "$project_clone" -type f -path '*/supabase/config.toml' -not -path '*/node_modules/*' -print 2>/dev/null)
+}
+
+stop_worktree_databases() {  # <worktree> <source Supabase project IDs>
+  local wt=$1 source_ids=$2 runtime ids id details config config_dir project_id
+  local project_labels label shared_container_label
+  [ -d "$wt" ] || return 0
   if ! command -v jq >/dev/null 2>&1; then
     echo "teardown: cannot inspect worktree containers for $ID (jq unavailable)" >&2
   else
@@ -2677,9 +2681,9 @@ stop_worktree_databases() {  # <worktree> <project clone>
   return 0
 }
 
-remove_worktree_supabase_stacks() {  # <worktree> <project clone>
-  local wt=$1 project_clone=$2 runtime ids id details project workdir volumes volume
-  local projects foreign_projects config source_id source_ids config_project config_project_ids
+remove_worktree_supabase_stacks() {  # <worktree> <source Supabase project IDs>
+  local wt=$1 source_ids=$2 runtime ids id details project workdir volumes volume
+  local projects foreign_projects config config_project config_project_ids
   [ -d "$wt" ] || return 0
   command -v jq >/dev/null 2>&1 || {
     echo "warning: jq unavailable; cannot remove Supabase stacks for $ID" >&2
@@ -2689,12 +2693,6 @@ remove_worktree_supabase_stacks() {  # <worktree> <project clone>
   # already tore it down cleanly, so volumes are also discovered from the
   # worktree's own config.toml project IDs, not only from live container
   # labels.
-  source_ids=$'\n'
-  while IFS= read -r config; do
-    [ -n "$config" ] || continue
-    source_id=$(sed -nE 's/^[[:space:]]*project_id[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$config" | head -1)
-    [ -n "$source_id" ] && source_ids+="$source_id"$'\n'
-  done < <(find "$project_clone" -type f -path '*/supabase/config.toml' -not -path '*/node_modules/*' -print 2>/dev/null)
   config_project_ids=$'\n'
   while IFS= read -r config; do
     [ -n "$config" ] || continue
@@ -2712,7 +2710,10 @@ remove_worktree_supabase_stacks() {  # <worktree> <project clone>
     projects=$config_project_ids
     foreign_projects=$'\n'
     # A stopped Supabase stack still has containers, so include all states.
-    ids=$("$runtime" ps -aq 2>/dev/null) || ids=
+    if ! ids=$("$runtime" ps -aq 2>/dev/null); then
+      echo "warning: $runtime ps unavailable; Supabase stacks not removed for $ID" >&2
+      continue
+    fi
     while IFS= read -r id; do
       [ -n "$id" ] || continue
       details=$("$runtime" inspect "$id" 2>/dev/null) || {
@@ -4181,8 +4182,9 @@ else
 fi
 
 if [ "$KIND" != secondmate ] && teardown_owns_worktree; then
-  stop_worktree_databases "$WT" "$PROJ"
-  remove_worktree_supabase_stacks "$WT" "$PROJ"
+  collect_supabase_source_project_ids "$PROJ"
+  stop_worktree_databases "$WT" "$SUPABASE_SOURCE_PROJECT_IDS"
+  remove_worktree_supabase_stacks "$WT" "$SUPABASE_SOURCE_PROJECT_IDS"
 fi
 if [ "$KIND" = ship ] && teardown_owns_worktree && [ -e "$CONFIG/pipeline-spend" ]; then
   FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" FM_CONFIG_OVERRIDE="$CONFIG" \
