@@ -303,8 +303,13 @@
 #     whose CURRENT WORKING DIRECTORY is this task's own worktree or tasktmp
 #     root via `lsof -a -d cwd` (cheap: bounded by process count, not by
 #     walking the worktree's file tree) and sends TERM, then KILL after a short
-#     grace period to any survivor whose process identity still matches. Both
-#     roots are unique per task and never
+#     grace period to any survivor whose process identity still matches. A
+#     chrome-devtools-axi bridge among them is stopped through its own session
+#     first (task_stop_chrome_bridge) rather than just TERM/KILL, so its
+#     detached browser/MCP process group closes too (observed 2026-11-04:
+#     bridges left listening on ports 9268/9400/9703/10130, 9-24h old, cwd
+#     under a ~/.treehouse worker copy after its task was cleaned up).
+#     Both roots are unique per task and never
 #     shared, so this can never reach another task's or the primary's
 #     processes. Idempotent: nothing left to find is a silent no-op.
 #   Fix 3 - sweep abandoned remote job workers. A remote job worker started
