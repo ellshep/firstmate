@@ -256,6 +256,30 @@ unit_stop_archives_the_record_last() {
 }
 
 # ---------------------------------------------------------------------------
+# UNIT 1b: a "task=" suffix on a stale-persisted line (bin/fm-supervise-daemon.sh's
+# task-id annotation) must not stop the marker-key lookup from resolving the
+# window and removing the right .subsuper-reported-stale-* marker.
+# ---------------------------------------------------------------------------
+unit_clear_stale_strips_task_suffix() {
+  local st key
+  st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-clear-suffix.XXXXXX")
+  mkdir -p "$st/state"
+  printf 'window=sess:somewin\n' > "$st/state/sometask.meta"
+  printf 'stale persisted 300s (possible wedge): sess:somewin task=sometask\n' \
+    > "$st/state/.subsuper-escalations"
+  key=sometask
+  : > "$st/state/.subsuper-reported-stale-$key"
+  FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" \
+    bash -c '. "$1"; fm_afk_clear_stale_artifacts "$2"' _ "$START" "$st/state"
+  if [ ! -e "$st/state/.subsuper-reported-stale-$key" ]; then
+    pass "clear-stale: strips the task= suffix before resolving the stale marker key"
+  else
+    fail "clear-stale: a task= suffix on the escalation line left the stale marker behind"
+  fi
+  rm -rf "$st"
+}
+
+# ---------------------------------------------------------------------------
 # UNIT 1: fm_afk_clear_stale_artifacts removes exactly the four stale artifacts.
 # ---------------------------------------------------------------------------
 unit_clear_stale() {
@@ -1787,6 +1811,7 @@ e2e_rex() {
 }
 
 unit_clear_stale
+unit_clear_stale_strips_task_suffix
 unit_enter_records_the_posture_in_one_step_without_a_daemon
 unit_retired_two_step_entry_is_refused
 unit_pi_never_launches_the_daemon

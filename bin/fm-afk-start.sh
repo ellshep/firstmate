@@ -69,6 +69,7 @@ fm_afk_clear_stale_artifacts() {  # <state-dir>
       case "$line" in
         stale\ persisted\ *s\ \(possible\ wedge\):\ *)
           win=${line#* (possible wedge): }
+          win=${win% task=*}
           key=$(window_to_task "$win" "$state" | tr ':/.' '___')
           rm -f "$state/.subsuper-reported-stale-$key" || return 1
           ;;
