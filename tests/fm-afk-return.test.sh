@@ -324,11 +324,34 @@ test_return_is_mode_agnostic_for_quiet_mode() {
   printf 'quiet\n%s\n' "$(date +%s)" > "$dir/home/state/.afk"
   : > "$dir/home/state/.fake-drain"
 
+  FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" "$dir/bin/fm-afk-return.sh" guard \
+    || fail "quiet mode refused the attended-work guard"
+  FM_AFK_MODE=quiet FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" \
+    "$dir/bin/fm-afk-contract.sh" enter >/dev/null 2>&1 \
+    || fail "could not write the quiet posture record"
+  FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" "$dir/bin/fm-afk-return.sh" guard \
+    || fail "a quiet posture record refused the attended-work guard"
+  FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" "$ROOT/bin/fm-bearings-snapshot.sh" --json >/dev/null \
+    || fail "bearings refused a quiet-mode snapshot"
+
   out=$(run_return "$dir" begin) || fail "return did not succeed cleanly against a quiet-mode flag: $out"
   assert_contains "$out" 'catch-up clear' "quiet-mode return did not announce ordinary work may proceed"
   [ ! -e "$dir/home/state/.afk" ] || fail "quiet-mode return left the mode flag behind"
   [ "$(wc -l < "$dir/home/stop.log" | tr -d ' ')" -eq 1 ] || fail "quiet-mode return did not stop the daemon exactly once"
   pass "/quiet off's return path behaves identically for a quiet-content flag as for a legacy away-content one"
+}
+
+test_fresh_task_without_status_has_no_events_yet() {
+  local dir out
+  dir="$TMP_ROOT/fresh-statusless"
+  install_runner "$dir"
+  printf 'window=synthetic:fm-fresh\nbackend=tmux\nkind=ship\n' > "$dir/home/state/fresh.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(run_return "$dir" begin) || fail "fresh task without a first status event held catch-up: $out"
+  assert_contains "$out" 'catch-up clear' "the fresh statusless task held catch-up"
+  [ ! -e "$dir/home/state/fresh.status" ] || fail "return manufactured a status event file"
+  pass "a fresh live task without a status event lets catch-up clear"
 }
 
 test_check_retries_recorded_terminal_teardown() {
@@ -890,6 +913,11 @@ test_return_guard_refuses_while_the_record_exists() {
   set -e
   [ "$rc" -eq 3 ] || fail "guard should refuse while the away-posture record exists (rc=$rc): $out"
   assert_contains "$out" 'away mode is still active' "guard did not name the away posture"
+  set +e
+  out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" "$ROOT/bin/fm-bearings-snapshot.sh" --json 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "bearings should refuse an away-mode snapshot (rc=$rc): $out"
   [ ! -e "$dir/home/state/.afk" ] || fail "fixture error: the legacy flag should be absent in this case"
   pass "the read-only guard treats the away-posture record as active away mode without the legacy flag"
 }
@@ -1360,6 +1388,7 @@ test_captain_decision_does_not_masquerade_as_firstmate_blocker
 test_evidence_publication_failure_preserves_wake_for_redrain
 test_away_reentry_refuses_pending_return_gate
 test_return_is_mode_agnostic_for_quiet_mode
+test_fresh_task_without_status_has_no_events_yet
 test_check_retries_recorded_terminal_teardown
 test_unreadable_superseded_archive_keeps_return_gated
 test_missing_final_archive_keeps_retained_contract_gated

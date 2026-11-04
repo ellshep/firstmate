@@ -7,7 +7,7 @@
 #   fm-afk-return.sh begin    Same as the default command.
 #   fm-afk-return.sh check    Re-render the brief and close the gate only after blockers resolve.
 #   fm-afk-return.sh guard    Read-only consult: exit 3 while away mode is still
-#                            active, exit 4 while return catch-up is pending.
+#                            active (quiet mode is attended), exit 4 while return catch-up is pending.
 #   fm-afk-return.sh catchup-summary  Read-only catch-up projection for a reporting surface.
 #
 # THE RETURN BRIEF (stdout, on begin and on every check) is rendered from durable
@@ -188,6 +188,11 @@ scan_open_blockers() {  # -> tab-separated blocker rows
     id=$(basename "$meta")
     id=${id%.meta}
     status="$STATE/$id.status"
+    # A newly spawned task may not have emitted its first event yet. A stale
+    # record without a window does not get that exemption.
+    if [ ! -e "$status" ] && [ ! -L "$status" ] && grep -q '^window=.' "$meta"; then
+      continue
+    fi
     if ! status_path_readable "$status"; then
       STATUS_SCAN_ERROR=$status
       return 1
@@ -295,7 +300,8 @@ catchup_summary() {
 
 return_guard() {
   local reasons
-  if [ -e "$STATE/.afk" ] || fm_afk_contract_present "$STATE"; then
+  if { [ -e "$STATE/.afk" ] && [ "$(head -n 1 "$STATE/.afk" 2>/dev/null)" != quiet ]; } \
+    || fm_afk_contract_away_present "$STATE"; then
     printf 'fm-afk-return: away mode is still active; run bin/fm-afk-return.sh before ordinary captain work\n' >&2
     return 3
   fi
