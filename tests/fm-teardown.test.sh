@@ -5770,14 +5770,34 @@ SH
 }
 
 test_worktree_supabase_stack_without_engine() {
-  local case_dir rc
+  local case_dir rc no_engine_bin dir f name save_ifs
   case_dir=$(make_case supabase-no-engine)
   write_meta "$case_dir" no-mistakes ship
   land_shippable_commit "$case_dir"
   rm "$case_dir/fakebin/podman" "$case_dir/fakebin/docker"
   ln -s "$REAL_GIT_FOR_TEST" "$case_dir/fakebin/git"
+  # Mirror every directory on the real PATH without podman/docker, so a real
+  # engine CLI the host happens to ship (e.g. Ubuntu's /usr/bin/docker with no
+  # daemon running) can't be found while every other core utility teardown
+  # needs stays available. A hardcoded system-directory list isn't safe: it
+  # trusts those directories to be free of a real engine binary.
+  no_engine_bin="$case_dir/path-no-engine"
+  mkdir -p "$no_engine_bin"
+  save_ifs=$IFS
+  IFS=:
+  for dir in $PATH; do
+    [ -d "$dir" ] || continue
+    for f in "$dir"/*; do
+      [ -e "$f" ] || continue
+      name=$(basename "$f")
+      case "$name" in podman|docker) continue ;; esac
+      [ -e "$no_engine_bin/$name" ] && continue
+      ln -s "$f" "$no_engine_bin/$name" 2>/dev/null
+    done
+  done
+  IFS=$save_ifs
   rc=0
-  FM_TEARDOWN_TEST_PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+  FM_TEARDOWN_TEST_PATH="$no_engine_bin" \
     run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
   expect_code 0 "$rc" "supabase-no-engine: teardown should succeed"
   assert_no_grep 'warning:.*Supabase' "$case_dir/stderr" "an absent engine should be silent"
