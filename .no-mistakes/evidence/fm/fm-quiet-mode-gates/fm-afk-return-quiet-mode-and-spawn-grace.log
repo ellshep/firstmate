@@ -1,0 +1,4 @@
+ok - /quiet off's return path behaves identically for a quiet-content flag as for a legacy away-content one
+ok - a fresh live task without a status event lets catch-up clear
+ok - a newly-spawned task's missing-status exemption expires after the grace window, then gates like any stale record
+ok - the read-only guard treats the away-posture record as active away mode without the legacy flag
