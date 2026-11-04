@@ -5840,6 +5840,54 @@ SH
   pass "Supabase stop targets unique worktree project IDs and skips the source project's shared ID"
 }
 
+# Without jq, a config.toml-derived project id can't be checked against live
+# container labels, so it can't be told apart from another worktree's running
+# stack that happens to share the same project id. Volume removal for that id
+# must be skipped, not performed blindly.
+test_worktree_supabase_volumes_kept_without_jq() {
+  local case_dir rc no_jq_bin f name
+  case_dir=$(make_case supabase-no-jq)
+  write_meta "$case_dir" no-mistakes ship
+  mkdir -p "$case_dir/wt/supabase"
+  printf '%s\n' 'project_id = "shared-stack"' > "$case_dir/wt/supabase/config.toml"
+  git -C "$case_dir/wt" add supabase/config.toml
+  git -C "$case_dir/wt" -c user.email=t@t -c user.name=t commit -q -m "Supabase fixture"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+  ln -s "$REAL_GIT_FOR_TEST" "$case_dir/fakebin/git"
+  # Mirror /usr/bin without jq so the sandbox's own jq can't be found on
+  # PATH, while every other core utility teardown needs stays available.
+  no_jq_bin="$case_dir/usr-bin-no-jq"
+  mkdir -p "$no_jq_bin"
+  for f in /usr/bin/*; do
+    name=$(basename "$f")
+    [ "$name" = jq ] && continue
+    ln -s "$f" "$no_jq_bin/$name" 2>/dev/null
+  done
+  cat > "$case_dir/fakebin/podman" <<'SH'
+#!/usr/bin/env bash
+printf 'podman %s\n' "$*" >> "$FM_TEST_ENGINE_LOG"
+case "${1:-} ${2:-}" in
+  'ps -q') exit 0 ;;
+  'ps -aq') printf '%s\n' own-db ;;
+  'volume ls') printf '%s\n' shared-data ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/podman"
+  : > "$case_dir/engine.log"
+  rc=0
+  FM_TEARDOWN_TEST_PATH="$no_jq_bin:/bin:/usr/sbin:/sbin" \
+  FM_TEST_ENGINE_LOG="$case_dir/engine.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "supabase-no-jq: teardown should succeed"
+  assert_no_grep 'volume rm' "$case_dir/engine.log" \
+    "a shared-label volume was removed without jq available to check ownership"
+  assert_grep 'warning: jq unavailable; podman Supabase volumes not removed' "$case_dir/stderr" \
+    "missing-jq volume skip was not reported"
+  pass "Supabase volume cleanup is skipped, not performed blindly, when jq is unavailable"
+}
+
 test_teardown_preserves_opencode_busy_plugin_on_pool_return
 
 # Archive coverage uses the real teardown entry point over isolated homes.
@@ -6585,3 +6633,4 @@ test_worktree_supabase_stack_removes_own_volumes
 test_worktree_supabase_stack_without_engine
 test_worktree_supabase_removal_failure_warns_without_blocking
 test_supabase_stops_unique_worktree_project_but_skips_shared_id
+test_worktree_supabase_volumes_kept_without_jq
