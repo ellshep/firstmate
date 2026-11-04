@@ -2683,12 +2683,12 @@ stop_worktree_databases() {  # <worktree> <source Supabase project IDs>
 
 remove_worktree_supabase_stacks() {  # <worktree> <source Supabase project IDs>
   local wt=$1 source_ids=$2 runtime ids id details project workdir volumes volume
-  local projects foreign_projects config config_project config_project_ids
+  local projects foreign_projects config config_project config_project_ids have_jq=1
   [ -d "$wt" ] || return 0
-  command -v jq >/dev/null 2>&1 || {
-    echo "warning: jq unavailable; cannot remove Supabase stacks for $ID" >&2
-    return 0
-  }
+  if ! command -v jq >/dev/null 2>&1; then
+    have_jq=0
+    echo "warning: jq unavailable; Supabase container inspection skipped for $ID" >&2
+  fi
   # A stack's container is gone by the time this runs when `supabase stop`
   # already tore it down cleanly, so volumes are also discovered from the
   # worktree's own config.toml project IDs, not only from live container
@@ -2709,38 +2709,40 @@ remove_worktree_supabase_stacks() {  # <worktree> <source Supabase project IDs>
     command -v "$runtime" >/dev/null 2>&1 || continue
     projects=$config_project_ids
     foreign_projects=$'\n'
-    # A stopped Supabase stack still has containers, so include all states.
-    if ! ids=$("$runtime" ps -aq 2>/dev/null); then
-      echo "warning: $runtime ps unavailable; Supabase stacks not removed for $ID" >&2
-      continue
+    if [ "$have_jq" -eq 1 ]; then
+      # A stopped Supabase stack still has containers, so include all states.
+      if ! ids=$("$runtime" ps -aq 2>/dev/null); then
+        echo "warning: $runtime ps unavailable; Supabase stacks not removed for $ID" >&2
+        continue
+      fi
+      while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        details=$("$runtime" inspect "$id" 2>/dev/null) || {
+          echo "warning: $runtime could not inspect container $id for $ID" >&2
+          continue
+        }
+        project=$(printf '%s\n' "$details" | jq -r '.[0].Config.Labels["com.supabase.cli.project"] // empty' 2>/dev/null) || {
+          echo "warning: $runtime could not read Supabase labels on $id for $ID" >&2
+          continue
+        }
+        [ -n "$project" ] || continue
+        workdir=$(printf '%s\n' "$details" | jq -r '.[0].Config.Labels["com.supabase.cli.workdir"] // empty' 2>/dev/null) || {
+          echo "warning: $runtime could not read Supabase workdir on $id for $ID" >&2
+          continue
+        }
+        case "$workdir" in
+          "$wt"|"$wt"/*)
+            case "$projects" in *$'\n'"$project"$'\n'*) ;; *) projects+="$project"$'\n' ;; esac
+            if ! "$runtime" rm -f "$id" >/dev/null 2>&1; then
+              echo "warning: $runtime could not remove Supabase container $id for $ID" >&2
+            fi
+            ;;
+          *)
+            case "$foreign_projects" in *$'\n'"$project"$'\n'*) ;; *) foreign_projects+="$project"$'\n' ;; esac
+            ;;
+        esac
+      done <<< "$ids"
     fi
-    while IFS= read -r id; do
-      [ -n "$id" ] || continue
-      details=$("$runtime" inspect "$id" 2>/dev/null) || {
-        echo "warning: $runtime could not inspect container $id for $ID" >&2
-        continue
-      }
-      project=$(printf '%s\n' "$details" | jq -r '.[0].Config.Labels["com.supabase.cli.project"] // empty' 2>/dev/null) || {
-        echo "warning: $runtime could not read Supabase labels on $id for $ID" >&2
-        continue
-      }
-      [ -n "$project" ] || continue
-      workdir=$(printf '%s\n' "$details" | jq -r '.[0].Config.Labels["com.supabase.cli.workdir"] // empty' 2>/dev/null) || {
-        echo "warning: $runtime could not read Supabase workdir on $id for $ID" >&2
-        continue
-      }
-      case "$workdir" in
-        "$wt"|"$wt"/*)
-          case "$projects" in *$'\n'"$project"$'\n'*) ;; *) projects+="$project"$'\n' ;; esac
-          if ! "$runtime" rm -f "$id" >/dev/null 2>&1; then
-            echo "warning: $runtime could not remove Supabase container $id for $ID" >&2
-          fi
-          ;;
-        *)
-          case "$foreign_projects" in *$'\n'"$project"$'\n'*) ;; *) foreign_projects+="$project"$'\n' ;; esac
-          ;;
-      esac
-    done <<< "$ids"
     while IFS= read -r project; do
       [ -n "$project" ] || continue
       # A reused project label cannot prove volume ownership when another
