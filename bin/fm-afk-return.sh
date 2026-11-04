@@ -7,7 +7,7 @@
 #   fm-afk-return.sh begin    Same as the default command.
 #   fm-afk-return.sh check    Re-render the brief and close the gate only after blockers resolve.
 #   fm-afk-return.sh guard    Read-only consult: exit 3 while away mode is still
-#                            active, exit 4 while return catch-up is pending.
+#                            active (quiet mode is attended), exit 4 while return catch-up is pending.
 #   fm-afk-return.sh catchup-summary  Read-only catch-up projection for a reporting surface.
 #
 # THE RETURN BRIEF (stdout, on begin and on every check) is rendered from durable
@@ -64,6 +64,9 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 GATE="$STATE/.afk-return-catchup"
 LOCK="$STATE/.afk-return-catchup.lock"
 RETURN_GRACE=${FM_GUARD_GRACE:-300}
+# How long a newly spawned task's missing first status line is exempted from
+# the catch-up gate before it is treated like any other stale record (below).
+SPAWN_STATUS_GRACE=${FM_SPAWN_STATUS_GRACE:-900}
 
 # The posture-record owner: path helpers only; every read goes through its
 # subcommands. It sources fm-classify-lib.sh, which has no side effects, so the
@@ -181,13 +184,28 @@ status_path_readable() {
 }
 
 scan_open_blockers() {  # -> tab-separated blocker rows
-  local meta id status key verb summary clean_summary open
+  local meta id status key verb summary clean_summary open now meta_mtime meta_age
   STATUS_SCAN_ERROR=
+  # shellcheck source=bin/fm-lock-lib.sh
+  . "$SCRIPT_DIR/fm-lock-lib.sh" || true
+  now=$(date +%s)
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
     id=$(basename "$meta")
     id=${id%.meta}
     status="$STATE/$id.status"
+    # A newly spawned task may not have emitted its first event yet. That
+    # exemption only holds for SPAWN_STATUS_GRACE after the meta was written;
+    # past it, a missing status is a stale record and gates like any other
+    # (below). A stale record without a window never got the exemption.
+    if [ ! -e "$status" ] && [ ! -L "$status" ] && grep -q '^window=.' "$meta"; then
+      meta_mtime=$(fm_lock_path_mtime "$meta" 2>/dev/null) || meta_mtime=
+      case "$meta_mtime" in ''|*[!0-9]*) meta_mtime= ;; esac
+      if [ -n "$meta_mtime" ]; then
+        meta_age=$((now - meta_mtime))
+        [ "$meta_age" -lt "$SPAWN_STATUS_GRACE" ] && continue
+      fi
+    fi
     if ! status_path_readable "$status"; then
       STATUS_SCAN_ERROR=$status
       return 1
@@ -295,7 +313,8 @@ catchup_summary() {
 
 return_guard() {
   local reasons
-  if [ -e "$STATE/.afk" ] || fm_afk_contract_present "$STATE"; then
+  if { [ -e "$STATE/.afk" ] && [ "$(head -n 1 "$STATE/.afk" 2>/dev/null)" != quiet ]; } \
+    || fm_afk_contract_away_present "$STATE"; then
     printf 'fm-afk-return: away mode is still active; run bin/fm-afk-return.sh before ordinary captain work\n' >&2
     return 3
   fi
