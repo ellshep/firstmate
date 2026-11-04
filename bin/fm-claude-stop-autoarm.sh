@@ -366,7 +366,7 @@ flush_banner() {
 # write hands it the held banner and the outcome instead of committing; this owner then exits 0 and
 # the parked firing delivers (fm_autoarm_write_owned in bin/fm-wake-lib.sh).
 autoarm_commit() {  # <outcome> [marker-file] [interrupted-session-identity]
-  local outcome=$1 marker=${2:-} marker_identity=${3:-} session_pid='' recovery='' handoff='' notice=0 rc=0
+  local outcome=$1 marker=${2:-} marker_identity=${3:-} session_pid='' recovery='' handoff='' notice=0 alarm=0 rc=0
   if [ "$outcome" = rewake ]; then
     fm_session_lock_owned_by_self "$STATE" || return 2
     session_pid=$(sed -n '1p' "$STATE/.lock" 2>/dev/null || true)
@@ -376,9 +376,15 @@ autoarm_commit() {  # <outcome> [marker-file] [interrupted-session-identity]
       *) return 2 ;;
     esac
   fi
-  [ -z "$marker" ] || notice=1
+  if [ -n "$marker" ]; then
+    if [ "$marker" = "$FAILURE_ALARM" ]; then
+      alarm=1
+    else
+      notice=1
+    fi
+  fi
   if [ -n "$BANNER" ] && handoff=$(mktemp "$STATE/.claude-autoarm-handoff.XXXXXX" 2>/dev/null); then
-    if ! { printf 'epoch=%s outcome=%s notice=%s\n' "$((MY_GEN + 1))" "$outcome" "$notice" \
+    if ! { printf 'epoch=%s outcome=%s notice=%s alarm=%s\n' "$((MY_GEN + 1))" "$outcome" "$notice" "$alarm" \
         && cat "$BANNER"; } > "$handoff" 2>/dev/null; then
       rm -f "$handoff" 2>/dev/null || true
       handoff=
