@@ -223,7 +223,15 @@
 #             a lock another live session took meanwhile still produces the
 #             ordinary read-only path. A re-emit prints a short RE-EMIT CUE
 #             first, so a harness that spills a large output and shows only its
-#             head still tells the model to read the saved full output.
+#             head still tells the model to read the saved full output. The
+#             full output is captured once per re-emit through a fresh mktemp
+#             name renamed onto one deterministic path,
+#             state/.session-reemit-full.txt, so repeated compactions reuse
+#             that single file instead of accumulating one per event; each
+#             printed section is then capped at a fixed byte budget, pointing
+#             at that saved file for anything a cap cuts off, and a capture or
+#             rename failure streams the output straight through uncapped
+#             rather than dropping it.
 #
 #   --source  The native session-open source, supplied only by
 #             fm-sessionstart-run.sh. A genuine `startup` that owns the active

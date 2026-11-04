@@ -53,6 +53,13 @@
 #   - a markdown `<data>/backlog.md` that is itself a symlink, because the
 #     first write would replace the link with a private copy, exactly the fork
 #     this command exists to prevent. Lifecycle transitions refuse the same file.
+#   - `--append-body` or `--force-body` on any command other than `update`;
+#   - `--append-body` together with `--body-file` on the same `update`;
+#   - `--force-body` without `--body-file`;
+#   - an `--append-body` or `--body-file` source that is missing, unreadable,
+#     not a regular file, or empty;
+#   - an `update --body-file` replacement that drops more than half the
+#     current body's bytes, unless `--force-body` is explicit.
 # Otherwise the exit status is tasks-axi's own, unless decoding a read fails;
 # in that case the decoder's nonzero status is returned.
 set -u
