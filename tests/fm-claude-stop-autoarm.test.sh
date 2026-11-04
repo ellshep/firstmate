@@ -235,6 +235,17 @@ printf 'signal: %s/state/tfmut-116.turn-ended\n' "$FM_HOME"
 exit 0
 SH
       ;;
+    gated-failed)
+      # A bounded attempt that blocks until the test releases it, so a second
+      # firing can fire and park on the still-open claim before this owner's
+      # retries exhaust and it reaches the attended-alarm decision.
+      cat >> "$dir/bin/fm-watch-arm.sh" <<'SH'
+: > "$FM_HOME/state/arm-waiting"
+while [ ! -e "$FM_HOME/state/arm-release" ]; do sleep 0.02; done
+printf 'watcher: FAILED - no live watcher with a fresh beacon\n'
+exit 1
+SH
+      ;;
     *)
       echo "unknown arm fixture: $kind" >&2
       return 2
@@ -2287,6 +2298,74 @@ test_parked_firing_takes_over_when_the_owner_ends_without_delivering() {
   pass "auto-arm: a parked firing takes over and delivers when the superseded owner ends without delivering"
 }
 
+# Fires owner A (gated on the arm fixture's own release file instead of a
+# supervision-host cycle), waits for a second firing B to park on A's still-open
+# claim, then releases A so it exhausts its bounded retries and reaches the
+# attended-alarm decision with a live parked successor. Mirrors
+# run_superseded_stop_pair's two-firing shape without the host machinery, since
+# the attended alarm is committed by the plain bounded-retry path.
+run_alarm_handoff_pair() {
+  local dir=$1
+  FM_HOME="$dir" "$FAKE_CLAUDE" -c '
+    s=$FM_HOME/state
+    printf "%s\n" "$$" > "$s/.lock"
+    printf "%s\n" "{\"session_id\":\"sess-autoarm\"}" | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$s/a.out" 2>&1 &
+    a=$!
+    echo "$a" > "$s/pid-a"
+    i=0
+    until [ -e "$s/arm-waiting" ]; do
+      [ "$i" -lt 200 ] || { echo "owner A never reached its gated arm attempt" > "$s/pair-error"; break; }
+      kill -0 "$a" 2>/dev/null \
+        || { echo "owner A exited before reaching its gated arm attempt: $(cat "$s/a.out" 2>/dev/null)" > "$s/pair-error"; break; }
+      sleep 0.05; i=$((i + 1))
+    done
+    printf "%s\n" "{\"session_id\":\"s\"}" | "$FM_HOME/bin/fm-claude-stop-autoarm.sh" > "$s/b.out" 2>&1 &
+    b=$!
+    echo "$b" > "$s/pid-b"
+    i=0
+    until grep -q "parked_pid=$b " "$s/.claude-autoarm-parked" 2>/dev/null; do
+      [ "$i" -lt 200 ] || { echo "firing B never parked on the open claim" >> "$s/pair-error"; break; }
+      kill -0 "$b" 2>/dev/null || break
+      sleep 0.05; i=$((i + 1))
+    done
+    : > "$s/arm-release"
+    wait "$a"; echo $? > "$s/rc-a"
+    wait "$b"; echo $? > "$s/rc-b"
+  '
+}
+
+# Regression for the two bugs fixed in this handoff machinery: the attended
+# alarm's own commit lost the parked successor's rewake (it committed directly
+# and exited 2 as the superseded owner, whose exit 2 the harness drops), and a
+# second-hop re-handoff of that alarm lost its "alarm" tag (so the marker was
+# never created and the once-per-episode invariant broke). Drives both fixes
+# through the real park/handoff/commit code path: owner A burns its attended
+# block budget while B is parked on A's open claim, so A must hand the alarm
+# over instead of committing and exiting itself, and B must create the
+# once-per-episode marker and deliver the banner as its own rewake.
+test_attended_alarm_handoff_delivers_through_parked_firing() {
+  local dir b_pid
+  dir=$(make_primary_dir "$TMP_ROOT/attended-alarm-handoff")
+  : > "$dir/state/task.meta"
+  : > "$dir/state/.claude-autoarm-failure-notified"
+  printf 'session=sess-autoarm\ncount=4\nepoch=1\n' > "$dir/state/.turnend-claude-blocks"
+  write_arm_fixture "$dir" gated-failed
+  run_alarm_handoff_pair "$dir"
+  [ ! -e "$dir/state/pair-error" ] || fail "$(cat "$dir/state/pair-error")"
+  b_pid=$(cat "$dir/state/pid-b")
+  expect_code 0 "$(cat "$dir/state/rc-a")" "the exhausted owner must hand its attended alarm over instead of committing it itself"
+  [ ! -s "$dir/state/a.out" ] || fail "the superseded owner emitted output after handing its attended alarm over: $(cat "$dir/state/a.out")"
+  expect_code 2 "$(cat "$dir/state/rc-b")" "the parked firing must deliver the handed-off attended alarm as a rewake"
+  assert_contains "$(cat "$dir/state/b.out")" "FIRSTMATE SUPERVISION IS GENUINELY DOWN" "the delivered rewake must carry the attended alarm banner"
+  assert_present "$dir/state/.claude-autoarm-failure-alarmed" "the delivered handoff must create the once-per-episode alarm marker"
+  [ "$(epoch_outcome "$dir")" = failed-suppressed ] || fail "the delivered alarm must commit failed-suppressed: $(sed -n '1p' "$dir/state/.claude-autoarm-epoch")"
+  [ "$(epoch_field "$dir" owner_pid)" = "$b_pid" ] || fail "the alarm commit must belong to the delivering firing: $(sed -n '1p' "$dir/state/.claude-autoarm-epoch")"
+  [ "$(epoch_field "$dir" epoch)" = 2 ] || fail "the handoff must advance exactly one generation: $(sed -n '1p' "$dir/state/.claude-autoarm-epoch")"
+  assert_absent "$dir/state/.claude-autoarm-parked" "the handoff left its parked record behind"
+  assert_absent "$dir/state/.claude-autoarm-handoff" "the delivery left its handoff record behind"
+  pass "auto-arm: an attended alarm handed off to a parked firing still delivers and marks the episode"
+}
+
 # A model running the hook by hand mid-turn (for example to read its help) is a
 # tool process under the lock-owning session with no Stop payload. Any argument
 # must print help or refuse before anything is armed, since the host or arm it
@@ -2405,6 +2484,7 @@ test_host_lost_announced_handback_notifies_once_per_episode
 test_host_crash_is_retried_then_reported
 test_superseded_owner_close_is_delivered_by_the_newer_stop
 test_parked_firing_takes_over_when_the_owner_ends_without_delivering
+test_attended_alarm_handoff_delivers_through_parked_firing
 test_arguments_never_arm
 test_fm_lock_status_still_works_with_shared_lib
 test_stands_down_only_on_pi_code_transcript_path
