@@ -1,0 +1,9 @@
+# Targeted #7252 handoff scenarios from tests/fm-claude-stop-autoarm.test.sh (full suite 66/66 ok)
+ok - auto-arm: a close owned by a superseded Stop is delivered by the newer Stop's parked firing
+ok - auto-arm: a parked firing takes over and delivers when the superseded owner ends without delivering
+ok - auto-arm: an attended alarm handed off to a parked firing still delivers and marks the episode
+ok - auto-arm: a superseded owner goes silent - one supersession episode, one translation, no held mutex
+
+# Opt-in credentialed live (not run here):
+# FM_SUPERVISION_HOST_ATTENDED_LIVE_E2E=1 FM_SUPERVISION_HOST_ATTENDED_LIVE_SCENARIO=superseded-stop tests/fm-supervision-host-attended-live-e2e.test.sh
+# -> not ok - FM_SUPERVISION_HOST_ATTENDED_LIVE_E2E was requested but tmux is not installed

@@ -1,0 +1,63 @@
+{
+  "verdict": "go",
+  "summary": "Issue #7252 handoff paths pass live integration against real fm-claude-stop-autoarm.sh in disposable FM_HOME fixtures.",
+  "testing_summary": "Ran the full tests/fm-claude-stop-autoarm.test.sh suite (66 ok); three handoff regressions and silent-superseded-owner guard passed. Opt-in credentialed live e2e for superseded-stop was not driven because tmux is not on PATH; the test header pins that mode on the autoarm suite.",
+  "tested": [
+    "bash tests/fm-claude-stop-autoarm.test.sh",
+    "FM_SUPERVISION_HOST_ATTENDED_LIVE_E2E=1 FM_SUPERVISION_HOST_ATTENDED_LIVE_SCENARIO=superseded-stop bash tests/fm-supervision-host-attended-live-e2e.test.sh (tmux missing)"
+  ],
+  "artifacts": [
+    {
+      "kind": "log",
+      "label": "Full auto-arm test run",
+      "path": "~/.no-mistakes/evidence/01M6KJJJYDAWZMMYFD01VWDME4/fm-claude-stop-autoarm-full.log",
+      "url": "",
+      "content": ""
+    },
+    {
+      "kind": "log",
+      "label": "Handoff scenario excerpt",
+      "path": "~/.no-mistakes/evidence/01M6KJJJYDAWZMMYFD01VWDME4/handoff-scenarios-excerpt.log",
+      "url": "",
+      "content": ""
+    },
+    {
+      "kind": "command-output",
+      "label": "Live e2e tmux gate",
+      "path": "",
+      "url": "",
+      "content": "not ok - FM_SUPERVISION_HOST_ATTENDED_LIVE_E2E was requested but tmux is not installed"
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "Newer Stop parked on live generation delivers superseded owner close as rewake (exit 2, outcome=rewake).",
+      "result": "pass",
+      "live": true,
+      "evidence": "test_superseded_owner_close_is_delivered_by_the_newer_stop in fm-claude-stop-autoarm.test.sh",
+      "reason": ""
+    },
+    {
+      "name": "Parked firing takes over when superseded owner ends without delivering.",
+      "result": "pass",
+      "live": true,
+      "evidence": "test_parked_firing_takes_over_when_the_owner_ends_without_delivering",
+      "reason": ""
+    },
+    {
+      "name": "Attended alarm hands off to parked successor with alarm marker and banner delivery.",
+      "result": "pass",
+      "live": true,
+      "evidence": "test_attended_alarm_handoff_delivers_through_parked_firing",
+      "reason": ""
+    },
+    {
+      "name": "Adversarial: superseded owner stays silent (no exit 2 / no double translation).",
+      "result": "pass",
+      "live": true,
+      "evidence": "test_superseded_owner_goes_silent_and_never_double_translates and handoff pair rc-a checks",
+      "reason": ""
+    }
+  ],
+  "findings": []
+}

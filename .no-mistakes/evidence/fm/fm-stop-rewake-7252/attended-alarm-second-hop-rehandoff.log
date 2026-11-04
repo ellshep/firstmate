@@ -1,0 +1,56 @@
+Scenario: adversarial second-hop re-handoff of the attended alarm (round-2 fix,
+bin/fm-claude-stop-autoarm.sh autoarm_commit()'s own handoff builder at
+lines ~375-381), driven live against the real production script with three
+real concurrent Stop-hook firings sharing one session lock:
+
+  A: attended-alarm owner (gen1), exhausts its bounded retries with the
+     session block budget already over BLOCK_BUDGET, reaches
+     autoarm_commit_attended_alarm(), and hands the alarm off (rc=3) because a
+     live parked successor (B) exists.
+  B: parked on A's gen1 claim; becomes owner of gen2 (arming) via the
+     handoff. Before B's own autoarm_commit() call lands, a third firing (C)
+     parks on B's still-open gen2 claim, so B's own write detects a live
+     parked successor and re-hands off through its generic handoff builder
+     instead of committing directly.
+  C: parked on B's gen2 claim; receives the re-handoff, reads its "alarm"
+     field, and (if the round-2 fix holds) commits the alarm directly as its
+     own gen3 outcome.
+
+Observed (this run):
+  rc-a = 0   (A handed off silently, no stderr)
+  rc-b = 0   (B re-handed off silently, no stderr -- confirms B did NOT
+              commit the alarm itself, matching the fix's intended behavior)
+  rc-c = 2   (C delivered the alarm as its own rewake)
+
+  c.out:
+    FIRSTMATE SUPERVISION IS GENUINELY DOWN: 1 task(s) in flight - the
+    Stop-owned auto-arm exhausted its bounded retries and one failure
+    notice, no live watcher or automatic continuation exists, and this
+    session block budget is exhausted.
+    Keep this session attended and diagnose the automatic Stop-hook and
+    watcher startup before relying on unattended supervision; do not launch
+    a manual background arm from this notice.
+
+  Final ledger (state/.claude-autoarm-epoch):
+    epoch=3 owner_pid=<C's pid> outcome=failed-suppressed updated_at=...
+
+  state/.claude-autoarm-failure-alarmed: PRESENT (created by C's own commit)
+  state/.claude-autoarm-parked:          ABSENT (no stray parked record)
+  state/.claude-autoarm-handoff:         ABSENT (no stray handoff record)
+
+This confirms the round-2 fix: the "alarm=1" field survives a second hop
+through autoarm_commit()'s own re-handoff builder, so the once-per-episode
+alarm marker is created exactly once, by the firing that actually delivers
+the banner (C), even when the attended-alarm handoff itself gets superseded
+a second time before it is committed. Before the round-2 fix, B's generic
+handoff builder only ever emitted "notice=1" for a non-empty marker, so C
+would have delivered the banner text but never created
+state/.claude-autoarm-failure-alarmed, silently breaking the
+once-per-episode invariant (exactly the bug round-2 fixed, which no test in
+the repo had exercised through a real two-hop chain until this run).
+
+No existing test in tests/fm-claude-stop-autoarm.test.sh drives this exact
+three-firing chain; this was built and run as a standalone script against a
+fresh, disposable fixture home (same install_autoarm_scripts()/
+write_arm_fixture("gated-failed") pattern the existing suite uses), outside
+the worktree, and torn down after this run.
