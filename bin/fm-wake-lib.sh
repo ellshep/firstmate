@@ -2138,6 +2138,17 @@ fm_failure_episode_reset() {
 #     and the parked firing delivers that close as its own. An owner that ends
 #     any other way leaves a claim that is no longer open, and the parked firing
 #     then runs the ordinary claim path a later Stop would have run.
+#     state/.claude-autoarm-handoff's own line 1 is "epoch=N+1 outcome=O
+#     notice=0|1 alarm=0|1" (O one of rewake, failed, failed-suppressed), with
+#     the superseded owner's full banner as the remaining lines. notice=1 means
+#     the parked firing's own commit creates state/.claude-autoarm-failure-notified;
+#     alarm=1 means it creates state/.claude-autoarm-failure-alarmed instead -
+#     never the superseded owner, whose own commit must leave that marker
+#     absent so the parked firing's "already alarmed by someone else" check
+#     stays meaningful. autoarm_commit's own re-handoff (when a second firing
+#     parks on this one before its delivery completes) re-derives alarm from
+#     whether its marker argument is state/.claude-autoarm-failure-alarmed, so
+#     the tag survives a chained handoff rather than always reading notice=1.
 #   - NO mutex is ever held across a blocking step. The owner lock
 #     state/.claude-autoarm.lock survives only as a micro-mutex serializing
 #     individual ledger reads-then-writes (a few non-blocking file
