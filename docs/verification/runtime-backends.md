@@ -986,6 +986,11 @@ ok - claude-named (2.1.284 (Claude Code)): real idle composer classifies empty
 ok - claude-named (2.1.284 (Claude Code)): the same idle pane read cursorless is not pending (verdict: empty)
 ```
 
+### 2026-11-04 Codex busy viewport through Herdr
+
+The codex-cli 0.166.0 Herdr busy-state viewport check returned `busy codex-viewport` through `tests/fm-busy-codex-live-e2e.test.sh`.
+The exact command, output, and Codex classifier contract are in [semantic busy state](supervision.md#semantic-busy-state).
+
 ### 2026-09-15 codex-cli 0.154.0 idle starfield and status footer through Herdr
 
 Verified on 2026-09-15 on macOS arm64 (Darwin 25.5.0) against codex-cli 0.154.0 (model gpt-6-astra, fast mode) running as a Codex second mate inside a Herdr pane, read through Herdr's ANSI capture with its exact capability descriptor (`styled=1`, `cursor=0`, `identity=1`, `rows=20`).

@@ -224,6 +224,7 @@ These guarantees are process semantics, not vendor-emitted signals, so no live-h
 
 The per-adapter semantic sources behind [`bin/fm-busy-lib.sh`](../../bin/fm-busy-lib.sh) were live-verified on 2026-07-28 against firstmate-launched workers wired exactly as `fm-spawn` writes them.
 Each pass polled `state/<id>.busy-state` while a real turn ran.
+Codex's later viewport pull source is recorded separately below.
 
 | Harness | Version verified | Semantic source | Observed result |
 | --- | --- | --- | --- |
@@ -231,7 +232,7 @@ Each pass polled `state/<id>.busy-state` while a real turn ran.
 | omp | 18.1.11 | Extension `agent_start` / `agent_end` without `willContinue` | Live Herdr scout on `openai-codex/gpt-6-astra` (2026-09-05): the spawn seed `busy source=fm-spawn`, then `busy source=omp-ext event=agent-start`, then `idle source=omp-ext event=agent-end` at the natural end of the brief; a steer through `fm-send` reopened `busy … agent-start`, and a control-plane interrupt closed it with `idle … agent-end` (omp fires `agent_end` on an interrupted turn). `ctx.isIdle()` is deliberately not consulted because it reads false at a natural TUI `agent_end`. |
 | OpenCode | 2.0.21 | Plugin `session.execution.*` (OpenCode 1 `session.status`/`session.idle` retained as legacy inputs) | Verified on 2026-10-01 via `opencode run --standalone`: the live event stream delivered `session.execution.started` then `session.execution.succeeded` for a tool-using turn, and the plugin maps them to `busy`/`idle`; `tests/fm-busy-adapter-wiring.test.sh` pins both the legacy and the `session.execution.*` mappings and the latched-session scoping. |
 | Claude | 2.1.220 (Claude Code) | Hooks `UserPromptSubmit`, `Stop`, `StopFailure`, `SessionEnd` | `UserPromptSubmit` fired for the argv launch prompt and each steer, and `Stop` closed every completed turn. A mid-stream Escape interrupt fired no closing hook, which is why the firstmate-controlled clear exists. `StopFailure` and `SessionEnd` are wired from the four hook names present in the installed binary; only the abnormal paths they cover were not reproduced live. |
-| Codex | codex-cli 0.145.0 | None usable | See below; classifies `unknown codex-unverified`. |
+| Codex | codex-cli 0.166.0 | Visible Herdr pane | The active-turn row classified `busy codex-viewport` on 2026-11-04; the idle composer was previously captured on Herdr with codex-cli 0.154.0 (see `docs/verification/runtime-backends.md`). An unreadable or unrecognized viewport stays unknown. |
 | Kimi (standalone) | not installed | None usable | No binary on `PATH`, so the gate stays closed and it classifies `unknown kimi-unverified`. |
 | Grok | 0.2.112 | Isolated rendered-tail fallback | Retained unconverted; the approved audit could not credit a live structured-lifecycle run. |
 
@@ -246,6 +247,20 @@ The daemon refused with `managed standalone Codex install not found`, and an int
 In this 2026-07-28 Codex 0.145.0 semantic-busy probe, Firstmate-written lifecycle project hooks under `<worktree>/.codex/hooks.json` fired for neither an interactive pane whose directory trust was granted nor `codex exec`, in both cases with `--dangerously-bypass-hook-trust`, while an untracked global probe fired in the same runs; Firstmate does not ship, install, recommend, or depend on that global path.
 Codex also exposes no `StopFailure` hook, so an API-error turn end would need separate coverage even after hook discovery works.
 The app-server protocol schema does define the required lifecycle (`turn/started`, plus a `turn/completed` status of `completed`, `interrupted`, `failed`, or `inProgress`), so the gate is a reachability problem rather than a protocol gap.
+
+The 2026-11-04 Codex viewport check used this task's own live Herdr worker (codex-cli 0.166.0), without controlling the pane:
+
+```sh
+herdr pane read "$HERDR_PANE_ID" --source visible --format text
+bash -c '. bin/fm-backend.sh; . bin/fm-busy-lib.sh; fm_busy_classify herdr default:wM2:p2 codex "$FM_TASK_ID" /Users/ellingtonshephard/code_projects/firstmate/state'
+FM_BUSY_CODEX_LIVE=1 FM_BUSY_CODEX_LIVE_TARGET=default:wM2:p2 FM_BUSY_CODEX_LIVE_EXPECT=busy bash tests/fm-busy-codex-live-e2e.test.sh
+FM_HOME=/Users/ellingtonshephard/code_projects/firstmate FM_CREW_STATE_NO_FORGE=1 bash bin/fm-crew-state.sh fm-retro-1104-codex-busy
+```
+
+The visible capture contained `• Working (1m 52s • esc to interrupt)` and the `› Ask Codex to do anything` composer; the classifier printed `busy codex-viewport`.
+The live guard printed `ok - codex (codex-cli 0.166.0): live herdr viewport classified busy`.
+The crew-state read printed `state: working · source: pane · harness busy (codex-viewport)`.
+The real Herdr idle composer and shortcut footer were captured on 2026-09-15 with codex-cli 0.154.0 in [`runtime-backends.md`](runtime-backends.md#2026-09-15-codex-cli-01540-idle-starfield-and-status-footer-through-herdr); the Codex viewport behavior test refreshes the busy, idle, approval, and unrecognized classifier cases without a live pane.
 
 Deterministic entry points:
 

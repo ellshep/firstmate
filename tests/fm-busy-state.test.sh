@@ -7,8 +7,9 @@
 # untrusted (source-mismatch) semantic data classify unknown - never idle;
 # adapter isolation (one adapter's writer or Grok's regex can never classify
 # another adapter); endpoint death is the only process-level override and
-# yields dead, never busy; converted adapters never classify from rendered
-# footer text. All hermetic over temp dirs; no real agent session is invoked.
+# yields dead, never busy; converted push adapters never classify from rendered
+# footer text, while Codex reads only its visible viewport. All hermetic over
+# temp dirs; no real agent session is invoked.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -223,7 +224,7 @@ test_missing_record_unknown_not_idle() {
     [ "$out" = "unknown missing" ] || fail "$h with no record must be 'unknown missing', got '$out'"
   done
   out=$(fm_busy_classify tmux w1 codex t1 "$state")
-  [ "$out" = "unknown codex-unverified" ] || fail "codex with no verified source must be 'unknown codex-unverified', got '$out'"
+  [ "$out" = "unknown capture-failed" ] || fail "codex with no viewport reader must stay unknown, got '$out'"
   pass "a converted adapter with no record classifies unknown, never idle"
 }
 
@@ -285,7 +286,7 @@ Ctrl+c:cancel'
     [ "$out" = "unknown missing" ] || fail "$h must never classify from footer text, got '$out'"
   done
   out=$(fm_busy_classify tmux w1 codex t1 "$state" "$tail")
-  [ "$out" = "unknown codex-unverified" ] || fail "codex must never classify from footer text, got '$out'"
+  [ "$out" = "unknown capture-failed" ] || fail "codex must not use a scrollback tail, got '$out'"
   pass "converted adapters never classify busy from rendered footer text"
 }
 
@@ -441,16 +442,25 @@ Ctrl+c:cancel')
 
 # --- kimi verification gate -----------------------------------------------------
 
-test_codex_unverified_gate() {
+test_codex_viewport_source() {
   local state gen out
   state=$(new_state_dir codex-gate)
   gen=$("$EV" arm "$state" t1)
   "$EV" apply "$state" t1 busy --gen "$gen" --source codex-hook --event user-prompt-submit
   out=$(fm_busy_classify tmux w1 codex t1 "$state")
-  [ "$out" = "unknown codex-unverified" ] || fail "unverified codex must classify unknown, got '$out'"
+  [ "$out" = "unknown capture-failed" ] || fail "codex must require a visible capture, got '$out'"
   [ -z "$(fm_busy_sources_for_harness codex)" ] \
-    || fail "codex must trust no semantic source until one is verified"
-  pass "codex classifies unknown until a semantic source passes its verification gate"
+    || fail "codex must not trust an unwired push source"
+  # shellcheck disable=SC2329 # exercised through fm_busy_classify
+  fm_backend_visible_capture() { cat "$ROOT/tests/fixtures/codex-$2-visible.txt"; }
+  for case_name in busy idle approval unrecognized; do
+    out=$(fm_busy_classify herdr "$case_name" codex t1 "$state")
+    case "$case_name" in busy) expected='busy codex-viewport' ;; idle) expected='idle codex-viewport' ;; *) expected='unknown codex-viewport' ;; esac
+    [ "$out" = "$expected" ] || fail "codex $case_name viewport: expected '$expected', got '$out'"
+  done
+  out=$(fm_busy_classify herdr busy claude t1 "$state")
+  [ "$out" = 'unknown source-mismatch' ] || fail "Codex viewport must not classify another adapter, got '$out'"
+  pass "captured Codex busy, idle, approval, and unrecognized viewports classify conservatively"
 }
 
 test_kimi_unverified_gate() {
@@ -738,7 +748,7 @@ test_launch_prompt_scoped_to_armed_harnesses
 test_launch_prompt_never_reclassifies_an_advanced_record
 test_launch_prompt_requires_a_captured_tail
 test_grok_regex_isolated
-test_codex_unverified_gate
+test_codex_viewport_source
 test_kimi_unverified_gate
 test_pi_stream_version_floor_accepts_verified_rejects_unverified
 test_cursor_ignores_rendered_and_native_signals

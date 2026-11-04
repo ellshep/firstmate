@@ -56,9 +56,9 @@
 #                    unknown invalidation fm-control writes after a Devin interrupt
 #   fm-recovery      a documented recovery reset after relaunch
 # Classifier-only sources (never written into a record):
-#   endpoint-gone, herdr-native, rex-native, t3code-native, tern-native, grok-regex, rovo-regex, agy-regex, muse-session-log,
+#   endpoint-gone, herdr-native, rex-native, t3code-native, tern-native, grok-regex, rovo-regex, agy-regex, codex-viewport, muse-session-log,
 #   cursor-transcript, missing, malformed, gen-mismatch, source-mismatch,
-#   kimi-unverified, codex-unverified, capture-failed, no-target, launch-prompt
+#   kimi-unverified, capture-failed, no-target, launch-prompt
 #
 # Classification (fm_busy_classify): busy | idle | unknown | dead, always
 # with the producing source as the second token. Precedence:
@@ -66,7 +66,8 @@
 #   2. a t3code task: the T3 server's busy, idle, or unknown verdict
 #      (the provider reports it for claude and codex alike, and no
 #      shell sits in front of the agent)
-#   3. standalone Kimi before verification       -> unknown kimi-unverified
+#   3. standalone Codex viewport, or unknown on absent/unrecognized capture;
+#      standalone Kimi before verification       -> unknown kimi-unverified
 #   4. a valid, gen-matching, source-trusted record -> its state and source,
 #      UNLESS the record is still the untouched seed fm-spawn wrote at arm
 #      time (state=busy source=fm-spawn - no adapter hook has posted since
@@ -103,8 +104,8 @@
 # a real busy verdict once any hook has posted, and it defers to whatever
 # harness-specific trust pre-registration already exists (fm-claude-trust.sh,
 # GEMINI_CLI_TRUST_WORKSPACE) to stop the dialog from appearing at all.
-# Apart from the launch-prompt backstop above, Grok, Rovo, and AGY are the only
-# harnesses whose rendered text is their SOLE classification, because none of
+# Apart from the launch-prompt backstop above, Codex, Grok, Rovo, and AGY use
+# rendered text as their sole classification, because none of
 # their structured lifecycles was credited-live-verified
 # in the approved audit (Rovo's clean ACP stopReason lives outside the TUI
 # path firstmate drives, see references/harness/rovo.md; agy 1.2.0 exposes no
@@ -138,13 +139,10 @@
 # cleared. See fm_busy_cursor_turn_state for the fold. Cursor's rendered
 # `ctrl+c to stop` footer is deliberately not a state source here.
 #
-# Codex negotiation (fm_busy_codex_appserver_observable,
-# fm_busy_codex_hooks_verified): the approved contract prefers Codex's
-# app-server turn lifecycle with capability negotiation, and sanctions its
-# stable lifecycle hooks as the intermediate. Neither is usable on the
-# installed binary, so Codex classifies unknown codex-unverified rather than
-# falling back to idle, and fm-spawn installs no Codex busy wiring.
-# docs/verification/supervision.md owns the evidence for both probes.
+# Codex's app-server and project hooks remain unavailable to pane workers.
+# Its viewport-only rendered status is the live-verified pull source instead;
+# an absent, unrecognized, or unreadable viewport is unknown, never idle.
+# docs/verification/supervision.md owns the per-version evidence.
 #
 # Sourcing: set -u and set -e safe; no subshell-unfriendly globals.
 
@@ -203,9 +201,27 @@ fm_busy_codex_hooks_verified() {
 
 # fm_busy_codex_semantic_source: 0 when ANY verified Codex semantic source
 # exists. fm-spawn arms and wires Codex only behind this gate, and the
-# classifier reports unknown codex-unverified until it opens.
+# its push-source gate remains closed; the viewport pull source below is used.
 fm_busy_codex_semantic_source() {
   fm_busy_codex_appserver_observable || fm_busy_codex_hooks_verified
+}
+
+# Codex pins its active-turn status immediately above the composer. The
+# composer also appears during a turn, so it proves idle only with the normal
+# shortcut footer and no active-turn row. Read a viewport, never scrollback.
+fm_busy_codex_viewport_state() {  # <plain visible viewport on stdin>
+  local screen
+  screen=$(tail -n 12) || { printf 'unknown'; return; }
+  if printf '%s\n' "$screen" | grep -Eiq '^[[:space:]]*(Would you like to run this command\?|Do you want to run this command\?|Do you trust the contents of this directory\?|Hooks need review)'; then
+    printf 'unknown'
+  elif printf '%s\n' "$screen" | grep -Eq '^[[:space:]]*• Working \([0-9][0-9smh ]*[^)]*esc to interrupt\)'; then
+    printf 'busy'
+  elif printf '%s\n' "$screen" | grep -Eq '^[[:space:]]*› Ask Codex to do anything[[:space:]]*$' \
+    && printf '%s\n' "$screen" | grep -Eq '^[[:space:]]*\? for shortcuts([[:space:]]|$)'; then
+    printf 'idle'
+  else
+    printf 'unknown'
+  fi
 }
 
 fm_busy_record_path() {  # <state-dir> <id>
@@ -1147,7 +1163,17 @@ fm_busy_classify() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
       ;;
     codex*)
       if ! fm_busy_codex_semantic_source; then
-        printf 'unknown codex-unverified'
+        if ! command -v fm_backend_visible_capture >/dev/null 2>&1; then
+          printf 'unknown capture-failed'
+          return 0
+        fi
+        local viewport verdict
+        viewport=$(fm_backend_visible_capture "$backend" "$target" 2>/dev/null) || {
+          printf 'unknown capture-failed'
+          return 0
+        }
+        verdict=$(printf '%s\n' "$viewport" | fm_busy_codex_viewport_state)
+        printf '%s codex-viewport' "$verdict"
         return 0
       fi
       ;;
