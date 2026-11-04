@@ -418,11 +418,16 @@ autoarm_record() {  # <outcome>
 # satisfied: this generation's own claim is the open one, and its terminal
 # failure is the proof the continuation is gone.
 #
-# Returns 0 when the alarm was committed, 2 when a verified healthy watcher
-# appeared inside the hold (the caller resets and closes clean instead), and
-# 1 on any other refusal or uncertainty.
+# Returns 0 when the alarm was committed directly, 3 when a live parked
+# successor took the close instead (its own commit creates the attended alarm
+# marker, via the handoff's "alarm" field, atomically with its own ledger
+# write - this generation's dead owner must not create the marker itself,
+# since the parked successor's delivery checks the marker's prior existence to
+# tell "already alarmed by someone else" from "this delivery is the alarm"),
+# 2 when a verified healthy watcher appeared inside the hold (the caller
+# resets and closes clean instead), and 1 on any other refusal or uncertainty.
 autoarm_commit_attended_alarm() {
-  local session_id budget_session budget_count rc=1 i=0
+  local session_id budget_session budget_count rc=1 i=0 handoff write_rc
   fm_lock_try_acquire "$OWNER_LOCK" || return 1
   while ! fm_lock_try_acquire "$BUDGET_LOCK"; do
     if [ "$i" -ge 20 ]; then
@@ -446,10 +451,31 @@ autoarm_commit_attended_alarm() {
       budget_count=$(sed -n '2s/^count=//p' "$BUDGET_FILE" 2>/dev/null || true)
       case "$budget_count" in ''|*[!0-9]*) budget_count=0 ;; esac
       if [ "$budget_session" = "$session_id" ] \
-        && [ "$budget_count" -gt "$BLOCK_BUDGET" ] \
-        && _fm_autoarm_write_owned_locked "$STATE" "$MY_GEN" failed-suppressed "$FAILURE_ALARM"; then
-        AUTOARM_COMMITTED_ALARM=1
-        rc=0
+        && [ "$budget_count" -gt "$BLOCK_BUDGET" ]; then
+        autoarm_alarm_banner
+        handoff=
+        if [ -n "$BANNER" ] && handoff=$(mktemp "$STATE/.claude-autoarm-handoff.XXXXXX" 2>/dev/null); then
+          if ! { printf 'epoch=%s outcome=%s notice=%s alarm=1\n' "$((MY_GEN + 1))" failed-suppressed 0 \
+              && cat "$BANNER"; } > "$handoff" 2>/dev/null; then
+            rm -f "$handoff" 2>/dev/null || true
+            handoff=
+          fi
+        fi
+        _fm_autoarm_write_owned_locked "$STATE" "$MY_GEN" failed-suppressed '' '' '' '' '' "$handoff"
+        write_rc=$?
+        [ -z "$handoff" ] || rm -f "$handoff" 2>/dev/null || true
+        case "$write_rc" in
+          0)
+            if : > "$FAILURE_ALARM" 2>/dev/null; then
+              AUTOARM_COMMITTED_ALARM=1
+              rc=0
+            else
+              [ -z "$BANNER" ] || : > "$BANNER" 2>/dev/null || true
+            fi
+            ;;
+          3) rc=3 ;;
+          *) [ -z "$BANNER" ] || : > "$BANNER" 2>/dev/null || true ;;
+        esac
       fi
     fi
   fi
@@ -472,7 +498,7 @@ autoarm_alarm_banner() {
   {
     printf 'FIRSTMATE SUPERVISION IS GENUINELY DOWN: %s - the Stop-owned auto-arm exhausted its bounded retries and one failure notice, no live watcher or automatic continuation exists, and this session block budget is exhausted.\n' "$need_desc"
     printf 'Keep this session attended and diagnose the automatic Stop-hook and watcher startup before relying on unattended supervision; do not launch a manual background arm from this notice.\n'
-  } >&2
+  } | banner_write
 }
 
 # The one terminal exhaustion decision every failed-suppressed continuation
@@ -498,9 +524,12 @@ autoarm_exit_suppressed() {  # <cause> [interrupted-session-identity]
   autoarm_commit_attended_alarm
   rc=$?
   if [ "$rc" -eq 0 ]; then
-    autoarm_alarm_banner
     [ -z "${OUT:-}" ] || rm -f "$OUT" 2>/dev/null || true
     exit 2
+  fi
+  if [ "$rc" -eq 3 ]; then
+    [ -z "${OUT:-}" ] || rm -f "$OUT" 2>/dev/null || true
+    exit 0
   fi
   if [ "$rc" -eq 2 ]; then
     fm_autoarm_reset_owned "$STATE" "$MY_GEN" >/dev/null 2>&1
@@ -549,7 +578,6 @@ handle_autoarm_signal() {
     exit 0
   fi
   if [ "$AUTOARM_COMMITTED_ALARM" -eq 1 ]; then
-    autoarm_alarm_banner
     exit 2
   fi
   if [ -e "$FAILURE_ALARM" ]; then
@@ -585,12 +613,21 @@ if [ -n "$HANDOFF_GEN" ]; then
   case "$HANDOFF_OUTCOME" in
     rewake|failed|failed-suppressed)
       HANDOFF_MARKER=
+      HANDOFF_ALARM=0
       [ "$(_fm_autoarm_epoch_field "$HANDOFF" notice 2>/dev/null)" != 1 ] || HANDOFF_MARKER=$FAILURE_NOTICE
+      if [ "$(_fm_autoarm_epoch_field "$HANDOFF" alarm 2>/dev/null)" = 1 ]; then
+        HANDOFF_MARKER=$FAILURE_ALARM
+        HANDOFF_ALARM=1
+      fi
       HANDOFF_MARKER_IDENTITY=
-      [ -z "$HANDOFF_MARKER" ] || HANDOFF_MARKER_IDENTITY=$SESSION_IDENTITY
+      [ "$HANDOFF_MARKER" != "$FAILURE_NOTICE" ] || HANDOFF_MARKER_IDENTITY=$SESSION_IDENTITY
       sed '1d' "$HANDOFF" 2>/dev/null | banner_write
       rm -f "$HANDOFF" 2>/dev/null || true
       if autoarm_commit "$HANDOFF_OUTCOME" "$HANDOFF_MARKER" "$HANDOFF_MARKER_IDENTITY"; then
+        if [ "$HANDOFF_ALARM" -eq 1 ]; then
+          AUTOARM_COMMITTED_ALARM=1
+          exit 2
+        fi
         [ "$HANDOFF_OUTCOME" = failed-suppressed ] && [ -e "$FAILURE_ALARM" ] && exit 0
         exit 2
       fi
