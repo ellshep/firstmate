@@ -128,6 +128,22 @@ test_returned_treehouse_bridge_is_flagged_but_live_task_is_not() {
   pass "returned or stale Treehouse task helpers flag; a live task remains clear"
 }
 
+test_stale_home_does_not_flag_a_live_task() {
+  local fixture root worktree moved_home got rc
+  fixture=$(mktemp -d)
+  root="$fixture/.treehouse"
+  worktree="$root/project-pool/1/project"
+  moved_home="$fixture/relocated-home"
+  mkdir -p "$worktree"
+  printf 'task=task-a\nhome=%s\n' "$moved_home" > "$root/project-pool/1/.fm-slot-owner"
+  rc=0
+  got=$(FM_RUNNING_TREEHOUSE_ROOT="$root" reason_of 1 "$worktree" 60) || rc=$?
+  expect_code 1 "$rc" "a claim whose recorded home no longer exists must not flag"
+  assert_eq '' "$got" "a stale/relocated home must print no reason, not an abandoned verdict"
+  rm -rf -- "$fixture"
+  pass "a live task's claim survives even when its recorded home has moved or gone stale"
+}
+
 test_fit_leaves_a_row_that_fits() {
   local got
   got=$(fm_running_fit 12 "node app.js")
@@ -321,6 +337,7 @@ test_young_tmp_process_does_not_flag
 test_live_parent_does_not_flag
 test_tmp_prefix_is_not_a_substring_match
 test_returned_treehouse_bridge_is_flagged_but_live_task_is_not
+test_stale_home_does_not_flag_a_live_task
 test_fit_leaves_a_row_that_fits
 test_fit_truncates_to_column_width
 test_process_row_that_fits_keeps_the_command

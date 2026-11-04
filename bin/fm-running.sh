@@ -137,6 +137,7 @@ fm_running_unclaimed_worktree() {  # <cwd> <elapsed-seconds>
   home=$(sed -n 's/^home=//p' "$marker" | head -1)
   [ -n "$task" ] && [ -n "$home" ] || return 1
   case "$task" in */*|*..*) return 1 ;; esac
+  [ -d "$home" ] || return 1
   [ -f "$home/state/$task.meta" ] || { printf '%s\n' "$worktree"; return 0; }
   if grep -Fxq "worktree=$worktree" "$home/state/$task.meta"; then
     # A bridge predating a new claim belongs to the previous holder of this
