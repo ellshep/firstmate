@@ -4481,6 +4481,7 @@ delivery_rigor_rank() { # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task 
 # would launch a worker whose instructions and whose recorded task delivery
 # differ, which is the exact drift this contract prevents.
 if [ "$KIND" = ship ]; then
+  case "$MODE_REASON" in *$'\n'*|*$'\r'*) echo 'error: --mode-reason must be one line' >&2; exit 1 ;; esac
   PROJ_NAME=$(basename "$PROJ_ABS")
   # The parser's own refusal reaches the operator here rather than being
   # discarded: an entry it refuses (an unknown forge token, or a forge on
@@ -4625,7 +4626,6 @@ if [ "$KIND" = ship ]; then
   # conditional policy is excluded: both of its legs are legitimate classifications.
   if [ "$RELAUNCH" -eq 0 ] && [ -n "$STANDING_MODE" ] && [ "$STANDING_MODE" != no-mistakes-prod-only ] &&
     [ "$(delivery_rigor_rank "$MODE")" -lt "$(delivery_rigor_rank "$STANDING_MODE")" ]; then
-    case "$MODE_REASON" in *$'\n'*|*$'\r'*) echo 'error: --mode-reason must be one line' >&2; exit 1 ;; esac
     [ -n "$(printf '%s' "$MODE_REASON" | tr -d '[:space:]')" ] || {
       echo "error: --mode $MODE is weaker than resolved default $STANDING_MODE for $PROJ_NAME; pass --mode-reason" >&2
       exit 1

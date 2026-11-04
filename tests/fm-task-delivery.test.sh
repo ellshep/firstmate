@@ -222,6 +222,28 @@ ROWS
   pass "fm-spawn: a weaker mode needs a matching reason; equal or stronger modes do not"
 }
 
+# --mode-reason is optional outside a rigor downgrade, but a multi-line value
+# would still land raw in the line-based state/<id>.meta, splitting into a
+# stray unlabeled line per embedded newline. The newline check must therefore
+# run whenever a value is supplied, not only inside the downgrade branch.
+test_spawn_refuses_a_multiline_mode_reason_outside_a_downgrade() {
+  local rec home proj fakebin out status
+  rec=$(make_home spawn-reason-multiline "- proj [no-mistakes] - fixture (added 2026-01-01)")
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  write_brief "$home" reason-multiline-c1 no-mistakes
+  out=$(run_spawn "$home" "$fakebin" reason-multiline-c1 "$proj" claude \
+    --mode no-mistakes --yolo off --mode-reason $'first line\nsecond line')
+  status=$?
+  [ "$status" -ne 0 ] || fail "a multi-line --mode-reason on a non-downgrade spawn should exit non-zero"
+  assert_contains "$out" "--mode-reason must be one line" \
+    "the multi-line reason was not refused on a mode that was not weaker"
+  assert_absent "$home/state/reason-multiline-c1.meta" \
+    "the refused multi-line reason still recorded a task"
+  pass "fm-spawn: a multi-line --mode-reason is refused even when the mode is not a downgrade"
+}
+
 # A scout's deliverable is a report, so it records no delivery posture at all;
 # teardown already treats an absent mode as the most protective one.
 test_scout_records_no_delivery_posture() {
@@ -345,6 +367,28 @@ conditional policy promoted to direct-PR|- proj [no-mistakes-prod-only] - fixtur
 unregistered project resolves to the no-mistakes standing default|- other [no-mistakes] - fixture (added 2026-01-01)|direct-PR|notice|no-mistakes
 ROWS
   pass "fm-promote: a weaker mode needs a matching reason; equal or stronger modes do not"
+}
+
+# Same hazard as fm-spawn.sh: --mode-reason is optional outside a rigor
+# downgrade, but a multi-line value would still land raw in the line-based
+# state/<id>.meta. The newline check must run whenever a value is supplied.
+test_promote_refuses_a_multiline_mode_reason_outside_a_downgrade() {
+  local rec home proj fakebin id meta out status
+  rec=$(make_home promote-reason-multiline "- proj [no-mistakes] - fixture (added 2026-01-01)")
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  id=promote-reason-multiline-c1
+  meta="$home/state/$id.meta"
+  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$proj" > "$meta"
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+    "$PROMOTE" "$id" --mode no-mistakes --yolo off --mode-reason $'first line\nsecond line' 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a multi-line --mode-reason on a non-downgrade promotion should exit non-zero"
+  assert_contains "$out" "--mode-reason must be one line" \
+    "the multi-line reason was not refused on a mode that was not weaker"
+  assert_grep 'kind=scout' "$meta" "the refused multi-line reason still promoted the task"
+  pass "fm-promote: a multi-line --mode-reason is refused even when the mode is not a downgrade"
 }
 
 # A home with config/spawn-base-primary-checkout can start a scout from the
@@ -2057,9 +2101,11 @@ test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
 test_spawn_requires_reason_for_rigor_downgrade
+test_spawn_refuses_a_multiline_mode_reason_outside_a_downgrade
 test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract
 test_promote_requires_reason_for_rigor_downgrade
+test_promote_refuses_a_multiline_mode_reason_outside_a_downgrade
 test_promote_names_origin_for_a_publishing_mode_in_an_opted_in_home
 test_promote_refuses_a_symlinked_task_record
 test_promotion_delivers_the_real_definition_of_done

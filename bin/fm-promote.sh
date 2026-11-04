@@ -154,6 +154,7 @@ case "$YOLO" in
   on|off) ;;
   *) echo "error: --yolo must be on or off (got '$YOLO')" >&2; exit 1 ;;
 esac
+case "$MODE_REASON" in *$'\n'*|*$'\r'*) echo 'error: --mode-reason must be one line' >&2; exit 1 ;; esac
 if [ "$UPSTREAM_CONSENT_SET" -eq 1 ]; then
   [ -n "$UPSTREAM_CONSENT" ] || { echo "error: --upstream-consent requires a non-empty <host>/<owner>/<repo> value" >&2; exit 1; }
   if [ "$MODE" = local-only ]; then
@@ -295,7 +296,6 @@ if [ -n "$PROMOTE_PROJECT" ]; then
   PROMOTE_STANDING_MODE=$("$FM_ROOT/bin/fm-project-mode.sh" --raw "$PROMOTE_PROJECT_NAME" 2>/dev/null | cut -d' ' -f1) || PROMOTE_STANDING_MODE=
   if [ -n "$PROMOTE_STANDING_MODE" ] && [ "$PROMOTE_STANDING_MODE" != no-mistakes-prod-only ] &&
     [ "$(delivery_rigor_rank "$MODE")" -lt "$(delivery_rigor_rank "$PROMOTE_STANDING_MODE")" ]; then
-    case "$MODE_REASON" in *$'\n'*|*$'\r'*) echo 'error: --mode-reason must be one line' >&2; exit 1 ;; esac
     [ -n "$(printf '%s' "$MODE_REASON" | tr -d '[:space:]')" ] || {
       echo "error: --mode $MODE is weaker than resolved default $PROMOTE_STANDING_MODE for $PROMOTE_PROJECT_NAME; pass --mode-reason" >&2
       exit 1
