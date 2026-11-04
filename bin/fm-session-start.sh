@@ -305,15 +305,26 @@ if [ -z "${FM_SESSION_START_STAGE_FILE:-}" ]; then
     SESSION_START_STAGE_FILE=/dev/null
   fi
   if [ "$REEMIT" -eq 1 ]; then
-    REEMIT_FULL=$(mktemp "${FM_STATE_OVERRIDE:-${FM_HOME:-${FM_ROOT_OVERRIDE:-$SCRIPT_DIR/..}}/state}/.session-reemit.XXXXXX" 2>/dev/null) || REEMIT_FULL=
+    REEMIT_STATE_DIR="${FM_STATE_OVERRIDE:-${FM_HOME:-${FM_ROOT_OVERRIDE:-$SCRIPT_DIR/..}}/state}"
+    REEMIT_FULL="$REEMIT_STATE_DIR/.session-reemit-full.txt"
+    # Every re-emit (one per post-compaction session start) writes through a
+    # fresh mktemp name and renames it onto this one fixed path, so a
+    # long-running home keeps at most this single full-output file instead of
+    # accumulating one per compaction event.
+    REEMIT_FULL_TMP=$(mktemp "$REEMIT_STATE_DIR/.session-reemit.XXXXXX" 2>/dev/null) || REEMIT_FULL_TMP=
     if [ -n "$SESSION_SOURCE" ]; then
       fm_run_timed "$SESSION_START_BUDGET" \
         env FM_SESSION_START_STAGE_FILE="$SESSION_START_STAGE_FILE" \
-        "$SCRIPT_DIR/fm-session-start.sh" --reemit --source "$SESSION_SOURCE" > "${REEMIT_FULL:-/dev/stdout}"
+        "$SCRIPT_DIR/fm-session-start.sh" --reemit --source "$SESSION_SOURCE" > "${REEMIT_FULL_TMP:-/dev/stdout}"
     else
       fm_run_timed "$SESSION_START_BUDGET" \
         env FM_SESSION_START_STAGE_FILE="$SESSION_START_STAGE_FILE" \
-        "$SCRIPT_DIR/fm-session-start.sh" --reemit > "${REEMIT_FULL:-/dev/stdout}"
+        "$SCRIPT_DIR/fm-session-start.sh" --reemit > "${REEMIT_FULL_TMP:-/dev/stdout}"
+    fi
+    if [ -n "$REEMIT_FULL_TMP" ]; then
+      mv -f "$REEMIT_FULL_TMP" "$REEMIT_FULL" 2>/dev/null || REEMIT_FULL=
+    else
+      REEMIT_FULL=
     fi
     if [ -n "$REEMIT_FULL" ]; then
       LC_ALL=C awk -v full="$REEMIT_FULL" -v cap=8192 '

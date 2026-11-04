@@ -2559,6 +2559,12 @@ EOF
 $(hash_file_for_test "$root/AGENTS.md")" ] \
     || fail "a wrong-session baseline was rewritten during a rebuild"
 
+  reemit_files=$(find "$home/state" -maxdepth 1 -name '.session-reemit*' 2>/dev/null | wc -l | tr -d ' ')
+  [ "$reemit_files" -eq 1 ] \
+    || fail "the six prior --reemit calls left $reemit_files .session-reemit files behind instead of converging on one"
+  [ -f "$home/state/.session-reemit-full.txt" ] \
+    || fail "repeated re-emits did not converge on the deterministic full-output file"
+
   pass "true-start AGENTS baselines stay immutable while every drifted Pi compact re-emits the current contract"
 }
 
