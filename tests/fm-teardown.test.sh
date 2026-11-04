@@ -5845,7 +5845,7 @@ SH
 # stack that happens to share the same project id. Volume removal for that id
 # must be skipped, not performed blindly.
 test_worktree_supabase_volumes_kept_without_jq() {
-  local case_dir rc no_jq_bin f name
+  local case_dir rc no_jq_bin dir f name save_ifs
   case_dir=$(make_case supabase-no-jq)
   write_meta "$case_dir" no-mistakes ship
   mkdir -p "$case_dir/wt/supabase"
@@ -5855,15 +5855,26 @@ test_worktree_supabase_volumes_kept_without_jq() {
   git -C "$case_dir/wt" push -q origin fm/task-x1
   git -C "$case_dir/project" fetch -q origin
   ln -s "$REAL_GIT_FOR_TEST" "$case_dir/fakebin/git"
-  # Mirror /usr/bin without jq so the sandbox's own jq can't be found on
-  # PATH, while every other core utility teardown needs stays available.
-  no_jq_bin="$case_dir/usr-bin-no-jq"
+  # Mirror every directory on the real PATH without jq, so the sandbox's own
+  # jq can't be found while every other core utility teardown needs stays
+  # available. Mirroring only /usr/bin and falling back to the real /bin is
+  # not safe on distros with a merged /usr (e.g. Ubuntu), where /bin is
+  # itself a symlink to /usr/bin and would silently reintroduce jq.
+  no_jq_bin="$case_dir/path-no-jq"
   mkdir -p "$no_jq_bin"
-  for f in /usr/bin/*; do
-    name=$(basename "$f")
-    [ "$name" = jq ] && continue
-    ln -s "$f" "$no_jq_bin/$name" 2>/dev/null
+  save_ifs=$IFS
+  IFS=:
+  for dir in $PATH; do
+    [ -d "$dir" ] || continue
+    for f in "$dir"/*; do
+      [ -e "$f" ] || continue
+      name=$(basename "$f")
+      [ "$name" = jq ] && continue
+      [ -e "$no_jq_bin/$name" ] && continue
+      ln -s "$f" "$no_jq_bin/$name" 2>/dev/null
+    done
   done
+  IFS=$save_ifs
   cat > "$case_dir/fakebin/podman" <<'SH'
 #!/usr/bin/env bash
 printf 'podman %s\n' "$*" >> "$FM_TEST_ENGINE_LOG"
@@ -5877,7 +5888,7 @@ SH
   chmod +x "$case_dir/fakebin/podman"
   : > "$case_dir/engine.log"
   rc=0
-  FM_TEARDOWN_TEST_PATH="$no_jq_bin:/bin:/usr/sbin:/sbin" \
+  FM_TEARDOWN_TEST_PATH="$no_jq_bin" \
   FM_TEST_ENGINE_LOG="$case_dir/engine.log" \
     run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
   expect_code 0 "$rc" "supabase-no-jq: teardown should succeed"
