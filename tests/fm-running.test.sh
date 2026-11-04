@@ -103,6 +103,31 @@ test_tmp_prefix_is_not_a_substring_match() {
   pass "orphan classifier does not treat /private/tmpdir as a temp cwd"
 }
 
+test_returned_treehouse_bridge_is_flagged_but_live_task_is_not() {
+  local fixture root worktree got rc
+  fixture=$(mktemp -d)
+  root="$fixture/.treehouse"
+  worktree="$root/project-pool/1/project"
+  mkdir -p "$worktree" "$fixture/home/state"
+  got=$(FM_RUNNING_TREEHOUSE_ROOT="$root" reason_of 1 "$worktree" 60)
+  assert_eq "parent gone; no live task owns worktree $worktree" "$got" \
+    "a young detached helper in a returned slot must flag"
+  printf 'task=task-a\nhome=%s\n' "$fixture/home" > "$root/project-pool/1/.fm-slot-owner"
+  printf 'worktree=%s\n' "$worktree" > "$fixture/home/state/task-a.meta"
+  rc=0
+  FM_RUNNING_TREEHOUSE_ROOT="$root" reason_of 1 "$worktree" 1 >/dev/null || rc=$?
+  expect_code 1 "$rc" "a live task's bridge must not flag"
+  got=$(FM_RUNNING_TREEHOUSE_ROOT="$root" reason_of 1 "$worktree" 3600)
+  assert_eq "parent gone; no live task owns worktree $worktree" "$got" \
+    "a bridge older than this task's slot claim must flag"
+  rm -f "$fixture/home/state/task-a.meta"
+  got=$(FM_RUNNING_TREEHOUSE_ROOT="$root" reason_of 1 "$worktree" 60)
+  assert_eq "parent gone; no live task owns worktree $worktree" "$got" \
+    "a stale claim without a live task must flag"
+  rm -rf -- "$fixture"
+  pass "returned or stale Treehouse task helpers flag; a live task remains clear"
+}
+
 test_fit_leaves_a_row_that_fits() {
   local got
   got=$(fm_running_fit 12 "node app.js")
@@ -295,6 +320,7 @@ test_age_alone_does_not_flag
 test_young_tmp_process_does_not_flag
 test_live_parent_does_not_flag
 test_tmp_prefix_is_not_a_substring_match
+test_returned_treehouse_bridge_is_flagged_but_live_task_is_not
 test_fit_leaves_a_row_that_fits
 test_fit_truncates_to_column_width
 test_process_row_that_fits_keeps_the_command

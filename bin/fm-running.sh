@@ -9,9 +9,10 @@
 # with /System/, /usr/libexec/, /usr/sbin/, /sbin/, /Library/Apple/, or
 # /Library/SystemExtensions/.
 #
-# Orphan heuristic: parent is init (ppid 1) AND cwd is missing/unreadable or
-# sits under a temp path AND elapsed seconds exceed FM_RUNNING_STALE_SECS
-# (default 86400). Age alone never flags. The reason is always printed next
+# Orphan heuristic: parent is init (ppid 1) AND either its cwd is in an
+# unclaimed Treehouse task slot, or cwd is missing/unreadable or under a temp
+# path and elapsed seconds exceed FM_RUNNING_STALE_SECS (default 86400).
+# Age alone never flags. The reason is always printed next
 # to a flagged process. Temp roots: /tmp, /private/tmp, /var/tmp,
 # /private/var/tmp, /var/folders, /private/var/folders. A process with no
 # cwd row from lsof is unknown, not unreadable, and is not flagged.
@@ -111,15 +112,63 @@ fm_running_temp_root() {  # <cwd>
   esac
 }
 
+# A returned Treehouse slot has no owner claim. A claimed slot is live only
+# while that home's task metadata still names this exact worktree. Treat an
+# unreadable claim as unknown rather than accusing a sibling home's task.
+fm_running_unclaimed_worktree() {  # <cwd> <elapsed-seconds>
+  local cwd=$1 elapsed=$2 root=${FM_RUNNING_TREEHOUSE_ROOT:-$HOME/.treehouse}
+  local relative slot marker task home worktree repo claimed_at now
+  case "$cwd" in "$root"/*) ;; *) return 1 ;; esac
+  relative=${cwd#"$root"/}
+  case "$relative" in */*/*) ;; *) return 1 ;; esac
+  slot="$root/${relative%%/*}"
+  relative=${relative#*/}
+  slot="$slot/${relative%%/*}"
+  repo=${relative#*/}
+  repo=${repo%%/*}
+  worktree="$slot/$repo"
+  marker="$slot/.fm-slot-owner"
+  if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
+    printf '%s\n' "$worktree"
+    return 0
+  fi
+  [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+  task=$(sed -n 's/^task=//p' "$marker" | head -1)
+  home=$(sed -n 's/^home=//p' "$marker" | head -1)
+  [ -n "$task" ] && [ -n "$home" ] || return 1
+  case "$task" in */*|*..*) return 1 ;; esac
+  [ -f "$home/state/$task.meta" ] || { printf '%s\n' "$worktree"; return 0; }
+  if grep -Fxq "worktree=$worktree" "$home/state/$task.meta"; then
+    # A bridge predating a new claim belongs to the previous holder of this
+    # reused slot even though a different task now owns the same cwd path.
+    if [ "$(uname -s)" = Darwin ]; then
+      claimed_at=$(stat -f %m "$marker" 2>/dev/null) || return 1
+    else
+      claimed_at=$(stat -c %Y "$marker" 2>/dev/null) || return 1
+    fi
+    now=$(date +%s)
+    if [ "$(fm_running_int "$elapsed")" -gt $((now - claimed_at + 5)) ]; then
+      printf '%s\n' "$worktree"
+      return 0
+    fi
+    return 1
+  fi
+  printf '%s\n' "$worktree"
+}
+
 # Print a reason and return 0 when the row is an orphan; print nothing and
 # return 1 otherwise. Never flags on age alone.
 fm_running_orphan_reason() {  # <ppid> <cwd> <elapsed_seconds>
   local ppid=$1 cwd=$2 elapsed=$3 threshold=$FM_RUNNING_STALE_SECS
-  local temp_root reason_cwd
+  local temp_root reason_cwd abandoned
   case "$ppid" in
     1) ;;
     *) return 1 ;;
   esac
+  if abandoned=$(fm_running_unclaimed_worktree "$cwd" "$elapsed"); then
+    printf 'parent gone; no live task owns worktree %s\n' "$abandoned"
+    return 0
+  fi
   elapsed=$(fm_running_int "$elapsed")
   threshold=$(fm_running_int "$threshold")
   [ "$elapsed" -gt "$threshold" ] || return 1
@@ -795,8 +844,8 @@ fm_running_main() {
   if [ -s "$listens" ]; then
     awk -F'\t' '{ print $1 }' "$listens" >> "$work/all.pids"
   fi
-  awk -F'\t' -v stale="$FM_RUNNING_STALE_SECS" '
-    $2 == 1 && $3 + 0 > stale {
+  awk -F'\t' '
+    $2 == 1 {
       argv0 = $4
       if (argv0 ~ /^\/System\//) next
       if (argv0 ~ /^\/usr\/libexec\//) next

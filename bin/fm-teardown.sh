@@ -2393,6 +2393,41 @@ $dir_pids"
   TASK_PIDS=$(printf '%s\n' "$pids" | grep -E '^[0-9]+$' | sort -un || true)
 }
 
+# Stop an AXI bridge through its session when its PID file names the exact
+# process found under this task's roots. AXI's stop also closes its detached
+# browser/MCP process group; TERM on the bridge alone can leave those behind.
+task_stop_chrome_bridge() {  # <pid> <identity> <current-pids>
+  local pid=$1 identity=$2 current_pids=$3 command state_file session recorded
+  task_pid_list_contains "$current_pids" "$pid" || return 0
+  task_process_identity_matches "$pid" "$identity" || return 0
+  command=$(ps -p "$pid" -o command= 2>/dev/null) || return 0
+  case "$command" in
+    *'/chrome-devtools-axi-bridge.js'*) ;;
+    *) return 0 ;;
+  esac
+  command -v chrome-devtools-axi >/dev/null 2>&1 || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  for state_file in "$HOME/.chrome-devtools-axi/bridge.pid" "$HOME"/.chrome-devtools-axi/sessions/*/bridge.pid; do
+    [ -f "$state_file" ] && [ ! -L "$state_file" ] || continue
+    recorded=$(jq -er '.pid | numbers' "$state_file" 2>/dev/null) || continue
+    [ "$recorded" = "$pid" ] || continue
+    session=default
+    case "$state_file" in
+      "$HOME"/.chrome-devtools-axi/sessions/*/bridge.pid)
+        session=${state_file%/bridge.pid}
+        session=${session##*/}
+        ;;
+    esac
+    # Recheck PID file and process identity before the tool reads that file.
+    recorded=$(jq -er '.pid | numbers' "$state_file" 2>/dev/null) || return 0
+    [ "$recorded" = "$pid" ] || return 0
+    task_process_identity_matches "$pid" "$identity" || return 0
+    echo "teardown: stopping chrome-devtools-axi session $session for $ID: $pid" >&2
+    ( unset CHROME_DEVTOOLS_AXI_PORT; CHROME_DEVTOOLS_AXI_SESSION=$session chrome-devtools-axi stop ) >&2 || true
+    return 0
+  done
+}
+
 reap_task_backend_process_group() {  # <label>
   local label=$1 leader leader_start pgid current_pgid own_pgid
   if [ "$BACKEND" != tmux ]; then
@@ -2482,6 +2517,14 @@ EOF
       pass=$((pass + 1))
       continue
     fi
+    if ! task_pids_under_roots "$@"; then
+      echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
+      return 1
+    fi
+    current_pids=$TASK_PIDS
+    for i in "${!tracked_pids[@]}"; do
+      task_stop_chrome_bridge "${tracked_pids[$i]}" "${tracked_identities[$i]}" "$current_pids"
+    done
     if ! task_pids_under_roots "$@"; then
       echo "REFUSED: cannot determine leaked processes under ${TASK_PIDS_FAILED_DIR:-<missing>} for $ID (lsof failed); preserving the worktree/tasktmp for manual inspection or retry." >&2
       return 1
