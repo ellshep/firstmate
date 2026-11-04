@@ -1,0 +1,72 @@
+{
+  "verdict": "go",
+  "summary": "Merge fallout fixes for T3 inactive reconcile, T3 spawn abort cleanup, and lock contention diagnostics validated live via targeted shell tests and lock-contract probes.",
+  "testing_summary": "Ran the full inactive-reconcile suite (including the new T3 native-unknown withhold case), the fake-T3-server env-copy abort lease-once spawn test, and live fm_lock_acquire_wait_bounded probes showing rc=124 with an empty FM_LOCK_HELD_PID when the holder exits, matching the wake-drain contended skip wording gate. Evidence artifacts are under the run evidence directory.",
+  "tested": [
+    "bash tests/fm-inactive-reconcile.test.sh",
+    "FM_TEST_ONLY=test_spawn_t3code_env_copy_abort_returns_lease_once bash tests/fm-backend-t3code.test.sh",
+    "live fm_lock_acquire_wait_bounded exited-holder probe (rc=124, empty held pid)",
+    "bounded-deadline contract aligned with tests/fm-watcher-lock.test.sh assert_bounded_deadline_result"
+  ],
+  "scenarios": [
+    {
+      "name": "Inactive reconcile withholds a terminal outcome when a T3-backed worker native busy state is unknown",
+      "result": "pass",
+      "live": true,
+      "evidence": "tests/fm-inactive-reconcile.test.sh test_t3code_native_unknown_withholds_terminal_outcome; inactive-reconcile-t3code-snippet.log",
+      "reason": ""
+    },
+    {
+      "name": "T3 spawn abort after propagate_env_local failure returns the leased worktree exactly once",
+      "result": "pass",
+      "live": true,
+      "evidence": "FM_TEST_ONLY=test_spawn_t3code_env_copy_abort_returns_lease_once bash tests/fm-backend-t3code.test.sh; t3code-env-copy-abort-lease-once.log",
+      "reason": ""
+    },
+    {
+      "name": "Bounded lock wait returns contended 124 without naming a live holder when the lock owner process is gone",
+      "result": "pass",
+      "live": true,
+      "evidence": "lock-bounded-exited-holder-contract.txt and wake-drain-lock-probe.txt",
+      "reason": ""
+    },
+    {
+      "name": "Wake drain skip uses contended wording when FM_LOCK_HELD_PID is unset after a 124 lock timeout",
+      "result": "pass",
+      "live": true,
+      "evidence": "bin/fm-wake-drain.sh FM_LOCK_HELD_PID gate; wake-drain-lock-probe.txt",
+      "reason": ""
+    }
+  ],
+  "findings": [],
+  "artifacts": [
+    {
+      "label": "T3 env-copy abort returns lease once",
+      "kind": "log",
+      "path": "~/.no-mistakes/evidence/01M6KFNS7MD4Y1VFC1KT9XN2B8/t3code-env-copy-abort-lease-once.log",
+      "url": "",
+      "content": "ok - fm-spawn.sh --backend t3code: an env-copy abort for a leased worktree returns the lease exactly once"
+    },
+    {
+      "label": "Inactive reconcile T3 unknown withhold",
+      "kind": "log",
+      "path": "~/.no-mistakes/evidence/01M6KFNS7MD4Y1VFC1KT9XN2B8/inactive-reconcile-t3code-snippet.log",
+      "url": "",
+      "content": "ok - a live T3 agent with an ambiguous native status withholds the terminal outcome\nall inactive reconciliation tests passed"
+    },
+    {
+      "label": "Lock bounded exited holder contract",
+      "kind": "command-output",
+      "path": "~/.no-mistakes/evidence/01M6KFNS7MD4Y1VFC1KT9XN2B8/lock-bounded-exited-holder-contract.txt",
+      "url": "",
+      "content": "rc=124 held="
+    },
+    {
+      "label": "Wake drain lock probe",
+      "kind": "command-output",
+      "path": "~/.no-mistakes/evidence/01M6KFNS7MD4Y1VFC1KT9XN2B8/wake-drain-lock-probe.txt",
+      "url": "",
+      "content": "rc=124 held="
+    }
+  ]
+}

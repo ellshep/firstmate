@@ -1,0 +1,1 @@
+ok - fm-spawn.sh --backend t3code: an env-copy abort for a leased worktree returns the lease exactly once
