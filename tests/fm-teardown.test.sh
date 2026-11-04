@@ -4307,6 +4307,34 @@ land_shippable_commit() {
   git -C "$case_dir/project" fetch -q origin
 }
 
+# Build a sandbox PATH directory mirroring every directory on the real PATH,
+# symlinking every file except those named in the exclusion list - so a real
+# system binary (e.g. jq, podman, docker) can't be found while every other
+# core utility teardown needs stays available. A hardcoded system-directory
+# list isn't safe: it trusts those directories to be free of the excluded
+# binary (e.g. a merged /usr where /bin is a symlink to /usr/bin, or a stock
+# Ubuntu runner's own /usr/bin/docker). Args: dest_dir excluded_name...
+build_path_without() {
+  local dest_dir=$1; shift
+  local dir f name excluded save_ifs
+  mkdir -p "$dest_dir"
+  save_ifs=$IFS
+  IFS=:
+  for dir in $PATH; do
+    [ -d "$dir" ] || continue
+    for f in "$dir"/*; do
+      [ -e "$f" ] || continue
+      name=$(basename "$f")
+      for excluded in "$@"; do
+        [ "$name" = "$excluded" ] && continue 2
+      done
+      [ -e "$dest_dir/$name" ] && continue
+      ln -s "$f" "$dest_dir/$name" 2>/dev/null
+    done
+  done
+  IFS=$save_ifs
+}
+
 # Cleanup keeps the task's no-mistakes pipeline spend in this home's records
 # (bin/fm-pipeline-spend.sh) while the task branch that attributes its runs and
 # the task record still exist, then removes both as before.
@@ -5695,6 +5723,126 @@ SH
   pass "an unavailable container runtime does not block eligible teardown"
 }
 
+test_worktree_supabase_stack_removes_stopped_containers_and_volumes() {
+  local case_dir rc
+  case_dir=$(make_case supabase-stack-removal)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  cat > "$case_dir/fakebin/podman" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  'ps -q') exit 0 ;;
+  'ps -aq') printf '%s\n' own-db own-api other-db prefix-db ;;
+  'inspect own-db'|'inspect own-api')
+    printf '[{"Config":{"Labels":{"com.supabase.cli.workdir":"%s/.tmp/stack","com.supabase.cli.project":"task-stack"}}}]\n' "$FM_TEST_WT" ;;
+  'inspect other-db')
+    printf '[{"Config":{"Labels":{"com.supabase.cli.workdir":"%s-other/stack","com.supabase.cli.project":"other-stack"}}}]\n' "$FM_TEST_WT" ;;
+  'inspect prefix-db')
+    printf '[{"Config":{"Labels":{"com.supabase.cli.workdir":"%s-other/stack","com.supabase.cli.project":"task-stack"}}}]\n' "$FM_TEST_WT" ;;
+  'rm -f') printf 'container %s\n' "$3" >> "$FM_TEST_ENGINE_LOG" ;;
+  'volume ls')
+    case "$5" in
+      'label=com.supabase.cli.project=task-stack') printf '%s\n' own-data own-config ;;
+      'label=com.supabase.cli.project=other-stack') printf '%s\n' other-data ;;
+    esac ;;
+  'volume rm') printf 'volume %s\n' "$3" >> "$FM_TEST_ENGINE_LOG" ;;
+esac
+SH
+  chmod +x "$case_dir/fakebin/podman"
+  rc=0
+  FM_TEST_WT="$case_dir/wt" FM_TEST_ENGINE_LOG="$case_dir/engine.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "supabase-stack: teardown should succeed"
+  assert_grep 'container own-db' "$case_dir/engine.log" "own stopped database was not removed"
+  assert_grep 'container own-api' "$case_dir/engine.log" "own stopped API was not removed"
+  assert_no_grep 'container other-db' "$case_dir/engine.log" "another worktree's container was removed"
+  assert_no_grep 'container prefix-db' "$case_dir/engine.log" "prefix-matching worktree container was removed"
+  assert_no_grep 'volume own-data' "$case_dir/engine.log" "shared project volume should be preserved"
+  assert_no_grep 'volume other-data' "$case_dir/engine.log" "another stack's volume was removed"
+  pass "Supabase cleanup removes only labelled task containers and preserves ambiguous volumes"
+}
+
+test_worktree_supabase_stack_removes_own_volumes() {
+  local case_dir rc
+  case_dir=$(make_case supabase-stack-volumes)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  cat > "$case_dir/fakebin/podman" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  'ps -q') exit 0 ;;
+  'ps -aq') printf '%s\n' own-db other-db ;;
+  'inspect own-db')
+    printf '[{"Config":{"Labels":{"com.supabase.cli.workdir":"%s/stack","com.supabase.cli.project":"task-stack"}}}]\n' "$FM_TEST_WT" ;;
+  'inspect other-db')
+    printf '[{"Config":{"Labels":{"com.supabase.cli.workdir":"%s-other/stack","com.supabase.cli.project":"other-stack"}}}]\n' "$FM_TEST_WT" ;;
+  'rm -f') printf 'container %s\n' "$3" >> "$FM_TEST_ENGINE_LOG" ;;
+  'volume ls')
+    case "$5" in
+      'label=com.supabase.cli.project=task-stack') printf '%s\n' own-data own-config ;;
+      'label=com.supabase.cli.project=other-stack') printf '%s\n' other-data ;;
+    esac ;;
+  'volume rm') printf 'volume %s\n' "$3" >> "$FM_TEST_ENGINE_LOG" ;;
+esac
+SH
+  chmod +x "$case_dir/fakebin/podman"
+  rc=0
+  FM_TEST_WT="$case_dir/wt" FM_TEST_ENGINE_LOG="$case_dir/engine.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "supabase-volumes: teardown should succeed"
+  assert_grep 'container own-db' "$case_dir/engine.log" "own container was not removed"
+  assert_grep 'volume own-data' "$case_dir/engine.log" "own data volume was not removed"
+  assert_grep 'volume own-config' "$case_dir/engine.log" "own config volume was not removed"
+  assert_no_grep 'other' "$case_dir/engine.log" "another stack was touched"
+  pass "Supabase cleanup removes the task stack and its labelled volumes"
+}
+
+test_worktree_supabase_stack_without_engine() {
+  local case_dir rc no_engine_bin
+  case_dir=$(make_case supabase-no-engine)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  rm "$case_dir/fakebin/podman" "$case_dir/fakebin/docker"
+  ln -s "$REAL_GIT_FOR_TEST" "$case_dir/fakebin/git"
+  no_engine_bin="$case_dir/path-no-engine"
+  build_path_without "$no_engine_bin" podman docker
+  rc=0
+  FM_TEARDOWN_TEST_PATH="$no_engine_bin" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "supabase-no-engine: teardown should succeed"
+  assert_no_grep 'warning:.*Supabase' "$case_dir/stderr" "an absent engine should be silent"
+  pass "Supabase cleanup silently skips when no container engine exists"
+}
+
+test_worktree_supabase_removal_failure_warns_without_blocking() {
+  local case_dir rc
+  case_dir=$(make_case supabase-removal-fails)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  cat > "$case_dir/fakebin/podman" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  'ps -q') exit 0 ;;
+  'ps -aq') printf '%s\n' own-db ;;
+  'inspect own-db')
+    printf '[{"Config":{"Labels":{"com.supabase.cli.workdir":"%s/stack","com.supabase.cli.project":"task-stack"}}}]\n' "$FM_TEST_WT" ;;
+  'rm -f') exit 1 ;;
+  'volume ls') printf '%s\n' own-data ;;
+  'volume rm') exit 1 ;;
+esac
+SH
+  chmod +x "$case_dir/fakebin/podman"
+  rc=0
+  FM_TEST_WT="$case_dir/wt" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "supabase-removal-fails: teardown should succeed"
+  assert_grep 'warning: podman could not remove Supabase container own-db' "$case_dir/stderr" \
+    "container removal failure was not reported"
+  assert_grep 'warning: podman could not remove Supabase volume own-data' "$case_dir/stderr" \
+    "volume removal failure was not reported"
+  pass "Supabase removal failures warn without blocking teardown"
+}
+
 test_supabase_stops_unique_worktree_project_but_skips_shared_id() {
   local case_dir rc
   case_dir=$(make_case worktree-supabase-stop)
@@ -5720,6 +5868,47 @@ SH
   assert_no_grep 'shared-id' "$case_dir/supabase.log" "shared Supabase project was stopped"
   assert_grep 'skipped Supabase project shared-id' "$case_dir/stderr" "shared ID skip was not reported"
   pass "Supabase stop targets unique worktree project IDs and skips the source project's shared ID"
+}
+
+# Without jq, a config.toml-derived project id can't be checked against live
+# container labels, so it can't be told apart from another worktree's running
+# stack that happens to share the same project id. Volume removal for that id
+# must be skipped, not performed blindly.
+test_worktree_supabase_volumes_kept_without_jq() {
+  local case_dir rc no_jq_bin
+  case_dir=$(make_case supabase-no-jq)
+  write_meta "$case_dir" no-mistakes ship
+  mkdir -p "$case_dir/wt/supabase"
+  printf '%s\n' 'project_id = "shared-stack"' > "$case_dir/wt/supabase/config.toml"
+  git -C "$case_dir/wt" add supabase/config.toml
+  git -C "$case_dir/wt" -c user.email=t@t -c user.name=t commit -q -m "Supabase fixture"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+  ln -s "$REAL_GIT_FOR_TEST" "$case_dir/fakebin/git"
+  no_jq_bin="$case_dir/path-no-jq"
+  build_path_without "$no_jq_bin" jq
+  cat > "$case_dir/fakebin/podman" <<'SH'
+#!/usr/bin/env bash
+printf 'podman %s\n' "$*" >> "$FM_TEST_ENGINE_LOG"
+case "${1:-} ${2:-}" in
+  'ps -q') exit 0 ;;
+  'ps -aq') printf '%s\n' own-db ;;
+  'volume ls') printf '%s\n' shared-data ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/podman"
+  : > "$case_dir/engine.log"
+  rc=0
+  FM_TEARDOWN_TEST_PATH="$no_jq_bin" \
+  FM_TEST_ENGINE_LOG="$case_dir/engine.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "supabase-no-jq: teardown should succeed"
+  assert_no_grep 'volume rm' "$case_dir/engine.log" \
+    "a shared-label volume was removed without jq available to check ownership"
+  assert_grep 'warning: jq unavailable; podman Supabase volumes not removed' "$case_dir/stderr" \
+    "missing-jq volume skip was not reported"
+  pass "Supabase volume cleanup is skipped, not performed blindly, when jq is unavailable"
 }
 
 test_teardown_preserves_opencode_busy_plugin_on_pool_return
@@ -6462,4 +6651,9 @@ test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal
 test_worktree_containers_stop_without_touching_unrelated_containers
 test_unreachable_container_runtime_does_not_block_teardown
+test_worktree_supabase_stack_removes_stopped_containers_and_volumes
+test_worktree_supabase_stack_removes_own_volumes
+test_worktree_supabase_stack_without_engine
+test_worktree_supabase_removal_failure_warns_without_blocking
 test_supabase_stops_unique_worktree_project_but_skips_shared_id
+test_worktree_supabase_volumes_kept_without_jq
