@@ -2604,9 +2604,12 @@ stop_worktree_databases() {  # <worktree> <project clone>
   if ! command -v jq >/dev/null 2>&1; then
     echo "teardown: cannot inspect worktree containers for $ID (jq unavailable)" >&2
   else
+    local found_runtime=0
     for runtime in podman docker; do
       command -v "$runtime" >/dev/null 2>&1 || continue
+      found_runtime=1
       if ! ids=$("$runtime" ps -q 2>/dev/null); then
+        echo "teardown: $runtime runtime unavailable; worktree containers could not be checked for $ID" >&2
         continue
       fi
       while IFS= read -r id; do
@@ -2648,6 +2651,9 @@ stop_worktree_databases() {  # <worktree> <project clone>
         fi
       done <<< "$ids"
     done
+    if [ "$found_runtime" -eq 0 ]; then
+      echo "teardown: no container runtime available; worktree containers could not be checked for $ID" >&2
+    fi
   fi
   command -v supabase >/dev/null 2>&1 || return 0
   while IFS= read -r config; do
@@ -2671,19 +2677,42 @@ stop_worktree_databases() {  # <worktree> <project clone>
   return 0
 }
 
-remove_worktree_supabase_stacks() {  # <worktree>
-  local wt=$1 runtime ids id details project workdir volumes volume
-  local projects=$'\n' foreign_projects=$'\n'
+remove_worktree_supabase_stacks() {  # <worktree> <project clone>
+  local wt=$1 project_clone=$2 runtime ids id details project workdir volumes volume
+  local projects foreign_projects config source_id source_ids config_project config_project_ids
   [ -d "$wt" ] || return 0
   command -v jq >/dev/null 2>&1 || {
     echo "warning: jq unavailable; cannot remove Supabase stacks for $ID" >&2
     return 0
   }
+  # A stack's container is gone by the time this runs when `supabase stop`
+  # already tore it down cleanly, so volumes are also discovered from the
+  # worktree's own config.toml project IDs, not only from live container
+  # labels.
+  source_ids=$'\n'
+  while IFS= read -r config; do
+    [ -n "$config" ] || continue
+    source_id=$(sed -nE 's/^[[:space:]]*project_id[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$config" | head -1)
+    [ -n "$source_id" ] && source_ids+="$source_id"$'\n'
+  done < <(find "$project_clone" -type f -path '*/supabase/config.toml' -not -path '*/node_modules/*' -print 2>/dev/null)
+  config_project_ids=$'\n'
+  while IFS= read -r config; do
+    [ -n "$config" ] || continue
+    config_project=$(sed -nE 's/^[[:space:]]*project_id[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$config" | head -1)
+    [ -n "$config_project" ] || continue
+    case "$source_ids" in
+      *$'\n'"$config_project"$'\n'*)
+        echo "warning: skipped Supabase volumes for $config_project for $ID (ID shared with source project)" >&2
+        continue ;;
+    esac
+    case "$config_project_ids" in *$'\n'"$config_project"$'\n'*) ;; *) config_project_ids+="$config_project"$'\n' ;; esac
+  done < <(find "$wt" -type f -path '*/supabase/config.toml' -not -path '*/node_modules/*' -print 2>/dev/null)
   for runtime in podman docker; do
     command -v "$runtime" >/dev/null 2>&1 || continue
+    projects=$config_project_ids
+    foreign_projects=$'\n'
     # A stopped Supabase stack still has containers, so include all states.
-    ids=$("$runtime" ps -aq 2>/dev/null) || continue
-    [ -n "$ids" ] || continue
+    ids=$("$runtime" ps -aq 2>/dev/null) || ids=
     while IFS= read -r id; do
       [ -n "$id" ] || continue
       details=$("$runtime" inspect "$id" 2>/dev/null) || {
@@ -2731,8 +2760,6 @@ remove_worktree_supabase_stacks() {  # <worktree>
         fi
       done <<< "$volumes"
     done <<< "$projects"
-    projects=$'\n'
-    foreign_projects=$'\n'
   done
   return 0
 }
@@ -4155,7 +4182,7 @@ fi
 
 if [ "$KIND" != secondmate ] && teardown_owns_worktree; then
   stop_worktree_databases "$WT" "$PROJ"
-  remove_worktree_supabase_stacks "$WT"
+  remove_worktree_supabase_stacks "$WT" "$PROJ"
 fi
 if [ "$KIND" = ship ] && teardown_owns_worktree && [ -e "$CONFIG/pipeline-spend" ]; then
   FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" FM_CONFIG_OVERRIDE="$CONFIG" \

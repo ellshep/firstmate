@@ -5691,8 +5691,8 @@ SH
   rc=0
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
   expect_code 0 "$rc" "runtime-unreachable: teardown should succeed"
-  assert_no_grep 'runtime unavailable' "$case_dir/stderr" "an unavailable VM should be silent"
-  pass "an unavailable container VM silently skips stack cleanup"
+  assert_grep 'podman runtime unavailable' "$case_dir/stderr" "runtime failure was not reported"
+  pass "an unavailable container runtime does not block eligible teardown"
 }
 
 test_worktree_supabase_stack_removes_stopped_containers_and_volumes() {
