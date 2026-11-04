@@ -64,6 +64,9 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 GATE="$STATE/.afk-return-catchup"
 LOCK="$STATE/.afk-return-catchup.lock"
 RETURN_GRACE=${FM_GUARD_GRACE:-300}
+# How long a newly spawned task's missing first status line is exempted from
+# the catch-up gate before it is treated like any other stale record (below).
+SPAWN_STATUS_GRACE=${FM_SPAWN_STATUS_GRACE:-900}
 
 # The posture-record owner: path helpers only; every read goes through its
 # subcommands. It sources fm-classify-lib.sh, which has no side effects, so the
@@ -181,17 +184,27 @@ status_path_readable() {
 }
 
 scan_open_blockers() {  # -> tab-separated blocker rows
-  local meta id status key verb summary clean_summary open
+  local meta id status key verb summary clean_summary open now meta_mtime meta_age
   STATUS_SCAN_ERROR=
+  # shellcheck source=bin/fm-lock-lib.sh
+  . "$SCRIPT_DIR/fm-lock-lib.sh" || true
+  now=$(date +%s)
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
     id=$(basename "$meta")
     id=${id%.meta}
     status="$STATE/$id.status"
-    # A newly spawned task may not have emitted its first event yet. A stale
-    # record without a window does not get that exemption.
+    # A newly spawned task may not have emitted its first event yet. That
+    # exemption only holds for SPAWN_STATUS_GRACE after the meta was written;
+    # past it, a missing status is a stale record and gates like any other
+    # (below). A stale record without a window never got the exemption.
     if [ ! -e "$status" ] && [ ! -L "$status" ] && grep -q '^window=.' "$meta"; then
-      continue
+      meta_mtime=$(fm_lock_path_mtime "$meta" 2>/dev/null) || meta_mtime=
+      case "$meta_mtime" in ''|*[!0-9]*) meta_mtime= ;; esac
+      if [ -n "$meta_mtime" ]; then
+        meta_age=$((now - meta_mtime))
+        [ "$meta_age" -lt "$SPAWN_STATUS_GRACE" ] && continue
+      fi
     fi
     if ! status_path_readable "$status"; then
       STATUS_SCAN_ERROR=$status

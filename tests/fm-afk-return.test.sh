@@ -354,6 +354,36 @@ test_fresh_task_without_status_has_no_events_yet() {
   pass "a fresh live task without a status event lets catch-up clear"
 }
 
+test_stale_spawn_without_status_gates_after_grace_expires() {
+  local dir out rc gate past
+  dir="$TMP_ROOT/stale-spawn-statusless"
+  install_runner "$dir"
+  gate="$dir/home/state/.afk-return-catchup"
+  # A spawn record whose backend session died before writing its first status
+  # line, aged past the no-status grace: unlike the fresh case above, this must
+  # gate like any other stale leftover rather than being exempted forever.
+  printf 'window=synthetic:fm-stale-spawn\nbackend=tmux\nkind=ship\n' > "$dir/home/state/stale-spawn.meta"
+  past=$(( $(date +%s) - 1000 ))
+  TZ=UTC touch -t "$(date -u -r "$past" +%Y%m%d%H%M.%S 2>/dev/null || date -u -d "@$past" +%Y%m%d%H%M.%S)" \
+    "$dir/home/state/stale-spawn.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  set +e
+  out=$(run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "a spawn record past the grace window should keep catch-up gated (rc=$rc): $out"
+  [ -f "$gate" ] || fail "an expired no-status spawn record did not retain the return gate"
+  assert_contains "$out" "status file unreadable: $dir/home/state/stale-spawn.status; catch-up stays gated" \
+    "the gate did not name the expired spawn record's missing status"
+
+  : > "$dir/home/state/stale-spawn.status"
+  out=$(run_return "$dir" check) || fail "catch-up did not clear once the expired spawn record gained a readable status: $out"
+  assert_contains "$out" 'catch-up clear' "the repaired status did not clear catch-up"
+  [ ! -e "$gate" ] || fail "the repaired status left the return gate behind"
+  pass "a newly-spawned task's missing-status exemption expires after the grace window, then gates like any stale record"
+}
+
 test_check_retries_recorded_terminal_teardown() {
   local dir gate out rc
   dir="$TMP_ROOT/terminal-teardown"
@@ -1389,6 +1419,7 @@ test_evidence_publication_failure_preserves_wake_for_redrain
 test_away_reentry_refuses_pending_return_gate
 test_return_is_mode_agnostic_for_quiet_mode
 test_fresh_task_without_status_has_no_events_yet
+test_stale_spawn_without_status_gates_after_grace_expires
 test_check_retries_recorded_terminal_teardown
 test_unreadable_superseded_archive_keeps_return_gated
 test_missing_final_archive_keeps_retained_contract_gated
