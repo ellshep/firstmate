@@ -14,7 +14,7 @@
 # charters still use a single `{TASK}` charter fill. Firstmate may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--branch-prefix <prefix>] [--base-branch <branch>] [--forge <none|gerrit|forgejo|external> [--shape squash]] [--pr <auto|manual>] [--herdr-lab]
+# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--mode-reason <one-line reason>] [--branch-prefix <prefix>] [--base-branch <branch>] [--forge <none|gerrit|forgejo|external> [--shape squash]] [--pr <auto|manual>] [--herdr-lab]
 #        fm-brief.sh <task-id> <repo-name> --scout [--base-branch <branch>] [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
@@ -39,8 +39,8 @@
 #   identify this repo. Briefs made without it carry a loud declaration so an
 #   omitted contract cannot be silent.
 # For ship tasks, --mode is REQUIRED and shapes the definition of done. Firstmate
-# resolves it per task at intake (AGENTS.md section 7); data/projects.md holds the
-# captain's standing posture as context, and this script never reads it:
+# resolves it per task at intake (AGENTS.md section 7); this script reads the
+# resolved standing posture only to require --mode-reason for a weaker choice:
 #   no-mistakes  implement -> /no-mistakes pipeline -> PR -> configured merge authority
 #   direct-PR    implement -> push + open PR via gh-axi (no pipeline) -> configured merge authority
 #   local-only   implement on branch, stop and report "ready in branch" (no push/PR);
@@ -53,7 +53,7 @@
 # conventional prefix such as "fix/" - useful for a third-party project that does
 # not use this tooling and should not see an "fm/"-branded branch or PR. Defaults
 # to "fm/" when omitted, so every existing installation's branch names are
-# unchanged. Like --mode, this script never reads data/projects.md for it: the
+# unchanged. Like --mode, this script never selects it from data/projects.md: the
 # registry's optional "branch=<prefix>" annotation (bin/fm-project-mode.sh's
 # header owns that format and its --branch-prefix query) is the captain's
 # standing per-project preference, and firstmate resolves it per task at intake
@@ -231,6 +231,7 @@ HERDR_LAB=0
 NO_PROJECTS=0
 MODE=
 MODE_SET=0
+MODE_REASON=
 BRANCH_PREFIX=fm/
 BRANCH_PREFIX_SET=0
 BASE_BRANCH=
@@ -254,6 +255,7 @@ for a in "$@"; do
     esac
     case "$want_value" in
       mode) MODE=$a; MODE_SET=1 ;;
+      mode-reason) MODE_REASON=$a ;;
       branch-prefix) BRANCH_PREFIX=$a; BRANCH_PREFIX_SET=1 ;;
       base-branch) BASE_BRANCH=$a; BASE_BRANCH_SET=1 ;;
       forge) FORGE=$a; FORGE_SET=1 ;;
@@ -273,6 +275,8 @@ for a in "$@"; do
     --no-projects) NO_PROJECTS=1 ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
+    --mode-reason) want_value=mode-reason ;;
+    --mode-reason=*) MODE_REASON=${a#--mode-reason=} ;;
     --branch-prefix) want_value="branch-prefix" ;;
     --branch-prefix=*) BRANCH_PREFIX=${a#--branch-prefix=}; BRANCH_PREFIX_SET=1 ;;
     --base-branch) want_value="base-branch" ;;
@@ -312,6 +316,10 @@ if [ "$KIND" = ship ]; then
   esac
 elif [ "$MODE_SET" -eq 1 ]; then
   echo "error: --mode applies only to ship briefs; a scout delivers a report and a secondmate charter is not a delivery contract" >&2
+  exit 1
+fi
+if [ "$KIND" != ship ] && [ -n "$MODE_REASON" ]; then
+  echo 'error: --mode-reason applies only to ship briefs' >&2
   exit 1
 fi
 
@@ -614,6 +622,20 @@ exit 0
 fi
 
 REPO=${POS[1]}
+if [ "$KIND" = ship ]; then
+  case "$MODE_REASON" in *$'\n'*|*$'\r'*) echo 'error: --mode-reason must be one line' >&2; exit 1 ;; esac
+  STANDING_POSTURE=$("$SCRIPT_DIR/fm-project-mode.sh" --raw "$REPO") || exit 1
+  STANDING_MODE=${STANDING_POSTURE%% *}
+  if [ "$STANDING_MODE" != no-mistakes-prod-only ]; then
+    case "$MODE:$STANDING_MODE" in
+      direct-PR:no-mistakes|local-only:no-mistakes|local-only:direct-PR)
+        [ -n "$(printf '%s' "$MODE_REASON" | tr -d '[:space:]')" ] || {
+          echo "error: --mode $MODE is weaker than resolved default $STANDING_MODE for $REPO; pass --mode-reason" >&2
+          exit 1
+        } ;;
+    esac
+  fi
+fi
 
 if [ "$HERDR_LAB" -eq 1 ]; then
 HERDR_LAB_HELPER=$(shell_quote "$FM_ROOT/bin/fm-herdr-lab.sh")
@@ -787,6 +809,8 @@ case "$MODE" in
 esac
 RULE1=$(fm_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
 DOD=$(fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$UPSTREAM_CONSENT" "$PR_TEXT") || exit 1
+[ -z "$MODE_REASON" ] || DOD="Mode reason: $MODE_REASON
+$DOD"
 HANDOFF_STATE=
 [ "$MODE" != no-mistakes ] || HANDOFF_STATE='validation-ready, '
 

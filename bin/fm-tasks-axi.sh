@@ -3,6 +3,9 @@
 #
 # Usage: fm-tasks-axi.sh [<tasks-axi command> [args...]]
 #        fm-tasks-axi.sh --help
+# `update <id> --append-body <file>` appends to the current body. A replacement
+# `--body-file` must be nonempty and retain at least half the current body unless
+# `--force-body` is explicit. These wrapper-only flags never reach tasks-axi.
 #
 # Every routine firstmate backlog read or mutation goes through this command
 # rather than a bare `tasks-axi`; `fm-tasks-axi.sh <command> --help` prints
@@ -96,15 +99,32 @@ absolute_from_caller() {  # <path-value>
 
 ARGS=()
 path_value_next=0
+BODY_FILE=
+APPEND_BODY=
+FORCE_BODY=0
 for arg in "$@"; do
+  if [ "$path_value_next" = append ]; then
+    APPEND_BODY=$(absolute_from_caller "$arg")
+    path_value_next=0
+    continue
+  fi
   if [ "$path_value_next" = 1 ]; then
     ARGS+=("$(absolute_from_caller "$arg")")
+    [ "${ARGS[${#ARGS[@]}-2]}" != --body-file ] || BODY_FILE=${ARGS[${#ARGS[@]}-1]}
     path_value_next=0
     continue
   fi
   case "$arg" in
     --file|--file=*)
       fail "this command always addresses this home's backlog at $DATA; drop --file, or run tasks-axi directly for another backlog"
+      ;;
+    --append-body)
+      [ "${1:-}" = update ] || fail "--append-body applies only to update"
+      path_value_next=append
+      ;;
+    --force-body)
+      [ "${1:-}" = update ] || fail "--force-body applies only to update"
+      FORCE_BODY=1
       ;;
     --start)
       case "${1:-}" in
@@ -118,14 +138,22 @@ for arg in "$@"; do
       ARGS+=("$arg")
       path_value_next=1
       ;;
+    --append-body=*)
+      [ "${1:-}" = update ] || fail "--append-body applies only to update"
+      APPEND_BODY=$(absolute_from_caller "${arg#*=}")
+      ;;
     --to=*|--*-file=*)
       ARGS+=("${arg%%=*}=$(absolute_from_caller "${arg#*=}")")
+      [ "${arg%%=*}" != --body-file ] || BODY_FILE=$(absolute_from_caller "${arg#*=}")
       ;;
     *)
       ARGS+=("$arg")
       ;;
   esac
 done
+[ "$path_value_next" = 0 ] || fail "a file flag requires a path"
+[ -z "$APPEND_BODY" ] || [ -z "$BODY_FILE" ] || fail "use either --append-body or --body-file"
+[ "$FORCE_BODY" -eq 0 ] || [ -n "$BODY_FILE" ] || fail "--force-body requires --body-file"
 
 command -v tasks-axi >/dev/null 2>&1 || fail "tasks-axi is not on PATH; run bin/fm-bootstrap.sh for the install command"
 
@@ -144,6 +172,29 @@ else
 fi
 
 cd "$FM_BACKLOG_AXI_ROOT" || fail "cannot enter the backlog root $FM_BACKLOG_AXI_ROOT"
+if [ "${1:-}" = update ] && { [ -n "$BODY_FILE" ] || [ -n "$APPEND_BODY" ]; }; then
+  source_file=${APPEND_BODY:-$BODY_FILE}
+  [ -f "$source_file" ] && [ -r "$source_file" ] && [ -s "$source_file" ] || fail "body file must be a readable nonempty regular file: $source_file"
+  # `show --full` exposes the complete body as one scalar: plain for simple
+  # one-line notes and JSON-quoted when escaping is needed. It has no --json.
+  current=$(tasks-axi show "${2:-}" --full) || fail "could not read current body for ${2:-}"
+  old_file=$(mktemp "${TMPDIR:-/tmp}/fm-tasks-old-body.XXXXXX") || fail "could not stage current body"
+  trap 'rm -f "$old_file" "${merged:-}"' EXIT
+  printf '%s\n' "$current" | perl -MJSON::PP -ne 'if (/^  body: (.*)$/) { $body=$1; print $body =~ /^"/ ? JSON::PP::decode_json($body) : $body; $found=1 } END { exit !$found }' > "$old_file" || fail "could not decode current body for ${2:-}"
+  old_bytes=$(wc -c < "$old_file" | tr -d ' ')
+  if [ -n "$APPEND_BODY" ]; then
+    merged=$(mktemp "${TMPDIR:-/tmp}/fm-tasks-body.XXXXXX") || fail "could not stage appended body"
+    cat "$old_file" > "$merged"
+    if [ "$old_bytes" -gt 0 ] && [ "$(tail -c 1 "$old_file" | od -An -tu1 | tr -d '[:space:]')" != 10 ]; then
+      printf '\n' >> "$merged"
+    fi
+    cat "$APPEND_BODY" >> "$merged" || fail "could not append body file"
+    ARGS+=(--body-file "$merged")
+  elif [ "$FORCE_BODY" -eq 0 ] && [ "$old_bytes" -gt 0 ]; then
+    new_bytes=$(wc -c < "$BODY_FILE" | tr -d ' ')
+    [ "$((new_bytes * 2))" -ge "$old_bytes" ] || fail "replacement body drops more than half the current note; use --append-body or explicit --force-body"
+  fi
+fi
 case "${1:-}" in
   show|view|list)
     set -o pipefail
@@ -151,4 +202,4 @@ case "${1:-}" in
     exit $?
     ;;
 esac
-exec tasks-axi ${ARGS[@]+"${ARGS[@]}"}
+tasks-axi ${ARGS[@]+"${ARGS[@]}"}

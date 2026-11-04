@@ -398,6 +398,22 @@ test_open_decisions_fold_is_unchanged() {
   pass "OPEN DECISIONS still folds needs-decision/blocked independently of unread notes"
 }
 
+test_open_decisions_collapse_until_changed() {
+  local dir state out
+  dir=$(make_case decision-collapse); state="$dir/state"; out="$dir/drain.out"
+  printf 'needs-decision [key=one]: choose first path\n' > "$state/decision.status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "first decision drain failed"
+  grep -F 'choose first path' "$out" >/dev/null || fail "new decision was not printed in full"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "unchanged decision drain failed"
+  grep -F '1 open, unchanged since' "$out" >/dev/null || fail "unchanged decision did not collapse"
+  if grep -F 'choose first path' "$out" >/dev/null; then fail "unchanged decision was repeated"; fi
+  printf 'needs-decision [key=two]: choose second path\n' >> "$state/decision.status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "changed decision drain failed"
+  grep -F 'choose first path' "$out" >/dev/null || fail "changed decision set did not print the older open item"
+  grep -F 'choose second path' "$out" >/dev/null || fail "new open decision was not printed"
+  pass "OPEN DECISIONS collapses unchanged content and fully prints a changed set"
+}
+
 test_empty_queue_does_not_swallow_later_signal_annotation() {
   local dir state out status
   dir=$(make_case delayed-signal-annotation)
@@ -461,5 +477,6 @@ test_retired_task_id_starts_new_status_unread
 test_weak_identity_still_presents_and_advances
 test_snapshot_failure_is_visible
 test_open_decisions_fold_is_unchanged
+test_open_decisions_collapse_until_changed
 test_empty_queue_does_not_swallow_later_signal_annotation
 test_routine_working_and_covered_done_stay_silent_on_the_empty_queue

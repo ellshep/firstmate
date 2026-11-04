@@ -305,14 +305,22 @@ if [ -z "${FM_SESSION_START_STAGE_FILE:-}" ]; then
     SESSION_START_STAGE_FILE=/dev/null
   fi
   if [ "$REEMIT" -eq 1 ]; then
+    REEMIT_FULL=$(mktemp "${FM_STATE_OVERRIDE:-${FM_HOME:-${FM_ROOT_OVERRIDE:-$SCRIPT_DIR/..}}/state}/.session-reemit.XXXXXX" 2>/dev/null) || REEMIT_FULL=
     if [ -n "$SESSION_SOURCE" ]; then
       fm_run_timed "$SESSION_START_BUDGET" \
         env FM_SESSION_START_STAGE_FILE="$SESSION_START_STAGE_FILE" \
-        "$SCRIPT_DIR/fm-session-start.sh" --reemit --source "$SESSION_SOURCE"
+        "$SCRIPT_DIR/fm-session-start.sh" --reemit --source "$SESSION_SOURCE" > "${REEMIT_FULL:-/dev/stdout}"
     else
       fm_run_timed "$SESSION_START_BUDGET" \
         env FM_SESSION_START_STAGE_FILE="$SESSION_START_STAGE_FILE" \
-        "$SCRIPT_DIR/fm-session-start.sh" --reemit
+        "$SCRIPT_DIR/fm-session-start.sh" --reemit > "${REEMIT_FULL:-/dev/stdout}"
+    fi
+    if [ -n "$REEMIT_FULL" ]; then
+      LC_ALL=C awk -v full="$REEMIT_FULL" -v cap=8192 '
+        /^================================================================================$/ { bytes=0; omitted=0; print; next }
+        { size=length($0)+1; if (bytes+size<=cap) { print; bytes+=size }
+          else if (!omitted) { printf "[section capped at %d bytes; full output: %s]\n", cap, full; omitted=1 } }
+      ' "$REEMIT_FULL"
     fi
   elif [ -n "$SESSION_SOURCE" ]; then
     fm_run_timed "$SESSION_START_BUDGET" \
@@ -894,7 +902,8 @@ fi
 stage read-once
 section "READ-ONCE CONTRACT"
 cat <<'EOF'
-Everything below is printed in full for this session start: every state/*.meta,
+Everything below is presented for this session start (on a context re-emit,
+a capped section points to the full saved digest): every state/*.meta,
 a compact data/backlog.md listing, a bounded tail of every state/*.status,
 data/projects.md, data/secondmates.md, data/captain.md, data/captain-shared.md,
 and data/learnings.md.
@@ -915,7 +924,7 @@ Go to a source directly only when:
   - or a STARTUP TRUNCATED banner named the stage that would have printed it, in
     which case that stage's sources were never emitted and must be reconciled,
   - or a context re-emit opened with a read cue because the
-    harness cut the digest short.
+    harness cut the digest short, or a capped section points to its full file.
 EOF
 
 # --- 6. fleet-state digest ---------------------------------------------

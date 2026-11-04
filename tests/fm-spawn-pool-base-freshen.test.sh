@@ -65,6 +65,24 @@ run_spawn() {
     "$id" "$PROJECT_DIR" "$@"
 }
 
+test_weaker_mode_reason_is_required_and_recorded() {
+  local rec id out status
+  id='pool-mode-reason-r1'
+  rec=$(make_case mode-reason "$id")
+  read_case_record "$rec"
+  out=$(FM_TEST_NO_MODE_REASON=1 run_spawn "$id" --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a weaker mode without a reason launched"
+  assert_contains "$out" '--mode-reason' "spawn refusal did not name the missing reason"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "refused downgrade wrote task metadata"
+  out=$(run_spawn "$id" --mode direct-PR --yolo off)
+  status=$?
+  expect_code 0 "$status" "reasoned weaker mode should launch: $out"
+  assert_grep 'mode_reason=fixture delivery choice' "$HOME_DIR/state/$id.meta" \
+    "task metadata omitted the reason"
+  pass "spawn refuses an unexplained weaker mode and records the supplied reason"
+}
+
 test_shelved_ship_resumes_from_saved_branch() {
   local rec id out status head
   id='pool-shelved-r1'
@@ -1497,5 +1515,6 @@ test_opt_in_base_follows_the_delivery_and_the_review_follows_the_base
 test_opt_in_keeps_a_named_base_branch_on_origin
 test_opt_in_still_refuses_an_unclean_slot_first
 test_shelved_ship_resumes_from_saved_branch
+test_weaker_mode_reason_is_required_and_recorded
 
 echo "# all fm-spawn-pool-base-freshen tests passed"

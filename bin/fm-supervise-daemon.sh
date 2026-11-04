@@ -1528,14 +1528,14 @@ housekeeping() {  # <state>
       *)
         last=$(status_declared_wait_line "$state/$task.status")
         if [ -n "$last" ] && status_is_captain_held "$last"; then
-          if escalate_add "$state" "captain-held ${age}s (awaiting the captain, answer the held decision or release the hold): $win"; then
+          if escalate_add "$state" "captain-held ${age}s (awaiting the captain, answer the held decision or release the hold): $win task=$task"; then
             _now > "$marker"
           fi
         elif [ -n "$last" ] && status_is_paused "$last"; then
           if [ "$bounded_until" -eq 1 ]; then
-            pause_reason="paused ${age}s (awaiting external, the declared time is beyond the recheck cadence; confirm the wait still holds): $win"
+            pause_reason="paused ${age}s (awaiting external, the declared time is beyond the recheck cadence; confirm the wait still holds): $win task=$task"
           else
-            pause_reason="paused ${age}s (awaiting external, recheck whether the wait still holds): $win"
+            pause_reason="paused ${age}s (awaiting external, recheck whether the wait still holds): $win task=$task"
           fi
           if escalate_add "$state" "$pause_reason"; then
             _now > "$marker"
