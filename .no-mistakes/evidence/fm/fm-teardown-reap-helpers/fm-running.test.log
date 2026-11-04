@@ -1,0 +1,23 @@
+ok - orphan classifier flags a long-lived init child whose cwd is under /private/tmp
+ok - orphan classifier flags a long-lived init child whose cwd is under /var/folders
+ok - orphan classifier flags a long-lived init child whose cwd is under /tmp
+ok - orphan classifier flags a long-lived init child whose cwd is unreadable
+ok - orphan classifier does not flag on age alone when cwd is a real project path
+ok - orphan classifier does not flag a temp-cwd init child younger than the stale threshold
+ok - orphan classifier does not flag a temp-cwd process whose parent is not init
+ok - orphan classifier does not treat /private/tmpdir as a temp cwd
+ok - returned or stale Treehouse task helpers flag; a live task remains clear
+ok - a live task's claim survives even when its recorded home has moved or gone stale
+ok - fm_running_fit keeps a value that already fits the column
+ok - fm_running_fit truncates a too-long value to the column width
+ok - process row keeps a command that fits the column
+ok - process row truncates a too-long command to the column width
+ok - process rows keep pid and uptime columns aligned across differing field lengths
+ok - plain (not-a-TTY / no-colour) layout keeps the same rows without ANSI or box-drawing
+ok - init_style honours NO_COLOR even when rich output was previously enabled
+ok - tool name from an npx .bin path is the binary basename
+ok - tool name from a uv/uvx invocation is the package, not the launcher
+ok - tool name from a bare node script is the script basename
+ok - tool name falls back to argv0 basename when nothing useful can be derived
+ok - memory summary parses stubbed RAM, pressure, swap, and process output
+ok - low swap omits the restart note
