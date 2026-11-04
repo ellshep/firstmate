@@ -1,0 +1,25 @@
+Targeted live run of bin/fm-teardown.sh's Supabase/container teardown regression tests
+(tests/fm-teardown.test.sh), executed via the test harness's run_teardown(), which invokes
+the real bin/fm-teardown.sh script against disposable fakebin stubs (fake podman/docker
+binaries recording calls), isolated git fixtures, and isolated FM_*_OVERRIDE homes.
+
+Command: bash <subset of tests/fm-teardown.test.sh containing only the tests below>
+
+1	ok - teardown leaves opencode's busy plugin in the returned pool worktree as on main
+2	ok - teardown stops only containers whose metadata binds them to its worktree
+3	ok - an unavailable container runtime does not block eligible teardown
+4	ok - Supabase cleanup removes only labelled task containers and preserves ambiguous volumes
+5	ok - Supabase cleanup removes the task stack and its labelled volumes
+6	ok - Supabase cleanup silently skips when no container engine exists
+7	ok - Supabase removal failures warn without blocking teardown
+8	ok - Supabase stop targets unique worktree project IDs and skips the source project's shared ID
+9	ok - Supabase volume cleanup is skipped, not performed blindly, when jq is unavailable
+
+[exited with code 0]
+
+Test 9 (test_worktree_supabase_volumes_kept_without_jq) is the regression test added in this
+commit for review-6-unresolved: it runs the real teardown script with jq removed from PATH
+(a mirrored /usr/bin without jq) but podman present, gives the worktree a config.toml-derived
+Supabase project id "shared-stack", and asserts that no "volume rm" call reaches the fake
+podman binary's recorded command log, plus that the new warning
+"warning: jq unavailable; podman Supabase volumes not removed" is emitted on stderr.
