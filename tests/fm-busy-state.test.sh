@@ -453,9 +453,9 @@ test_codex_viewport_source() {
     || fail "codex must not trust an unwired push source"
   # shellcheck disable=SC2329 # exercised through fm_busy_classify
   fm_backend_visible_capture() { cat "$ROOT/tests/fixtures/codex-$2-visible.txt"; }
-  for case_name in busy idle approval unrecognized; do
+  for case_name in busy idle idle-agents approval unrecognized; do
     out=$(fm_busy_classify herdr "$case_name" codex t1 "$state")
-    case "$case_name" in busy) expected='busy codex-viewport' ;; idle) expected='idle codex-viewport' ;; *) expected='unknown codex-viewport' ;; esac
+    case "$case_name" in busy) expected='busy codex-viewport' ;; idle|idle-agents) expected='idle codex-viewport' ;; *) expected='unknown codex-viewport' ;; esac
     [ "$out" = "$expected" ] || fail "codex $case_name viewport: expected '$expected', got '$out'"
   done
   out=$(fm_busy_classify herdr busy claude t1 "$state")

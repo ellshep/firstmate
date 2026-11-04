@@ -200,8 +200,8 @@ fm_busy_codex_hooks_verified() {
 }
 
 # fm_busy_codex_semantic_source: 0 when ANY verified Codex semantic source
-# exists. fm-spawn arms and wires Codex only behind this gate, and the
-# its push-source gate remains closed; the viewport pull source below is used.
+# exists. fm-spawn arms and wires Codex only behind this gate, and its
+# push-source gate remains closed; the viewport pull source below is used.
 fm_busy_codex_semantic_source() {
   fm_busy_codex_appserver_observable || fm_busy_codex_hooks_verified
 }
@@ -217,7 +217,7 @@ fm_busy_codex_viewport_state() {  # <plain visible viewport on stdin>
   elif printf '%s\n' "$screen" | grep -Eq '^[[:space:]]*• Working \([0-9][0-9smh ]*[^)]*esc to interrupt\)'; then
     printf 'busy'
   elif printf '%s\n' "$screen" | grep -Eq '^[[:space:]]*› Ask Codex to do anything[[:space:]]*$' \
-    && printf '%s\n' "$screen" | grep -Eq '^[[:space:]]*\? for shortcuts([[:space:]]|$)'; then
+    && printf '%s\n' "$screen" | grep -Eq '(^|[[:space:]])\? for shortcuts([[:space:]]|$)'; then
     printf 'idle'
   else
     printf 'unknown'

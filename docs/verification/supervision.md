@@ -260,7 +260,7 @@ FM_HOME=/Users/ellingtonshephard/code_projects/firstmate FM_CREW_STATE_NO_FORGE=
 The visible capture contained `• Working (1m 52s • esc to interrupt)` and the `› Ask Codex to do anything` composer; the classifier printed `busy codex-viewport`.
 The live guard printed `ok - codex (codex-cli 0.166.0): live herdr viewport classified busy`.
 The crew-state read printed `state: working · source: pane · harness busy (codex-viewport)`.
-The real Herdr idle composer and shortcut footer were captured on 2026-09-15 with codex-cli 0.154.0 in [`runtime-backends.md`](runtime-backends.md#2026-09-15-codex-cli-01540-idle-starfield-and-status-footer-through-herdr); the Codex viewport behavior test refreshes the busy, idle, approval, and unrecognized classifier cases without a live pane.
+The real Herdr idle composer and shortcut footer were captured on 2026-09-15 with codex-cli 0.154.0 in [`runtime-backends.md`](runtime-backends.md#2026-09-15-codex-cli-01540-idle-starfield-and-status-footer-through-herdr); the Codex viewport behavior test refreshes the busy, idle, idle-with-agents-hint, approval, and unrecognized classifier cases without a live pane.
 
 Deterministic entry points:
 
