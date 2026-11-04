@@ -5089,6 +5089,42 @@ test_leaked_tasktmp_process_is_reaped() {
   pass "a leaked descendant process rooted under the task's per-task tasktmp is reaped by teardown too"
 }
 
+test_task_bridge_uses_session_stop_without_touching_sibling() {
+  local case_dir rc=0 bridge sibling
+  case_dir=$(make_case task-bridge-stop)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  mkdir -p "$case_dir/home/.chrome-devtools-axi/sessions/task-x1" "$case_dir/sibling" "$case_dir/bridge"
+  # Keep the bridge script name in ps while it waits, as the real node bridge does.
+  cat > "$case_dir/bridge/chrome-devtools-axi-bridge.js" <<'SH'
+#!/usr/bin/env bash
+sleep 300
+SH
+  ( cd "$case_dir/wt" && exec bash "$case_dir/bridge/chrome-devtools-axi-bridge.js" ) &
+  bridge=$!
+  ( cd "$case_dir/sibling" && exec sleep 300 ) &
+  sibling=$!
+  disown
+  sleep 0.3
+  printf '{"pid":%s,"port":9400}\n' "$bridge" > "$case_dir/home/.chrome-devtools-axi/sessions/task-x1/bridge.pid"
+  cat > "$case_dir/fakebin/chrome-devtools-axi" <<'SH'
+#!/usr/bin/env bash
+[ "$1" = stop ] || exit 2
+printf '%s\n' "$CHROME_DEVTOOLS_AXI_SESSION" > "$FM_BRIDGE_STOP_LOG"
+pid=$(jq -r .pid "$HOME/.chrome-devtools-axi/sessions/$CHROME_DEVTOOLS_AXI_SESSION/bridge.pid")
+kill -TERM "$pid"
+SH
+  chmod +x "$case_dir/fakebin/chrome-devtools-axi"
+  HOME="$case_dir/home" FM_BRIDGE_STOP_LOG="$case_dir/stop.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "task-bridge-stop: teardown should succeed"
+  assert_equals task-x1 "$(cat "$case_dir/stop.log" 2>/dev/null)" \
+    "task-bridge-stop: teardown did not stop the matched AXI session"
+  kill -0 "$sibling" 2>/dev/null || fail "task-bridge-stop: sibling process was stopped"
+  kill -TERM "$sibling" 2>/dev/null || true
+  pass "task bridge uses its matched AXI session stop while sibling stays alive"
+}
+
 test_lsof_absent_reaps_tmux_process_group() {
   local case_dir rc pid path_without_lsof
   case_dir=$(make_case lsof-absent-process-group-reap)
@@ -6415,6 +6451,7 @@ test_another_branchs_parked_run_is_never_touched
 test_own_autonomous_run_is_left_alone
 test_leaked_worktree_process_is_reaped
 test_leaked_tasktmp_process_is_reaped
+test_task_bridge_uses_session_stop_without_touching_sibling
 test_lsof_absent_reaps_tmux_process_group
 test_lsof_error_refuses_before_removal
 test_reused_pid_identity_is_not_force_killed
