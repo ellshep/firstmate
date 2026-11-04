@@ -1446,7 +1446,7 @@ housekeeping() {  # <state>
     case "$?" in
       0|2) stale_marker_remove_key "$key" "$state" ;;
       3) if [ ! -e "$state/.subsuper-reported-stale-$key" ] \
-           && escalate_add "$state" "stale persisted ${age}s (possible wedge): $win"; then
+           && escalate_add "$state" "stale persisted ${age}s (possible wedge): $win task=$task"; then
            _now > "$state/.subsuper-reported-stale-$key"
          fi ;;
       *)
@@ -1456,9 +1456,9 @@ housekeeping() {  # <state>
         fi
         dialog_name=$(cat "$state/.subsuper-dialog-$key" 2>/dev/null || true)
         if [ -n "$dialog_name" ]; then
-          persisted="stale persisted ${age}s (possible wedge, blocked-on-prompt: $dialog_name): $win"
+          persisted="stale persisted ${age}s (possible wedge, blocked-on-prompt: $dialog_name): $win task=$task"
         else
-          persisted="stale persisted ${age}s (possible wedge): $win"
+          persisted="stale persisted ${age}s (possible wedge): $win task=$task"
         fi
         if escalate_add "$state" "$persisted"; then
           stale_marker_remove_key "$key" "$state"

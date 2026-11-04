@@ -1057,6 +1057,8 @@ test_housekeeping_open_decision_refreshes_marker_so_close_starts_fresh_window() 
     FM_STALE_ESCALATE_SECS=240 FM_HEARTBEAT_SCAN_SECS=1000000 housekeeping "$state"
   grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
     || fail "wedge escalation did not resume after a full window past the answer: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
+  grep -F "task=$task" "$state/.subsuper-escalations" >/dev/null \
+    || fail "the resumed wedge escalation omitted its owning task id: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
   pass "housekeeping refreshes the stale marker under an open decision so a close starts a fresh window"
 }
 
@@ -3848,6 +3850,8 @@ test_dialog_name_survives_away_self_handle() {
     || fail "the persistence line was not escalated: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
   grep -F 'blocked-on-prompt: Claude background-task exit picker' "$state/.subsuper-escalations" >/dev/null \
     || fail "the persistence line dropped the dialog name: $(cat "$state/.subsuper-escalations")"
+  grep -F 'task=picker-ship' "$state/.subsuper-escalations" >/dev/null \
+    || fail "the persistence line omitted its owning task id: $(cat "$state/.subsuper-escalations")"
   grep -F 'possible wedge' "$state/.subsuper-escalations" >/dev/null \
     || fail "the persistence line dropped the wedge wording: $(cat "$state/.subsuper-escalations")"
   [ ! -e "$state/.subsuper-dialog-$key" ] || fail "the saved dialog name outlived the persistence escalation"
