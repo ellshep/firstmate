@@ -2421,9 +2421,9 @@ fm_autoarm_claim_next() {  # <state-dir> [grace]
 # micro-mutex stays contended, the mandatory identity cannot be computed, or the
 # write failed.
 fm_autoarm_park() {  # <state-dir> [grace]
-  local state=$1 grace=${2:-${FM_GUARD_GRACE:-300}} lock parked pid identity tmp i
+  local state=$1 grace=${2:-${FM_GUARD_GRACE:-300}} lock parked_file pid identity tmp i
   lock="$state/.claude-autoarm.lock"
-  parked="$state/.claude-autoarm-parked"
+  parked_file="$state/.claude-autoarm-parked"
   FM_AUTOARM_PARKED_GEN=
   pid=${BASHPID:-$$}
   identity=$(fm_pid_identity "$pid" 2>/dev/null) || return 2
@@ -2438,10 +2438,10 @@ fm_autoarm_park() {  # <state-dir> [grace]
     fm_lock_release "$lock"
     return 1
   fi
-  tmp="$parked.tmp.$pid"
+  tmp="$parked_file.tmp.$pid"
   if ! printf 'epoch=%s parked_pid=%s updated_at=%s\n%s\n' \
       "$FM_AUTOARM_GEN" "$pid" "$(date +%s)" "$identity" > "$tmp" 2>/dev/null \
-    || ! mv -f "$tmp" "$parked" 2>/dev/null; then
+    || ! mv -f "$tmp" "$parked_file" 2>/dev/null; then
     rm -f "$tmp" 2>/dev/null || true
     fm_lock_release "$lock"
     return 2
@@ -2456,11 +2456,11 @@ fm_autoarm_park() {  # <state-dir> [grace]
 # this process for <gen> and the ledger is still at <gen>. False means a newer
 # Stop's firing parked in its place or another generation was claimed.
 fm_autoarm_still_parked() {  # <state-dir> <gen>
-  local state=$1 gen=$2 parked pid
-  parked="$state/.claude-autoarm-parked"
+  local state=$1 gen=$2 parked_file pid
+  parked_file="$state/.claude-autoarm-parked"
   pid=${BASHPID:-$$}
-  [ "$(_fm_autoarm_epoch_field "$parked" epoch 2>/dev/null)" = "$gen" ] || return 1
-  [ "$(_fm_autoarm_epoch_field "$parked" parked_pid 2>/dev/null)" = "$pid" ] || return 1
+  [ "$(_fm_autoarm_epoch_field "$parked_file" epoch 2>/dev/null)" = "$gen" ] || return 1
+  [ "$(_fm_autoarm_epoch_field "$parked_file" parked_pid 2>/dev/null)" = "$pid" ] || return 1
   fm_autoarm_ledger_read "$state" || return 1
   [ "$FM_AUTOARM_GEN" = "$gen" ]
 }
@@ -2468,18 +2468,18 @@ fm_autoarm_still_parked() {  # <state-dir> <gen>
 # True when a live, identity-matched firing is parked on <gen>; sets
 # FM_AUTOARM_PARKER_PID and FM_AUTOARM_PARKER_IDENTITY.
 _fm_autoarm_parker_live() {  # <state-dir> <gen>
-  local state=$1 gen=$2 parked current
-  parked="$state/.claude-autoarm-parked"
+  local state=$1 gen=$2 parked_file current
+  parked_file="$state/.claude-autoarm-parked"
   FM_AUTOARM_PARKER_PID=
   FM_AUTOARM_PARKER_IDENTITY=
-  [ "$(_fm_autoarm_epoch_field "$parked" epoch 2>/dev/null)" = "$gen" ] || return 1
-  FM_AUTOARM_PARKER_PID=$(_fm_autoarm_epoch_field "$parked" parked_pid 2>/dev/null) || return 1
+  [ "$(_fm_autoarm_epoch_field "$parked_file" epoch 2>/dev/null)" = "$gen" ] || return 1
+  FM_AUTOARM_PARKER_PID=$(_fm_autoarm_epoch_field "$parked_file" parked_pid 2>/dev/null) || return 1
   case "$FM_AUTOARM_PARKER_PID" in
     ''|*[!0-9]*) return 1 ;;
   esac
   [ "$FM_AUTOARM_PARKER_PID" != "${BASHPID:-$$}" ] || return 1
   fm_pid_alive "$FM_AUTOARM_PARKER_PID" || return 1
-  FM_AUTOARM_PARKER_IDENTITY=$(sed -n '2p' "$parked" 2>/dev/null || true)
+  FM_AUTOARM_PARKER_IDENTITY=$(sed -n '2p' "$parked_file" 2>/dev/null || true)
   [ -n "$FM_AUTOARM_PARKER_IDENTITY" ] || return 1
   current=$(fm_pid_identity "$FM_AUTOARM_PARKER_PID" 2>/dev/null) || return 1
   [ "$current" = "$FM_AUTOARM_PARKER_IDENTITY" ]
