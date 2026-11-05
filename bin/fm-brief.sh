@@ -626,15 +626,13 @@ if [ "$KIND" = ship ]; then
   case "$MODE_REASON" in *$'\n'*|*$'\r'*) echo 'error: --mode-reason must be one line' >&2; exit 1 ;; esac
   STANDING_POSTURE=$("$SCRIPT_DIR/fm-project-mode.sh" --raw "$REPO") || exit 1
   STANDING_MODE=${STANDING_POSTURE%% *}
-  if [ "$STANDING_MODE" != no-mistakes-prod-only ]; then
-    case "$MODE:$STANDING_MODE" in
-      direct-PR:no-mistakes|local-only:no-mistakes|local-only:direct-PR)
-        [ -n "$(printf '%s' "$MODE_REASON" | tr -d '[:space:]')" ] || {
-          echo "error: --mode $MODE is weaker than resolved default $STANDING_MODE for $REPO; pass --mode-reason" >&2
-          exit 1
-        } ;;
-    esac
-  fi
+  case "$MODE:$STANDING_MODE" in
+    direct-PR:no-mistakes|local-only:no-mistakes|local-only:direct-PR|local-only:no-mistakes-prod-only)
+      [ -n "$(printf '%s' "$MODE_REASON" | tr -d '[:space:]')" ] || {
+        echo "error: --mode $MODE is weaker than resolved default $STANDING_MODE for $REPO; pass --mode-reason" >&2
+        exit 1
+      } ;;
+  esac
 fi
 
 if [ "$HERDR_LAB" -eq 1 ]; then

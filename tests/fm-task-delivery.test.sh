@@ -217,6 +217,7 @@ no-mistakes project shipped local-only|- proj [no-mistakes] - fixture (added 202
 no-mistakes project shipped no-mistakes|- proj [no-mistakes] - fixture (added 2026-01-01)|no-mistakes|quiet|no-mistakes
 local-only project shipped no-mistakes|- proj [local-only] - fixture (added 2026-01-01)|no-mistakes|quiet|local-only
 conditional policy shipped direct-PR|- proj [no-mistakes-prod-only] - fixture (added 2026-01-01)|direct-PR|quiet|no-mistakes-prod-only
+conditional policy shipped local-only|- proj [no-mistakes-prod-only] - fixture (added 2026-01-01)|local-only|notice|no-mistakes-prod-only
 unregistered project resolves to the no-mistakes standing default|- other [no-mistakes] - fixture (added 2026-01-01)|direct-PR|notice|no-mistakes
 ROWS
   pass "fm-spawn: a weaker mode needs a matching reason; equal or stronger modes do not"
@@ -364,6 +365,7 @@ no-mistakes project promoted to local-only|- proj [no-mistakes] - fixture (added
 no-mistakes project promoted to no-mistakes|- proj [no-mistakes] - fixture (added 2026-01-01)|no-mistakes|quiet|no-mistakes
 local-only project promoted to no-mistakes|- proj [local-only] - fixture (added 2026-01-01)|no-mistakes|quiet|local-only
 conditional policy promoted to direct-PR|- proj [no-mistakes-prod-only] - fixture (added 2026-01-01)|direct-PR|quiet|no-mistakes-prod-only
+conditional policy promoted to local-only|- proj [no-mistakes-prod-only] - fixture (added 2026-01-01)|local-only|notice|no-mistakes-prod-only
 unregistered project resolves to the no-mistakes standing default|- other [no-mistakes] - fixture (added 2026-01-01)|direct-PR|notice|no-mistakes
 ROWS
   pass "fm-promote: a weaker mode needs a matching reason; equal or stronger modes do not"

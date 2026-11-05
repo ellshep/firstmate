@@ -431,6 +431,27 @@ test_weaker_mode_requires_reason() {
   pass "fm-brief requires and records a reason for a weaker delivery mode"
 }
 
+# A conditional-policy project's two legitimate legs are no-mistakes and
+# direct-PR; local-only is weaker than both and must still require a reason,
+# the same as it would against either leg registered outright.
+test_conditional_policy_local_only_requires_reason() {
+  local home out rc brief
+  home="$TMP_ROOT/mode-reason-prod-only-home"
+  mkdir -p "$home/data"
+  printf '%s\n' '- prodproj [no-mistakes-prod-only] - fixture (added 2026-01-01)' > "$home/data/projects.md"
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" weak-prod-1 prodproj --mode local-only 2>&1); rc=$?
+  expect_code 1 "$rc" "conditional-policy project downgraded to local-only without reason"
+  assert_contains "$out" '--mode-reason' "conditional-policy downgrade refusal did not name the remedy"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" weak-prod-1 prodproj --mode local-only --mode-reason 'internal tooling' >/dev/null \
+    || fail "reasoned downgrade on a conditional-policy project was refused"
+  brief="$home/data/weak-prod-1/brief.md"
+  assert_grep 'Mode reason: internal tooling' "$brief" "brief did not record the downgrade reason"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" weak-prod-2 prodproj --mode direct-PR >/dev/null 2>&1 \
+    || fail "direct-PR on a conditional-policy project should not require a reason"
+  pass "fm-brief requires a reason when local-only downgrades a conditional policy"
+}
+
 # yolo is firstmate's merge authority and never reaches the worker, and a scout
 # or charter carries no delivery contract. Each must refuse rather than accept and
 # discard the flag, which would look recorded but change nothing.
@@ -1795,6 +1816,7 @@ test_forge_external_renders_the_review_rail
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_weaker_mode_requires_reason
+test_conditional_policy_local_only_requires_reason
 test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording

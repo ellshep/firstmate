@@ -265,7 +265,9 @@ fi
 delivery_rigor_rank() { # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task mode
   case "$1" in
   no-mistakes) echo 3 ;;
-  direct-PR) echo 2 ;;
+  # no-mistakes-prod-only ranks as its weaker leg (direct-PR): either legitimate
+  # leg (no-mistakes or direct-PR) is quiet, but local-only is weaker than both.
+  direct-PR | no-mistakes-prod-only) echo 2 ;;
   local-only) echo 1 ;;
   *) echo 0 ;;
   esac
@@ -292,9 +294,10 @@ if [ -n "$PROMOTE_PROJECT" ]; then
   # allowed (a current explicit firstmate decision wins) but never silent. An
   # unregistered project resolves to the same no-mistakes standing default, which
   # is why the notice names the standing posture rather than the registry line. A
-  # conditional policy is excluded: both of its legs are legitimate classifications.
+  # conditional policy ranks as its weaker leg (direct-PR): either legitimate leg
+  # is quiet, but local-only is still a downgrade from both and needs a reason.
   PROMOTE_STANDING_MODE=$("$FM_ROOT/bin/fm-project-mode.sh" --raw "$PROMOTE_PROJECT_NAME" 2>/dev/null | cut -d' ' -f1) || PROMOTE_STANDING_MODE=
-  if [ -n "$PROMOTE_STANDING_MODE" ] && [ "$PROMOTE_STANDING_MODE" != no-mistakes-prod-only ] &&
+  if [ -n "$PROMOTE_STANDING_MODE" ] &&
     [ "$(delivery_rigor_rank "$MODE")" -lt "$(delivery_rigor_rank "$PROMOTE_STANDING_MODE")" ]; then
     [ -n "$(printf '%s' "$MODE_REASON" | tr -d '[:space:]')" ] || {
       echo "error: --mode $MODE is weaker than resolved default $PROMOTE_STANDING_MODE for $PROMOTE_PROJECT_NAME; pass --mode-reason" >&2
