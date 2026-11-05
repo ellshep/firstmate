@@ -27,10 +27,16 @@
 #     bin/fm-supervision-lib.sh defines it; an idle home exits 0.
 #   - Single-flight: Claude does not dedupe async hooks, so exactly one
 #     GENERATION owner arms per event epoch: the epoch ledger's monotonic
-#     sequence is the claim generation, every firing defers (exit 0) to a live
-#     open claim, and a stuck, dead, identity-mismatched, or finished claim is
+#     sequence is the claim generation, every firing defers to a live open
+#     claim, and a stuck, dead, identity-mismatched, or finished claim is
 #     superseded by taking the next generation instead of being unlocked or
-#     revoked. No mutex is ever held across arming or output - the owner lock
+#     revoked. A deferring firing parks on the open claim rather than exiting,
+#     so delivery never rests on the exit 2 of a Stop a later turn superseded,
+#     which the reported incidents lost: an owner whose Stop was superseded
+#     hands its close to the parked firing of the newest Stop, which delivers
+#     it, and an owner that ends without handing off
+#     leaves the parked firing to claim and arm as a later Stop would (issue
+#     #7252). No mutex is ever held across arming or output - the owner lock
 #     survives only as the micro-mutex serializing individual ledger writes -
 #     and a superseded owner goes completely silent: ownership is re-verified
 #     before every arm invocation, episode-state mutation, ledger write, and
@@ -267,10 +273,55 @@ SESSION_ID=$(fm_session_lock_recorded_session_id "$STATE" 2>/dev/null || true)
 # pre-generation build (or the guard's own terminal-check), which the legacy
 # shim defers to while genuinely deciding and reclaims once when proven
 # abandoned.
-fm_autoarm_claim_open "$STATE" "$GRACE" && exit 0
-fm_autoarm_claim_next "$STATE" "$GRACE"
-CLAIM_RC=$?
-if [ "$CLAIM_RC" -ne 0 ]; then
+#
+# A firing that meets a live open claim parks on it instead of exiting: this
+# Stop is newer than the owner's, the reported incidents (issue #7252) lost the
+# exit 2 of a superseded Stop, and so delivery comes from the newest Stop's
+# firing (docs/verification/supervision.md records that a live 2.1.301 lab
+# still delivered the superseded one). A newer Stop's firing parks in this
+# one's place, and this
+# one exits silently. When the owner hands its close over, the ledger names
+# this firing as the owner of the next generation and the close is delivered
+# below. When the owner ends any other way, its claim is no longer open and
+# this firing claims and arms exactly as a later Stop would, so the close the
+# owner left untranslated is not stranded until another turn ends.
+HANDOFF_GEN=
+if fm_autoarm_claim_open "$STATE" "$GRACE"; then
+  fm_autoarm_park "$STATE" "$GRACE"
+  PARK_RC=$?
+  [ "$PARK_RC" -ne 2 ] || exit 0
+  if [ "$PARK_RC" -eq 0 ]; then
+    PARKED_GEN=$FM_AUTOARM_PARKED_GEN
+    while :; do
+      if fm_autoarm_still_owner "$STATE" "$((PARKED_GEN + 1))"; then
+        HANDOFF_GEN=$((PARKED_GEN + 1))
+        break
+      fi
+      if ! fm_autoarm_still_parked "$STATE" "$PARKED_GEN"; then
+        # A handoff landing between the two checks clears the parked record.
+        if fm_autoarm_still_owner "$STATE" "$((PARKED_GEN + 1))"; then
+          HANDOFF_GEN=$((PARKED_GEN + 1))
+          break
+        fi
+        exit 0
+      fi
+      fm_autoarm_claim_open "$STATE" "$GRACE" || break
+      sleep 1
+    done
+    if [ -z "$HANDOFF_GEN" ]; then
+      fm_session_lock_owned_by_self "$STATE" || exit 0
+      [ ! -e "$STATE/.afk" ] || exit 0
+      need_supervision || exit 0
+    fi
+  fi
+fi
+if [ -n "$HANDOFF_GEN" ]; then
+  FM_AUTOARM_MY_GEN=$HANDOFF_GEN
+else
+  fm_autoarm_claim_next "$STATE" "$GRACE"
+  CLAIM_RC=$?
+fi
+if [ -z "$HANDOFF_GEN" ] && [ "$CLAIM_RC" -ne 0 ]; then
   [ "$CLAIM_RC" -eq 2 ] && exit 0
   ROLE=$(fm_lock_role "$OWNER_LOCK" 2>/dev/null || true)
   [ -n "$ROLE" ] || exit 0
@@ -280,6 +331,28 @@ fi
 MY_GEN=$FM_AUTOARM_MY_GEN
 [ -n "$MY_GEN" ] || exit 0
 
+# Hold this generation's rewake banner until exit instead of streaming it: the
+# harness reads stderr only on exit 2 anyway, and a held banner is one an owner
+# can hand to a parked firing (autoarm_commit). The hook's own stderr is never
+# duplicated onto another descriptor, which every child would inherit and a
+# detached successor would hold open. Without a buffer file, the banner streams
+# as before and no handoff is offered.
+BANNER=$(mktemp "$STATE/.claude-autoarm-banner.XXXXXX" 2>/dev/null) || BANNER=
+banner_write() {  # stdin -> the held banner
+  if [ -n "$BANNER" ]; then
+    cat >> "$BANNER"
+  else
+    cat >&2
+  fi
+}
+# shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap below.
+flush_banner() {
+  local rc=$?
+  [ "$rc" -ne 2 ] || cat "$BANNER" >&2 2>/dev/null || true
+  rm -f "$BANNER" 2>/dev/null || true
+}
+[ -z "$BANNER" ] || trap flush_banner EXIT
+
 # Commit <outcome> (optionally with the once-per-episode notice marker) for
 # this generation. Success means this generation's translation WINS and the
 # caller exits 2 unconditionally. Markerless outcomes commit with the owned
@@ -287,8 +360,13 @@ MY_GEN=$FM_AUTOARM_MY_GEN
 # the same hold. Failure means refused or unverifiable: the caller goes silent
 # (cleanup, exit 0) - the harness discards the collected stderr on exit 0, so
 # even an already-printed banner is never delivered by a losing generation.
+#
+# When a newer Stop's firing is parked on this generation, this owner's Stop
+# has been superseded and the newest Stop should deliver, so the same owned
+# write hands it the held banner and the outcome instead of committing; this owner then exits 0 and
+# the parked firing delivers (fm_autoarm_write_owned in bin/fm-wake-lib.sh).
 autoarm_commit() {  # <outcome> [marker-file] [interrupted-session-identity]
-  local outcome=$1 marker=${2:-} marker_identity=${3:-} session_pid recovery
+  local outcome=$1 marker=${2:-} marker_identity=${3:-} session_pid='' recovery='' handoff='' notice=0 alarm=0 rc=0
   if [ "$outcome" = rewake ]; then
     fm_session_lock_owned_by_self "$STATE" || return 2
     session_pid=$(sed -n '1p' "$STATE/.lock" 2>/dev/null || true)
@@ -297,10 +375,30 @@ autoarm_commit() {  # <outcome> [marker-file] [interrupted-session-identity]
       pending:downtime:*|announced:downtime:*) recovery=${FM_RECOVERY_MARKER_TOKEN##*:} ;;
       *) return 2 ;;
     esac
-    fm_autoarm_write_owned "$STATE" "$MY_GEN" "$outcome" "$marker" "$session_pid" "$recovery"
-  else
-    fm_autoarm_write_owned "$STATE" "$MY_GEN" "$outcome" "$marker" '' '' "$marker_identity" "$SESSION_ID"
   fi
+  if [ -n "$marker" ]; then
+    if [ "$marker" = "$FAILURE_ALARM" ]; then
+      alarm=1
+    else
+      notice=1
+    fi
+  fi
+  if [ -n "$BANNER" ] && handoff=$(mktemp "$STATE/.claude-autoarm-handoff.XXXXXX" 2>/dev/null); then
+    if ! { printf 'epoch=%s outcome=%s notice=%s alarm=%s\n' "$((MY_GEN + 1))" "$outcome" "$notice" "$alarm" \
+        && cat "$BANNER"; } > "$handoff" 2>/dev/null; then
+      rm -f "$handoff" 2>/dev/null || true
+      handoff=
+    fi
+  else
+    handoff=
+  fi
+  fm_autoarm_write_owned "$STATE" "$MY_GEN" "$outcome" "$marker" "$session_pid" "$recovery" "$marker_identity" "$SESSION_ID" "$handoff" || rc=$?
+  [ -z "$handoff" ] || rm -f "$handoff" 2>/dev/null || true
+  if [ "$rc" -eq 3 ]; then
+    [ -z "${OUT:-}" ] || rm -f "$OUT" 2>/dev/null || true
+    exit 0
+  fi
+  return "$rc"
 }
 
 # Best-effort ownership-checked record for exit-0 paths, where supersession
@@ -326,11 +424,16 @@ autoarm_record() {  # <outcome>
 # satisfied: this generation's own claim is the open one, and its terminal
 # failure is the proof the continuation is gone.
 #
-# Returns 0 when the alarm was committed, 2 when a verified healthy watcher
-# appeared inside the hold (the caller resets and closes clean instead), and
-# 1 on any other refusal or uncertainty.
+# Returns 0 when the alarm was committed directly, 3 when a live parked
+# successor took the close instead (its own commit creates the attended alarm
+# marker, via the handoff's "alarm" field, atomically with its own ledger
+# write - this generation's dead owner must not create the marker itself,
+# since the parked successor's delivery checks the marker's prior existence to
+# tell "already alarmed by someone else" from "this delivery is the alarm"),
+# 2 when a verified healthy watcher appeared inside the hold (the caller
+# resets and closes clean instead), and 1 on any other refusal or uncertainty.
 autoarm_commit_attended_alarm() {
-  local session_id budget_session budget_count rc=1 i=0
+  local session_id budget_session budget_count rc=1 i=0 handoff write_rc
   fm_lock_try_acquire "$OWNER_LOCK" || return 1
   while ! fm_lock_try_acquire "$BUDGET_LOCK"; do
     if [ "$i" -ge 20 ]; then
@@ -354,10 +457,31 @@ autoarm_commit_attended_alarm() {
       budget_count=$(sed -n '2s/^count=//p' "$BUDGET_FILE" 2>/dev/null || true)
       case "$budget_count" in ''|*[!0-9]*) budget_count=0 ;; esac
       if [ "$budget_session" = "$session_id" ] \
-        && [ "$budget_count" -gt "$BLOCK_BUDGET" ] \
-        && _fm_autoarm_write_owned_locked "$STATE" "$MY_GEN" failed-suppressed "$FAILURE_ALARM"; then
-        AUTOARM_COMMITTED_ALARM=1
-        rc=0
+        && [ "$budget_count" -gt "$BLOCK_BUDGET" ]; then
+        autoarm_alarm_banner
+        handoff=
+        if [ -n "$BANNER" ] && handoff=$(mktemp "$STATE/.claude-autoarm-handoff.XXXXXX" 2>/dev/null); then
+          if ! { printf 'epoch=%s outcome=%s notice=%s alarm=1\n' "$((MY_GEN + 1))" failed-suppressed 0 \
+              && cat "$BANNER"; } > "$handoff" 2>/dev/null; then
+            rm -f "$handoff" 2>/dev/null || true
+            handoff=
+          fi
+        fi
+        _fm_autoarm_write_owned_locked "$STATE" "$MY_GEN" failed-suppressed '' '' '' '' '' "$handoff"
+        write_rc=$?
+        [ -z "$handoff" ] || rm -f "$handoff" 2>/dev/null || true
+        case "$write_rc" in
+          0)
+            if : > "$FAILURE_ALARM" 2>/dev/null; then
+              AUTOARM_COMMITTED_ALARM=1
+              rc=0
+            else
+              [ -z "$BANNER" ] || : > "$BANNER" 2>/dev/null || true
+            fi
+            ;;
+          3) rc=3 ;;
+          *) [ -z "$BANNER" ] || : > "$BANNER" 2>/dev/null || true ;;
+        esac
       fi
     fi
   fi
@@ -380,7 +504,7 @@ autoarm_alarm_banner() {
   {
     printf 'FIRSTMATE SUPERVISION IS GENUINELY DOWN: %s - the Stop-owned auto-arm exhausted its bounded retries and one failure notice, no live watcher or automatic continuation exists, and this session block budget is exhausted.\n' "$need_desc"
     printf 'Keep this session attended and diagnose the automatic Stop-hook and watcher startup before relying on unattended supervision; do not launch a manual background arm from this notice.\n'
-  } >&2
+  } | banner_write
 }
 
 # The one terminal exhaustion decision every failed-suppressed continuation
@@ -406,9 +530,12 @@ autoarm_exit_suppressed() {  # <cause> [interrupted-session-identity]
   autoarm_commit_attended_alarm
   rc=$?
   if [ "$rc" -eq 0 ]; then
-    autoarm_alarm_banner
     [ -z "${OUT:-}" ] || rm -f "$OUT" 2>/dev/null || true
     exit 2
+  fi
+  if [ "$rc" -eq 3 ]; then
+    [ -z "${OUT:-}" ] || rm -f "$OUT" 2>/dev/null || true
+    exit 0
   fi
   if [ "$rc" -eq 2 ]; then
     fm_autoarm_reset_owned "$STATE" "$MY_GEN" >/dev/null 2>&1
@@ -457,7 +584,6 @@ handle_autoarm_signal() {
     exit 0
   fi
   if [ "$AUTOARM_COMMITTED_ALARM" -eq 1 ]; then
-    autoarm_alarm_banner
     exit 2
   fi
   if [ -e "$FAILURE_ALARM" ]; then
@@ -466,8 +592,10 @@ handle_autoarm_signal() {
     exit 0
   fi
   if [ ! -e "$FAILURE_NOTICE" ]; then
-    printf 'firstmate watcher auto-arm INTERRUPTED by %s - the Stop-owned automatic supervision mechanism did not reach a terminal watcher outcome.\n' "$signal" >&2
-    printf 'Do not launch a manual background arm from this notice; investigate the automatic Stop hook and watcher startup before ending blind.\n' >&2
+    {
+      printf 'firstmate watcher auto-arm INTERRUPTED by %s - the Stop-owned automatic supervision mechanism did not reach a terminal watcher outcome.\n' "$signal"
+      printf 'Do not launch a manual background arm from this notice; investigate the automatic Stop hook and watcher startup before ending blind.\n'
+    } | banner_write
     autoarm_commit failed "$FAILURE_NOTICE" "$SESSION_IDENTITY" && exit 2
     exit 0
   fi
@@ -477,6 +605,42 @@ handle_autoarm_signal() {
 trap 'handle_autoarm_signal HUP' HUP
 trap 'handle_autoarm_signal TERM' TERM
 trap 'handle_autoarm_signal INT' INT
+
+# --- parked delivery ------------------------------------------------------------
+# The previous generation's owner handed this parked firing its close: deliver
+# that banner as this Stop's own rewake, committing the outcome the owner would
+# have committed. A handoff that is unreadable or whose commit is refused falls
+# through to the ordinary arm path, which re-verifies ownership and re-arms.
+if [ -n "$HANDOFF_GEN" ]; then
+  HANDOFF="$STATE/.claude-autoarm-handoff"
+  HANDOFF_OUTCOME=
+  [ "$(_fm_autoarm_epoch_field "$HANDOFF" epoch 2>/dev/null)" = "$MY_GEN" ] \
+    && HANDOFF_OUTCOME=$(_fm_autoarm_epoch_field "$HANDOFF" outcome 2>/dev/null)
+  case "$HANDOFF_OUTCOME" in
+    rewake|failed|failed-suppressed)
+      HANDOFF_MARKER=
+      HANDOFF_ALARM=0
+      [ "$(_fm_autoarm_epoch_field "$HANDOFF" notice 2>/dev/null)" != 1 ] || HANDOFF_MARKER=$FAILURE_NOTICE
+      if [ "$(_fm_autoarm_epoch_field "$HANDOFF" alarm 2>/dev/null)" = 1 ]; then
+        HANDOFF_MARKER=$FAILURE_ALARM
+        HANDOFF_ALARM=1
+      fi
+      HANDOFF_MARKER_IDENTITY=
+      [ "$HANDOFF_MARKER" != "$FAILURE_NOTICE" ] || HANDOFF_MARKER_IDENTITY=$SESSION_IDENTITY
+      sed '1d' "$HANDOFF" 2>/dev/null | banner_write
+      rm -f "$HANDOFF" 2>/dev/null || true
+      if autoarm_commit "$HANDOFF_OUTCOME" "$HANDOFF_MARKER" "$HANDOFF_MARKER_IDENTITY"; then
+        if [ "$HANDOFF_ALARM" -eq 1 ]; then
+          AUTOARM_COMMITTED_ALARM=1
+          exit 2
+        fi
+        [ "$HANDOFF_OUTCOME" = failed-suppressed ] && [ -e "$FAILURE_ALARM" ] && exit 0
+        exit 2
+      fi
+      [ -z "$BANNER" ] || : > "$BANNER" 2>/dev/null || true
+      ;;
+  esac
+fi
 
 # X mode cadence: source the generated config so an X instance polls at its
 # 30s cadence (fm-bootstrap.sh x_mode_setup contract).
@@ -682,7 +846,7 @@ if [ "$ACTIONABLE" -eq 1 ]; then
     fi
     [ -z "$SUCCESSOR_FAILURE" ] || printf '%s\n' "$SUCCESSOR_FAILURE"
     printf 'Run bin/fm-wake-drain.sh first, handle the wake, then run its exact WAKE_ACK_REQUIRED --ack-through command. Until that post-handling acknowledgement, interruption leaves the wake durable for idempotent re-handling. This Stop hook owns watcher continuity: when the handling turn ends, the next needed cycle arms automatically - do NOT run bin/fm-watch-arm.sh after an ordinary wake.\n'
-  } >&2
+  } | banner_write
   if autoarm_commit rewake; then
     [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
     exit 2
@@ -693,11 +857,16 @@ if [ "$ACTIONABLE" -eq 1 ]; then
     && ! fm_watcher_healthy "$STATE" "$SCRIPT_DIR/fm-watch.sh" "$GRACE" "$FM_HOME"; then
     [ ! -e "$FAILURE_NOTICE" ] \
       || autoarm_exit_suppressed 'firstmate watcher auto-arm hand-back still uncommitted - the supervision host returned an actionable wake, but its rewake could not be committed, and the failure episode notice was already consumed'
-    printf 'firstmate watcher auto-arm FAILED - the supervision host returned an actionable wake, but its rewake could not be committed.\n' >&2
+    printf 'firstmate watcher auto-arm FAILED - the supervision host returned an actionable wake, but its rewake could not be committed.\n' | banner_write
     if autoarm_commit failed "$FAILURE_NOTICE"; then
       [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
       exit 2
     fi
+  fi
+  # A refused rewake ends this generation without a delivery; record that, so
+  # a parked or later firing does not read the claim as still arming.
+  if fm_autoarm_ledger_read "$STATE" && [ "$FM_AUTOARM_OUTCOME" = arming ]; then
+    autoarm_record clean
   fi
   [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
   exit 0
@@ -716,7 +885,7 @@ if [ ! -e "$FAILURE_NOTICE" ]; then
     [ -n "$OUT" ] && grep -E '^(watcher:|signal:|stale:|check:|heartbeat|supervision-host)' "$OUT" 2>/dev/null | head -8
     [ "$HOST_MODE" -eq 0 ] || printf 'The supervision host (docs/supervision-host.md) ran these cycles; its last one exited %s without a wake.\n' "$HOST_RC"
     printf 'Do not launch a manual background arm from this notice; investigate the automatic Stop hook and watcher startup before ending blind.\n'
-  } >&2
+  } | banner_write
   if autoarm_commit failed "$FAILURE_NOTICE"; then
     [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
     exit 2

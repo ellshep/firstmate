@@ -372,6 +372,17 @@ No mutex is held across arming or output.
 A superseded owner goes completely silent.
 Ownership is re-verified before every arm invocation, episode-state mutation, ledger write, and continuation.
 
+#### Parked deferral
+
+A firing that defers to an open claim parks on it instead of exiting, so delivery never rests on the exit 2 of a Stop that a later turn superseded.
+Any later turn supersedes the owner's Stop that way, whether an operator message or a turn this guard continued.
+The incidents in issue #7252 lost that superseded exit 2, although a live Claude Code 2.1.301 lab still delivered it ([verification](verification/supervision.md#a-superseded-stops-hand-back-on-a-claude-primary-2026-10-16)).
+`state/.claude-autoarm-parked` names the one parked firing, and a newer Stop's firing replaces it.
+When the owner's exit-2 commit finds a live parked firing, the same owned ledger write transfers the next generation to that firing and publishes the owner's banner and outcome in `state/.claude-autoarm-handoff`.
+The owner then exits 0, and the parked firing commits that outcome and exits 2 with that banner.
+When the owner ends any other way, its claim is no longer open and the parked firing claims and arms as a later Stop would.
+The generation-claim contract comment in `bin/fm-wake-lib.sh` owns the record formats.
+
 #### Exit status as the commit point
 
 The irrevocable commit point of a translation is the exit status, because the harness delivers the collected stderr banner only on exit 2.
@@ -444,7 +455,7 @@ The one loud attended fail-open is available only when all of these hold:
 Two writers can commit `state/.claude-autoarm-failure-alarmed`, both under the same owner-then-budget lock order:
 
 - The guard's `terminal_fail_open`, when a Stop reaches it with the budget already exhausted and no live open generation claim.
-- The Stop auto-arm's own terminal failure: the exhausted continuation is the one participant that knows no automatic continuation remains, so when this session's consumed block count is already over budget it commits the alarm in the same owned critical section as its `failed-suppressed` ledger write and delivers the one loud final rewake.
+- The Stop auto-arm's own terminal failure: the exhausted continuation is the one participant that knows no automatic continuation remains, so when this session's consumed block count is already over budget it commits the alarm in the same owned critical section as its `failed-suppressed` ledger write and delivers the one loud final rewake - or, when this Stop was itself superseded, hands that alarm and rewake to its live parked successor exactly as [parked deferral](#parked-deferral) hands off any other outcome, so the loudest notice is never lost to a dead owner's untranslated exit 2.
   Every failed-suppressed continuation - an ordinary exhausted failure, a lost supervision-host hand-back, an interrupted hook, or a refused healthy-watcher reset - takes this one exhaustion decision before it commits another retry, because the guard's claim-open step-aside would otherwise leave the alarm unwritten on every Stop.
 
 After that alarm, the Stop auto-arm suppresses further exit-2 continuations until the episode resets, so the final fail-open remains reachable.
