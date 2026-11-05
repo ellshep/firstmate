@@ -2404,7 +2404,7 @@ SH
 # --- context re-emit (--reemit) ----------------------------------------------
 
 test_reemit_cue_survives_the_hook_output_preview() {
-  local rec root home fakebin reemit normal head2k
+  local rec root home fakebin reemit normal head2k full
   rec=$(new_world reemit-cue)
   IFS='|' read -r root home fakebin <<FIXTURE
 $rec
@@ -2420,10 +2420,15 @@ FIXTURE
   reemit=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" FM_FAKE_HARNESS_PID=$$ PATH="$fakebin:$BASE_PATH" \
     env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
     "$SESSION_START" --reemit)
-  [ "${#reemit}" -gt 10000 ] || fail "re-emit fixture did not exceed the hook output limit"
+  [ "$(wc -c < "$home/data/captain.md" | tr -d ' ')" -gt 10000 ] || fail "re-emit fixture did not exceed the section cap"
   head2k=$(printf '%s' "$reemit" | head -c 2000)
   assert_contains "$head2k" "RE-EMIT CUE" "the re-emit cue is not inside the first 2000 characters"
   assert_contains "$head2k" "Full output saved to" "the re-emit cue does not point at the saved output"
+  assert_contains "$reemit" 'section capped at 8192 bytes; full output:' "large re-emit section was not bounded"
+  full=$(printf '%s\n' "$reemit" | sed -n 's/^\[section capped at 8192 bytes; full output: \(.*\)\]$/\1/p' | head -1)
+  [ -f "$full" ] || fail "bounded re-emit did not retain its full output file"
+  [ "$(wc -c < "$full" | tr -d ' ')" -gt "${#reemit}" ] || fail "capped re-emit was not smaller than its saved full digest"
+  grep -F 'preference line 0399' "$full" >/dev/null || fail "full re-emit lost the end of its large section"
 
   pass "--reemit puts its read cue in the first 2000 characters and a normal start omits it"
 }
@@ -2553,6 +2558,12 @@ EOF
   [ "$baseline_after" = "wrong-session
 $(hash_file_for_test "$root/AGENTS.md")" ] \
     || fail "a wrong-session baseline was rewritten during a rebuild"
+
+  reemit_files=$(find "$home/state" -maxdepth 1 -name '.session-reemit*' 2>/dev/null | wc -l | tr -d ' ')
+  [ "$reemit_files" -eq 1 ] \
+    || fail "the six prior --reemit calls left $reemit_files .session-reemit files behind instead of converging on one"
+  [ -f "$home/state/.session-reemit-full.txt" ] \
+    || fail "repeated re-emits did not converge on the deterministic full-output file"
 
   pass "true-start AGENTS baselines stay immutable while every drifted Pi compact re-emits the current contract"
 }

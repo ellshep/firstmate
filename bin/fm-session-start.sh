@@ -223,7 +223,15 @@
 #             a lock another live session took meanwhile still produces the
 #             ordinary read-only path. A re-emit prints a short RE-EMIT CUE
 #             first, so a harness that spills a large output and shows only its
-#             head still tells the model to read the saved full output.
+#             head still tells the model to read the saved full output. The
+#             full output is captured once per re-emit through a fresh mktemp
+#             name renamed onto one deterministic path,
+#             state/.session-reemit-full.txt, so repeated compactions reuse
+#             that single file instead of accumulating one per event; each
+#             printed section is then capped at a fixed byte budget, pointing
+#             at that saved file for anything a cap cuts off, and a capture or
+#             rename failure streams the output straight through uncapped
+#             rather than dropping it.
 #
 #   --source  The native session-open source, supplied only by
 #             fm-sessionstart-run.sh. A genuine `startup` that owns the active
@@ -305,14 +313,35 @@ if [ -z "${FM_SESSION_START_STAGE_FILE:-}" ]; then
     SESSION_START_STAGE_FILE=/dev/null
   fi
   if [ "$REEMIT" -eq 1 ]; then
+    REEMIT_STATE_DIR="${FM_STATE_OVERRIDE:-${FM_HOME:-${FM_ROOT_OVERRIDE:-$SCRIPT_DIR/..}}/state}"
+    REEMIT_FULL="$REEMIT_STATE_DIR/.session-reemit-full.txt"
+    # Every re-emit (one per post-compaction session start) writes through a
+    # fresh mktemp name and renames it onto this one fixed path, so a
+    # long-running home keeps at most this single full-output file instead of
+    # accumulating one per compaction event.
+    REEMIT_FULL_TMP=$(mktemp "$REEMIT_STATE_DIR/.session-reemit.XXXXXX" 2>/dev/null) || REEMIT_FULL_TMP=
     if [ -n "$SESSION_SOURCE" ]; then
       fm_run_timed "$SESSION_START_BUDGET" \
         env FM_SESSION_START_STAGE_FILE="$SESSION_START_STAGE_FILE" \
-        "$SCRIPT_DIR/fm-session-start.sh" --reemit --source "$SESSION_SOURCE"
+        "$SCRIPT_DIR/fm-session-start.sh" --reemit --source "$SESSION_SOURCE" > "${REEMIT_FULL_TMP:-/dev/stdout}"
     else
       fm_run_timed "$SESSION_START_BUDGET" \
         env FM_SESSION_START_STAGE_FILE="$SESSION_START_STAGE_FILE" \
-        "$SCRIPT_DIR/fm-session-start.sh" --reemit
+        "$SCRIPT_DIR/fm-session-start.sh" --reemit > "${REEMIT_FULL_TMP:-/dev/stdout}"
+    fi
+    if [ -z "$REEMIT_FULL_TMP" ]; then
+      REEMIT_FULL=
+    elif ! mv -f "$REEMIT_FULL_TMP" "$REEMIT_FULL" 2>/dev/null; then
+      cat "$REEMIT_FULL_TMP"
+      rm -f "$REEMIT_FULL_TMP" 2>/dev/null || true
+      REEMIT_FULL=
+    fi
+    if [ -n "$REEMIT_FULL" ]; then
+      LC_ALL=C awk -v full="$REEMIT_FULL" -v cap=8192 '
+        /^================================================================================$/ { bytes=0; omitted=0; print; next }
+        { size=length($0)+1; if (bytes+size<=cap) { print; bytes+=size }
+          else if (!omitted) { printf "[section capped at %d bytes; full output: %s]\n", cap, full; omitted=1 } }
+      ' "$REEMIT_FULL"
     fi
   elif [ -n "$SESSION_SOURCE" ]; then
     fm_run_timed "$SESSION_START_BUDGET" \
@@ -894,7 +923,8 @@ fi
 stage read-once
 section "READ-ONCE CONTRACT"
 cat <<'EOF'
-Everything below is printed in full for this session start: every state/*.meta,
+Everything below is presented for this session start (on a context re-emit,
+a capped section points to the full saved digest): every state/*.meta,
 a compact data/backlog.md listing, a bounded tail of every state/*.status,
 data/projects.md, data/secondmates.md, data/captain.md, data/captain-shared.md,
 and data/learnings.md.
@@ -915,7 +945,7 @@ Go to a source directly only when:
   - or a STARTUP TRUNCATED banner named the stage that would have printed it, in
     which case that stage's sources were never emitted and must be reconciled,
   - or a context re-emit opened with a read cue because the
-    harness cut the digest short.
+    harness cut the digest short, or a capped section points to its full file.
 EOF
 
 # --- 6. fleet-state digest ---------------------------------------------

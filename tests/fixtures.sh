@@ -420,8 +420,20 @@ make_spawn_fakebin() {
 # CLAUDE_CONFIG_DIR, ...) are inherited. Does not add --mode/--yolo; ship tests
 # that need a delivery contract pass those flags themselves.
 fm_test_run_spawn() {
-  local home=$1 pane=$2 fakebin=$3
+  local home=$1 pane=$2 fakebin=$3 previous='' arg mode='' reason_set=0
   shift 3
+  for arg in "$@"; do
+    if [ "$previous" = --mode ]; then mode=$arg; fi
+    previous=$arg
+    case "$arg" in
+      --mode=*) mode=${arg#--mode=} ;;
+      --mode-reason|--mode-reason=*) reason_set=1 ;;
+    esac
+  done
+  local reason_args=()
+  if [ "$reason_set" -eq 0 ] && [ "${FM_TEST_NO_MODE_REASON:-0}" != 1 ]; then
+    case "$mode" in direct-PR|local-only) reason_args=(--mode-reason 'fixture delivery choice') ;; esac
+  fi
   # A claude spawn pre-registers workspace trust in the launching user's own
   # store (bin/fm-claude-trust.sh), so every spawn here runs against a throwaway
   # HOME; without it the suite would write the developer's real ~/.claude.json.
@@ -440,7 +452,7 @@ fm_test_run_spawn() {
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$pane" TMUX="${TMUX:-fake,1,0}" \
     PATH="$fakebin:$PATH" \
-    "$ROOT/bin/fm-spawn.sh" "$@" 2>&1
+    "$ROOT/bin/fm-spawn.sh" "$@" ${reason_args[@]+"${reason_args[@]}"} 2>&1
 }
 
 # --- send-world stubs -------------------------------------------------------

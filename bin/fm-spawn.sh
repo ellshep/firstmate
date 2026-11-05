@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--hermes-profile <name>] [--account <entry>] [--backend <name>] [--herdr-resume-lock-wait]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--mode-reason <one-line reason>] [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--hermes-profile <name>] [--account <entry>] [--backend <name>] [--herdr-resume-lock-wait]
 #        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--hermes-profile <name>] [--account <entry>] [--backend <name>] [--herdr-resume-lock-wait]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
@@ -39,8 +39,8 @@
 #   intent. A legacy mixed Task is accepted there only under bin/fm-dod-lib.sh's
 #   provenance-marking rules; unmarked legacy Tasks stop for migration rather
 #   than becoming intent. That library owns the parsing and intent rules. When
-#   the explicit mode carries less rigor than the project's standing posture, a
-#   loud one-line deviation notice is printed and the spawn continues.
+#   the explicit mode carries less rigor than the project's standing posture,
+#   --mode-reason must match the brief and is recorded in task metadata.
 #   no-mistakes-prod-only is a registry policy rather than a task mode and is
 #   refused as a flag value.
 #   --branch-prefix is the optional prefix selected at intake for this ship's
@@ -1007,6 +1007,7 @@ HERMES_PROFILE=
 HERMES_PROFILE_SET=0
 BACKEND_SET=0
 MODE_SET=0
+MODE_REASON=
 YOLO_SET=0
 BRANCH_PREFIX_SET=0
 BASE_BRANCH=
@@ -1054,6 +1055,9 @@ for a in "$@"; do
     mode)
       MODE=$a
       MODE_SET=1
+      ;;
+    mode-reason)
+      MODE_REASON=$a
       ;;
     yolo)
       YOLO=$a
@@ -1125,6 +1129,8 @@ for a in "$@"; do
     MODE=${a#--mode=}
     MODE_SET=1
     ;;
+  --mode-reason) want_value="mode-reason" ;;
+  --mode-reason=*) MODE_REASON=${a#--mode-reason=} ;;
   --yolo) want_value=yolo ;;
   --yolo=*)
     YOLO=${a#--yolo=}
@@ -1250,6 +1256,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
     echo "error: --relaunch reuses the task's recorded delivery mode; --mode cannot override it" >&2
     exit 1
   }
+  [ -z "$MODE_REASON" ] || {
+    echo "error: --relaunch reuses the recorded mode reason; --mode-reason cannot override it" >&2
+    exit 1
+  }
   [ "$YOLO_SET" -eq 0 ] || {
     echo "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it" >&2
     exit 1
@@ -1312,6 +1322,10 @@ else
   else
     [ "$MODE_SET" -eq 0 ] || {
       echo "error: --mode applies only to ship spawns; a scout delivers a report and a secondmate records its own fixed posture" >&2
+      exit 1
+    }
+    [ -z "$MODE_REASON" ] || {
+      echo 'error: --mode-reason applies only to ship spawns' >&2
       exit 1
     }
     [ "$YOLO_SET" -eq 0 ] || {
@@ -2266,6 +2280,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   # harness. Each pair still re-validates it against its own brief, so a batch
   # spanning several modes is two invocations rather than a silent mixed dispatch.
   [ "$MODE_SET" -eq 0 ] || shared_args+=(--mode "$MODE")
+  [ -z "$MODE_REASON" ] || shared_args+=(--mode-reason "$MODE_REASON")
   [ "$YOLO_SET" -eq 0 ] || shared_args+=(--yolo "$YOLO")
   [ "$BRANCH_PREFIX_SET" -eq 0 ] || shared_args+=(--branch-prefix "$BRANCH_PREFIX")
   [ "$BASE_BRANCH_SET" -eq 0 ] || shared_args+=(--base-branch "$BASE_BRANCH")
@@ -2660,6 +2675,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
     exit 1
   fi
   MODE=$(fm_meta_get "$RELAUNCH_META" mode)
+  MODE_REASON=$(fm_meta_get "$RELAUNCH_META" mode_reason)
   YOLO=$(fm_meta_get "$RELAUNCH_META" yolo)
   UPSTREAM_CONSENT=$(fm_meta_get "$RELAUNCH_META" upstream_consent)
   if [ "$KIND" = ship ]; then
@@ -4453,7 +4469,9 @@ fi
 delivery_rigor_rank() { # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task mode
   case "$1" in
   no-mistakes) echo 3 ;;
-  direct-PR) echo 2 ;;
+  # no-mistakes-prod-only ranks as its weaker leg (direct-PR): either legitimate
+  # leg (no-mistakes or direct-PR) is quiet, but local-only is weaker than both.
+  direct-PR | no-mistakes-prod-only) echo 2 ;;
   local-only) echo 1 ;;
   *) echo 0 ;;
   esac
@@ -4465,6 +4483,7 @@ delivery_rigor_rank() { # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task 
 # would launch a worker whose instructions and whose recorded task delivery
 # differ, which is the exact drift this contract prevents.
 if [ "$KIND" = ship ]; then
+  case "$MODE_REASON" in *$'\n'*|*$'\r'*) echo 'error: --mode-reason must be one line' >&2; exit 1 ;; esac
   PROJ_NAME=$(basename "$PROJ_ABS")
   # The parser's own refusal reaches the operator here rather than being
   # discarded: an entry it refuses (an unknown forge token, or a forge on
@@ -4606,10 +4625,19 @@ if [ "$KIND" = ship ]; then
   # allowed (a current explicit captain instruction wins) but never silent. An
   # unregistered project resolves to the same no-mistakes standing default, which
   # is why the notice names the standing posture rather than the registry line. A
-  # conditional policy is excluded: both of its legs are legitimate classifications.
-  if [ -n "$STANDING_MODE" ] && [ "$STANDING_MODE" != no-mistakes-prod-only ] &&
+  # conditional policy ranks as its weaker leg (direct-PR): either legitimate leg
+  # is quiet, but local-only is still a downgrade from both and needs a reason.
+  if [ "$RELAUNCH" -eq 0 ] && [ -n "$STANDING_MODE" ] &&
     [ "$(delivery_rigor_rank "$MODE")" -lt "$(delivery_rigor_rank "$STANDING_MODE")" ]; then
-    echo "notice: $ID ships mode=$MODE while the standing posture for $PROJ_NAME is $STANDING_MODE - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state" >&2
+    [ -n "$(printf '%s' "$MODE_REASON" | tr -d '[:space:]')" ] || {
+      echo "error: --mode $MODE is weaker than resolved default $STANDING_MODE for $PROJ_NAME; pass --mode-reason" >&2
+      exit 1
+    }
+    BRIEF_REASON=$(sed -n 's/^Mode reason: //p' "$BRIEF" | head -n 1)
+    { [ -z "$BRIEF_MODE" ] || [ "$BRIEF_REASON" = "$MODE_REASON" ]; } || {
+      echo "error: --mode-reason must match the brief's Mode reason line" >&2
+      exit 1
+    }
   fi
   # The registered ship-branch prefix (bin/fm-project-mode.sh) is the captain's
   # answer to "should this project's branches read as firstmate-authored", so a
@@ -7671,7 +7699,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness hermes_profile hermes_home kind mode yolo branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort opencode_version account account_provider omp_profile busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id hc_session hc_terminal home projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
+      split("window endpoint_task_id worktree project harness hermes_profile hermes_home kind mode mode_reason yolo branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort opencode_version account account_provider omp_profile busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id hc_session hc_terminal home projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -7691,6 +7719,7 @@ preserve_relaunch_meta() {
   fi
   echo "kind=$KIND"
   [ -z "$MODE" ] || echo "mode=$MODE"
+  [ -z "$MODE_REASON" ] || echo "mode_reason=$MODE_REASON"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
   [ -z "${BRANCH:-}" ] || echo "branch=$BRANCH"
   echo "tasktmp=$TASK_TMP"

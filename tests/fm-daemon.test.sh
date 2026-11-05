@@ -1057,6 +1057,8 @@ test_housekeeping_open_decision_refreshes_marker_so_close_starts_fresh_window() 
     FM_STALE_ESCALATE_SECS=240 FM_HEARTBEAT_SCAN_SECS=1000000 housekeeping "$state"
   grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
     || fail "wedge escalation did not resume after a full window past the answer: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
+  grep -F "task=$task" "$state/.subsuper-escalations" >/dev/null \
+    || fail "the resumed wedge escalation omitted its owning task id: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
   pass "housekeeping refreshes the stale marker under an open decision so a close starts a fresh window"
 }
 
@@ -1312,6 +1314,7 @@ test_housekeeping_paused_resurfaces_and_resets() {
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
     FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=240 housekeeping "$state"
   grep -F "awaiting external" "$state/.subsuper-escalations" >/dev/null 2>&1 || fail "declared pause was not re-surfaced as an awaiting-external recheck"
+  grep -F 'task=held-w11' "$state/.subsuper-escalations" >/dev/null 2>&1 || fail "pause recheck omitted its owning task id"
   grep -F "awaiting the captain" "$state/.subsuper-escalations" >/dev/null 2>&1 && fail "declared pause named the captain instead of its external dependency"
   grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null 2>&1 && fail "declared pause was mislabeled a possible wedge"
   [ -e "$state/.subsuper-paused-$key" ] || fail "pause marker cleared instead of reset for the next window"
@@ -1339,6 +1342,7 @@ test_housekeeping_captain_held_resurfaces_and_resets() {
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
     FM_STATE_OVERRIDE="$state" FM_PAUSE_RESURFACE_SECS=240 housekeeping "$state"
   grep -F "awaiting the captain" "$state/.subsuper-escalations" >/dev/null 2>&1 || fail "a captain hold was silenced entirely instead of re-surfacing as a captain-owned recheck: $(cat "$state/.subsuper-escalations" 2>/dev/null || true)"
+  grep -F 'task=held-w11h' "$state/.subsuper-escalations" >/dev/null 2>&1 || fail "captain hold recheck omitted its owning task id"
   grep -F "awaiting external" "$state/.subsuper-escalations" >/dev/null 2>&1 && fail "a captain hold was re-surfaced as an external wait, hiding that the captain is the blocker"
   grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null 2>&1 && fail "a captain hold was re-surfaced as a possible wedge"
   [ -e "$state/.subsuper-paused-$key" ] || fail "captain-held marker cleared instead of reset for the next window"
@@ -3846,6 +3850,8 @@ test_dialog_name_survives_away_self_handle() {
     || fail "the persistence line was not escalated: $(cat "$state/.subsuper-escalations" 2>/dev/null)"
   grep -F 'blocked-on-prompt: Claude background-task exit picker' "$state/.subsuper-escalations" >/dev/null \
     || fail "the persistence line dropped the dialog name: $(cat "$state/.subsuper-escalations")"
+  grep -F 'task=picker-ship' "$state/.subsuper-escalations" >/dev/null \
+    || fail "the persistence line omitted its owning task id: $(cat "$state/.subsuper-escalations")"
   grep -F 'possible wedge' "$state/.subsuper-escalations" >/dev/null \
     || fail "the persistence line dropped the wedge wording: $(cat "$state/.subsuper-escalations")"
   [ ! -e "$state/.subsuper-dialog-$key" ] || fail "the saved dialog name outlived the persistence escalation"

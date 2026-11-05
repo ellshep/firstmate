@@ -239,6 +239,51 @@ test_wrapper_single_home() {
   pass "fm-tasks-axi.sh keeps the single-home layout addressing its own code-root backlog"
 }
 
+test_update_body_guards() {
+  local dir out rc shown
+  dir=$(make_split body-guards)
+  wrapper_from_code "$dir" add note-1 "Note" --body "A long existing note with several important lines and decisions." >/dev/null || fail "could not create note"
+  printf 'New detail\n' > "$dir/new.txt"
+  wrapper_from_code "$dir" update note-1 --append-body "$dir/new.txt" >/dev/null || fail "append body failed"
+  shown=$(wrapper_from_code "$dir" show note-1 --full)
+  assert_contains "$shown" 'A long existing note' "append removed the old note"
+  assert_contains "$shown" 'New detail' "append omitted the new detail"
+
+  : > "$dir/empty.txt"
+  out=$(wrapper_from_code "$dir" update note-1 --body-file "$dir/empty.txt" 2>&1); rc=$?
+  expect_code 2 "$rc" "empty replacement"
+  assert_contains "$out" 'nonempty' "empty replacement was not explained"
+  out=$(wrapper_from_code "$dir" update note-1 --body-file "$dir/empty.txt" --force-body 2>&1); rc=$?
+  expect_code 2 "$rc" "forced empty replacement"
+  out=$(wrapper_from_code "$dir" update note-1 --append-body "$dir/empty.txt" 2>&1); rc=$?
+  expect_code 2 "$rc" "empty append"
+  out=$(wrapper_from_code "$dir" update note-1 --body-file "$dir/new.txt" 2>&1); rc=$?
+  expect_code 2 "$rc" "shrinking replacement"
+  assert_contains "$out" 'drops more than half' "shrinking replacement was not explained"
+  shown=$(wrapper_from_code "$dir" show note-1 --full)
+  assert_contains "$shown" 'A long existing note' "refused replacement changed the note"
+  wrapper_from_code "$dir" update note-1 --body-file "$dir/new.txt" --force-body >/dev/null || fail "forced replacement failed"
+  shown=$(wrapper_from_code "$dir" show note-1 --full)
+  assert_not_contains "$shown" 'A long existing note' "forced replacement kept the old note"
+  assert_contains "$shown" 'New detail' "forced replacement omitted the new detail"
+  pass "fm-tasks-axi update appends and refuses empty or shrinking replacements unless forced"
+}
+
+test_update_append_body_preserves_utf8() {
+  local dir shown
+  dir=$(make_split body-utf8)
+  wrapper_from_code "$dir" add note-u "Note" --body 'A "quoted" café note with accents.' >/dev/null \
+    || fail "could not create an accented, quote-containing note"
+  printf 'Additional café detail.\n' > "$dir/more.txt"
+  wrapper_from_code "$dir" update note-u --append-body "$dir/more.txt" >/dev/null || fail "append body failed"
+  shown=$(wrapper_from_code "$dir" show note-u --full)
+  assert_contains "$shown" 'café note with accents' \
+    "append-body corrupted the accented character in the preserved note"
+  assert_contains "$shown" 'Additional café detail' \
+    "append-body corrupted the accented character in the appended text"
+  pass "fm-tasks-axi update --append-body preserves UTF-8 bytes decoded from a JSON-quoted body"
+}
+
 test_guard_reports_regular_code_root_backlog
 test_guard_reports_foreign_link_and_archive
 test_guard_silent_for_single_home
@@ -249,6 +294,8 @@ if [ "$HAVE_TASKS_AXI" = 1 ]; then
   test_wrapper_refusals
   test_wrapper_refuses_add_start
   test_wrapper_single_home
+  test_update_body_guards
+  test_update_append_body_preserves_utf8
 else
   echo "skip: tasks-axi not found; home-addressing cases not run"
 fi

@@ -7,7 +7,7 @@
 # validate them against a closed set, and the spawn additionally refuses to launch
 # when the brief it is about to hand the worker records a different mode. Scout
 # spawns carry no delivery posture at all. The registry keeps only the captain's
-# standing posture, for the mechanical consumers and for one advisory notice.
+# standing posture, including the guard for a weaker explicit choice.
 #
 # Every spawn case here stops before any endpoint exists: the delivery checks run
 # ahead of backend creation, and a fake `tmux` that exits non-zero backstops the
@@ -18,11 +18,23 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
-BRIEF="$ROOT/bin/fm-brief.sh"
 PROMOTE="$ROOT/bin/fm-promote.sh"
 PROJECT_MODE="$ROOT/bin/fm-project-mode.sh"
 MERGE_LOCAL="$ROOT/bin/fm-merge-local.sh"
 TMP_ROOT=$(fm_test_tmproot fm-task-delivery)
+
+brief_fixture() {
+  local previous='' arg mode=''
+  for arg in "$@"; do
+    if [ "$previous" = --mode ]; then mode=$arg; fi
+    previous=$arg
+    case "$arg" in --mode=*) mode=${arg#--mode=} ;; esac
+  done
+  case "$mode" in
+    direct-PR|local-only) "$ROOT/bin/fm-brief.sh" "$@" --mode-reason 'fixture delivery choice' ;;
+    *) "$ROOT/bin/fm-brief.sh" "$@" ;;
+  esac
+}
 
 # A home with one registered project, one project directory, and a fake tmux that
 # refuses, so a spawn that clears the delivery checks still creates nothing.
@@ -50,6 +62,7 @@ write_brief() {  # <home> <id> [<recorded-mode>]
   {
     printf 'You are a crewmate.\n\n# Task\n## Captain'\''s intent\nExercise the delivery contract.\n\n## Firstmate spec\nVerify the selected delivery behavior.\n\n# Definition of done\n'
     [ -z "$mode" ] || printf 'Delivery contract: mode=%s\n' "$mode"
+    case "$mode" in direct-PR|local-only) printf 'Mode reason: fixture delivery choice\n' ;; esac
   } > "$home/data/$id/brief.md"
 }
 
@@ -62,13 +75,24 @@ fill_brief_subsections() {  # <file> <intent> <spec>
 }
 
 run_spawn() {  # <home> <fakebin> <spawn-args...>
-  local home=$1 fakebin=$2
+  local home=$1 fakebin=$2 previous='' arg mode='' reason_set=0 reason_args=()
   shift 2
+  for arg in "$@"; do
+    if [ "$previous" = --mode ]; then mode=$arg; fi
+    previous=$arg
+    case "$arg" in
+      --mode=*) mode=${arg#--mode=} ;;
+      --mode-reason|--mode-reason=*) reason_set=1 ;;
+    esac
+  done
+  if [ "$reason_set" -eq 0 ] && [ "${FM_TEST_NO_MODE_REASON:-0}" != 1 ]; then
+    case "$mode" in direct-PR|local-only) reason_args=(--mode-reason 'fixture delivery choice') ;; esac
+  fi
   FM_ROOT_OVERRIDE='' FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$TMP_ROOT/projects-unused" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_BACKEND=tmux PATH="$fakebin:$PATH" \
-    "$SPAWN" "$@" 2>&1
+    "$SPAWN" "$@" ${reason_args[@]+"${reason_args[@]}"} 2>&1
 }
 
 # A ship spawn must stop when its delivery contract was never decided or cannot be
@@ -159,11 +183,11 @@ EOF
 }
 
 # The registry is the captain's standing posture, so dropping below its rigor is
-# allowed but never silent, while matching or exceeding it stays quiet. An
+# requires an explicit reason, while matching or exceeding it needs none. An
 # unregistered project resolves to the same no-mistakes standing default
 # (AGENTS.md section 7), so a downgrade there is announced too. A conditional
 # policy is excluded because both of its legs are legitimate classifications.
-test_spawn_notices_a_rigor_downgrade_against_the_registry() {
+test_spawn_requires_reason_for_rigor_downgrade() {
   local rec home proj fakebin out label mode registry expect registered n=0
   while IFS='|' read -r label registry mode expect registered; do
     [ -n "$label" ] || continue
@@ -173,16 +197,19 @@ test_spawn_notices_a_rigor_downgrade_against_the_registry() {
 $rec
 EOF
     write_brief "$home" "delivery-dev-$n" "$mode"
-    out=$(run_spawn "$home" "$fakebin" "delivery-dev-$n" "$proj" claude --mode "$mode" --yolo off)
+    out=$(FM_TEST_NO_MODE_REASON=1 run_spawn "$home" "$fakebin" "delivery-dev-$n" "$proj" claude --mode "$mode" --yolo off)
     case "$expect" in
       notice)
-        assert_contains "$out" "less rigor than the captain's standing posture" \
-          "$label: no deviation notice for a rigor downgrade"
-        assert_contains "$out" "the standing posture for proj is $registered" \
-          "$label: notice did not name the standing posture it compared against" ;;
+        assert_contains "$out" "--mode-reason" \
+          "$label: unexplained downgrade was not refused"
+        assert_contains "$out" "resolved default $registered" \
+          "$label: refusal did not name the compared standing mode"
+        out=$(run_spawn "$home" "$fakebin" "delivery-dev-$n" "$proj" claude --mode "$mode" --yolo off --mode-reason 'fixture delivery choice')
+        assert_not_contains "$out" "pass --mode-reason" \
+          "$label: reasoned downgrade was still refused" ;;
       quiet)
-        assert_not_contains "$out" "less rigor than the captain's standing posture" \
-          "$label: printed a deviation notice that is not a downgrade" ;;
+        assert_not_contains "$out" "pass --mode-reason" \
+          "$label: required a reason when the mode was not weaker" ;;
     esac
   done <<'ROWS'
 no-mistakes project shipped direct-PR|- proj [no-mistakes] - fixture (added 2026-01-01)|direct-PR|notice|no-mistakes
@@ -190,9 +217,32 @@ no-mistakes project shipped local-only|- proj [no-mistakes] - fixture (added 202
 no-mistakes project shipped no-mistakes|- proj [no-mistakes] - fixture (added 2026-01-01)|no-mistakes|quiet|no-mistakes
 local-only project shipped no-mistakes|- proj [local-only] - fixture (added 2026-01-01)|no-mistakes|quiet|local-only
 conditional policy shipped direct-PR|- proj [no-mistakes-prod-only] - fixture (added 2026-01-01)|direct-PR|quiet|no-mistakes-prod-only
+conditional policy shipped local-only|- proj [no-mistakes-prod-only] - fixture (added 2026-01-01)|local-only|notice|no-mistakes-prod-only
 unregistered project resolves to the no-mistakes standing default|- other [no-mistakes] - fixture (added 2026-01-01)|direct-PR|notice|no-mistakes
 ROWS
-  pass "fm-spawn: a rigor downgrade against the registered posture is announced, never blocked"
+  pass "fm-spawn: a weaker mode needs a matching reason; equal or stronger modes do not"
+}
+
+# --mode-reason is optional outside a rigor downgrade, but a multi-line value
+# would still land raw in the line-based state/<id>.meta, splitting into a
+# stray unlabeled line per embedded newline. The newline check must therefore
+# run whenever a value is supplied, not only inside the downgrade branch.
+test_spawn_refuses_a_multiline_mode_reason_outside_a_downgrade() {
+  local rec home proj fakebin out status
+  rec=$(make_home spawn-reason-multiline "- proj [no-mistakes] - fixture (added 2026-01-01)")
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  write_brief "$home" reason-multiline-c1 no-mistakes
+  out=$(run_spawn "$home" "$fakebin" reason-multiline-c1 "$proj" claude \
+    --mode no-mistakes --yolo off --mode-reason $'first line\nsecond line')
+  status=$?
+  [ "$status" -ne 0 ] || fail "a multi-line --mode-reason on a non-downgrade spawn should exit non-zero"
+  assert_contains "$out" "--mode-reason must be one line" \
+    "the multi-line reason was not refused on a mode that was not weaker"
+  assert_absent "$home/state/reason-multiline-c1.meta" \
+    "the refused multi-line reason still recorded a task"
+  pass "fm-spawn: a multi-line --mode-reason is refused even when the mode is not a downgrade"
 }
 
 # A scout's deliverable is a report, so it records no delivery posture at all;
@@ -272,6 +322,75 @@ test_promote_requires_and_records_the_delivery_contract() {
   assert_contains "$out" "ship instructions for mode=direct-PR" "promotion hint did not carry the decided mode"
   [ "$(grep -c '^mode=' "$meta")" = 1 ] || fail "promotion left more than one mode= line in the task record"
   pass "fm-promote: promotion requires the delivery contract and records it exactly once"
+}
+
+# The registry is the captain's standing posture here too: a promotion that
+# decides a weaker --mode than the project's resolved default requires the same
+# explicit reason bin/fm-spawn.sh and bin/fm-brief.sh require, and records it
+# into the meta alongside mode=. An unregistered project resolves to the same
+# no-mistakes standing default, so a downgrade there is announced too. A
+# conditional policy is excluded because both of its legs are legitimate
+# classifications.
+test_promote_requires_reason_for_rigor_downgrade() {
+  local rec home proj fakebin out label mode registry expect registered n=0 id meta
+  while IFS='|' read -r label registry mode expect registered; do
+    [ -n "$label" ] || continue
+    n=$((n + 1))
+    rec=$(make_home "promote-deviation-$n" "$registry")
+    IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+    id="promote-dev-$n"
+    meta="$home/state/$id.meta"
+    printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$proj" > "$meta"
+    out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode "$mode" --yolo off 2>&1)
+    case "$expect" in
+      notice)
+        assert_contains "$out" "--mode-reason" \
+          "$label: unexplained downgrade was not refused"
+        assert_contains "$out" "resolved default $registered" \
+          "$label: refusal did not name the compared standing mode"
+        assert_grep 'kind=scout' "$meta" "$label: the refused downgrade still promoted the task"
+        out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+          "$PROMOTE" "$id" --mode "$mode" --yolo off --mode-reason 'fixture delivery choice' 2>&1)
+        assert_not_contains "$out" "pass --mode-reason" \
+          "$label: reasoned downgrade was still refused" ;;
+      quiet)
+        assert_not_contains "$out" "pass --mode-reason" \
+          "$label: required a reason when the mode was not weaker" ;;
+    esac
+  done <<'ROWS'
+no-mistakes project promoted to direct-PR|- proj [no-mistakes] - fixture (added 2026-01-01)|direct-PR|notice|no-mistakes
+no-mistakes project promoted to local-only|- proj [no-mistakes] - fixture (added 2026-01-01)|local-only|notice|no-mistakes
+no-mistakes project promoted to no-mistakes|- proj [no-mistakes] - fixture (added 2026-01-01)|no-mistakes|quiet|no-mistakes
+local-only project promoted to no-mistakes|- proj [local-only] - fixture (added 2026-01-01)|no-mistakes|quiet|local-only
+conditional policy promoted to direct-PR|- proj [no-mistakes-prod-only] - fixture (added 2026-01-01)|direct-PR|quiet|no-mistakes-prod-only
+conditional policy promoted to local-only|- proj [no-mistakes-prod-only] - fixture (added 2026-01-01)|local-only|notice|no-mistakes-prod-only
+unregistered project resolves to the no-mistakes standing default|- other [no-mistakes] - fixture (added 2026-01-01)|direct-PR|notice|no-mistakes
+ROWS
+  pass "fm-promote: a weaker mode needs a matching reason; equal or stronger modes do not"
+}
+
+# Same hazard as fm-spawn.sh: --mode-reason is optional outside a rigor
+# downgrade, but a multi-line value would still land raw in the line-based
+# state/<id>.meta. The newline check must run whenever a value is supplied.
+test_promote_refuses_a_multiline_mode_reason_outside_a_downgrade() {
+  local rec home proj fakebin id meta out status
+  rec=$(make_home promote-reason-multiline "- proj [no-mistakes] - fixture (added 2026-01-01)")
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  id=promote-reason-multiline-c1
+  meta="$home/state/$id.meta"
+  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$proj" > "$meta"
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+    "$PROMOTE" "$id" --mode no-mistakes --yolo off --mode-reason $'first line\nsecond line' 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a multi-line --mode-reason on a non-downgrade promotion should exit non-zero"
+  assert_contains "$out" "--mode-reason must be one line" \
+    "the multi-line reason was not refused on a mode that was not weaker"
+  assert_grep 'kind=scout' "$meta" "the refused multi-line reason still promoted the task"
+  pass "fm-promote: a multi-line --mode-reason is refused even when the mode is not a downgrade"
 }
 
 # A home with config/spawn-base-primary-checkout can start a scout from the
@@ -374,7 +493,7 @@ STUB
     id="promote-dod-$(printf '%s' "$mode" | tr '[:upper:]' '[:lower:]')"
     meta="$home/state/$id.meta"
     printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
-    FM_HOME="$home" "$BRIEF" "$id" fixture-project --scout >/dev/null 2>&1 \
+    FM_HOME="$home" brief_fixture "$id" fixture-project --scout >/dev/null 2>&1 \
       || fail "$mode: scout brief generation should succeed"
     fill_brief_subsections "$home/data/$id/brief.md" \
       "Ship the delivery-contract change." "Preserve the selected delivery mode."
@@ -423,7 +542,7 @@ STUB
     # payload ends at its Definition of done, as does an ordinary generated
     # brief, so identical suffixes prove both workers receive the same contract.
     rm "$home/data/$id/brief.md"
-    FM_HOME="$home" "$BRIEF" "$id" fixture-project --mode "$mode" >/dev/null 2>&1 \
+    FM_HOME="$home" brief_fixture "$id" fixture-project --mode "$mode" >/dev/null 2>&1 \
       || fail "$mode: ordinary ship brief generation should succeed"
     brief_dod="$TMP_ROOT/promote-dod/brief-dod-$id"
     delivered_dod="$TMP_ROOT/promote-dod/delivered-dod-$id"
@@ -469,7 +588,7 @@ test_promotion_persists_the_selected_ship_branch() {
   meta="$home/state/$id.meta"
   mkdir -p "$home/state"
   printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
-  FM_HOME="$home" "$BRIEF" "$id" fixture-project --scout >/dev/null 2>&1 \
+  FM_HOME="$home" brief_fixture "$id" fixture-project --scout >/dev/null 2>&1 \
     || fail "branch-prefix promotion scout brief should scaffold"
   fill_brief_subsections "$home/data/$id/brief.md" \
     "Promote the branch-prefix fixture." "Use the configured branch exactly."
@@ -499,7 +618,7 @@ test_promotion_branch_command_is_shell_safe() {
   meta="$home/state/$id.meta"
   mkdir -p "$home/state"
   printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
-  FM_HOME="$home" "$BRIEF" "$id" fixture-project --scout >/dev/null 2>&1 \
+  FM_HOME="$home" brief_fixture "$id" fixture-project --scout >/dev/null 2>&1 \
     || fail "shell-safe promotion scout brief should scaffold"
   fill_brief_subsections "$home/data/$id/brief.md" \
     "Promote the shell-safe fixture." "Use the configured branch exactly."
@@ -626,7 +745,7 @@ test_pr_manual_brief_hands_the_pr_text_to_the_worker() {
   local home brief plain based
   home="$TMP_ROOT/pr-manual-brief/home"
   mkdir -p "$home/data" "$home/state"
-  FM_HOME="$home" "$BRIEF" pr-manual-b1 proj --mode no-mistakes --pr manual >/dev/null \
+  FM_HOME="$home" brief_fixture pr-manual-b1 proj --mode no-mistakes --pr manual >/dev/null \
     || fail "a pr=manual no-mistakes brief should scaffold"
   brief="$home/data/pr-manual-b1/brief.md"
   grep -qx "Delivery contract: mode=no-mistakes pr=manual" "$brief" \
@@ -648,7 +767,7 @@ test_pr_manual_brief_hands_the_pr_text_to_the_worker() {
   assert_no_grep 'checks-passed' "$brief" "the worker was told to wait for a return its skipped ci step never gives"
   assert_no_grep 'Pass `--skip push' "$brief" "the worker was told to skip the push the named-head rule depends on"
 
-  FM_HOME="$home" "$BRIEF" pr-manual-b3 proj --mode no-mistakes --pr manual --base-branch release/2 >/dev/null \
+  FM_HOME="$home" brief_fixture pr-manual-b3 proj --mode no-mistakes --pr manual --base-branch release/2 >/dev/null \
     || fail "a pr=manual brief with a base branch should scaffold"
   based="$home/data/pr-manual-b3/brief.md"
   # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
@@ -657,7 +776,7 @@ test_pr_manual_brief_hands_the_pr_text_to_the_worker() {
   assert_grep 'open the PR against it with `--base release/2`' "$based" "the worker was not told to open the PR against the base"
   assert_no_grep 'watches CI for that branch' "$based" "the pr=manual brief still claims the pipeline opens the PR and watches CI"
 
-  FM_HOME="$home" "$BRIEF" pr-manual-b2 proj --mode no-mistakes >/dev/null \
+  FM_HOME="$home" brief_fixture pr-manual-b2 proj --mode no-mistakes >/dev/null \
     || fail "a default no-mistakes brief should scaffold"
   plain="$home/data/pr-manual-b2/brief.md"
   grep -qx "Delivery contract: mode=no-mistakes" "$plain" \
@@ -674,12 +793,12 @@ test_pr_manual_is_refused_where_it_cannot_apply() {
     "--mode no-mistakes --forge gerrit --pr manual" "--mode no-mistakes --forge forgejo --pr manual" \
     "--mode no-mistakes --pr bogus" "--scout --pr manual"; do
     # shellcheck disable=SC2086 # The flags are a word list.
-    out=$(FM_HOME="$home" "$BRIEF" pr-manual-r1 proj $args 2>&1)
+    out=$(FM_HOME="$home" brief_fixture pr-manual-r1 proj $args 2>&1)
     status=$?
     [ "$status" -ne 0 ] || fail "fm-brief accepted $args"
     assert_absent "$home/data/pr-manual-r1/brief.md" "a refused scaffold ($args) still wrote a brief"
   done
-  out=$(FM_HOME="$home" "$BRIEF" pr-manual-r2 proj --mode direct-PR --pr manual 2>&1)
+  out=$(FM_HOME="$home" brief_fixture pr-manual-r2 proj --mode direct-PR --pr manual 2>&1)
   assert_contains "$out" "pr=manual ships mode=no-mistakes only" "the direct-PR refusal did not say why"
   pass "fm-brief: pr=manual is refused on direct-PR, local-only, a bound forge, an unknown value, and a scout"
 }
@@ -699,7 +818,7 @@ EOF
     "the refusal did not print a re-scaffold command that can actually run"
   assert_absent "$home/state/pr-manual-a1.meta" "the refused spawn still recorded a task"
 
-  FM_HOME="$home" "$BRIEF" pr-manual-a2 proj --mode no-mistakes --pr manual >/dev/null \
+  FM_HOME="$home" brief_fixture pr-manual-a2 proj --mode no-mistakes --pr manual >/dev/null \
     || fail "a pr=manual brief should scaffold"
   fill_brief_subsections "$home/data/pr-manual-a2/brief.md" "Open the PR by hand." "Ship it."
   out=$(run_spawn "$home" "$fakebin" pr-manual-a2 "$proj" claude --mode no-mistakes --yolo off 2>&1)
@@ -711,7 +830,7 @@ EOF
   IFS='|' read -r home proj fakebin <<EOF
 $rec
 EOF
-  FM_HOME="$home" "$BRIEF" pr-manual-a3 proj --mode no-mistakes --pr manual >/dev/null \
+  FM_HOME="$home" brief_fixture pr-manual-a3 proj --mode no-mistakes --pr manual >/dev/null \
     || fail "a pr=manual brief should scaffold"
   fill_brief_subsections "$home/data/pr-manual-a3/brief.md" "Open the PR by hand." "Ship it."
   out=$(run_spawn "$home" "$fakebin" pr-manual-a3 "$proj" claude --mode no-mistakes --yolo off 2>&1)
@@ -726,7 +845,7 @@ EOF
   IFS='|' read -r home proj fakebin <<EOF
 $rec
 EOF
-  FM_HOME="$home" "$BRIEF" pr-manual-a4 proj --mode direct-PR >/dev/null \
+  FM_HOME="$home" brief_fixture pr-manual-a4 proj --mode direct-PR >/dev/null \
     || fail "a direct-PR brief should scaffold"
   fill_brief_subsections "$home/data/pr-manual-a4/brief.md" "Open the PR." "Ship it."
   out=$(run_spawn "$home" "$fakebin" pr-manual-a4 "$proj" claude --mode direct-PR --yolo off 2>&1)
@@ -762,7 +881,7 @@ STUB
   id="pr-manual-p1"
   meta="$home/state/$id.meta"
   printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$home/projects/proj" > "$meta"
-  FM_HOME="$home" "$BRIEF" "$id" proj --scout >/dev/null 2>&1 \
+  FM_HOME="$home" brief_fixture "$id" proj --scout >/dev/null 2>&1 \
     || fail "scout brief generation should succeed"
   fill_brief_subsections "$home/data/$id/brief.md" "Fix what the investigation found." "Carry over only the fix."
 
@@ -780,7 +899,7 @@ STUB
     "the promoted worker was not told to skip the pr and ci steps"
 
   rm "$home/data/$id/brief.md"
-  FM_HOME="$home" "$BRIEF" "$id" proj --mode no-mistakes --pr manual >/dev/null 2>&1 \
+  FM_HOME="$home" brief_fixture "$id" proj --mode no-mistakes --pr manual >/dev/null 2>&1 \
     || fail "ordinary pr=manual ship brief generation should succeed"
   awk '/^# Definition of done$/ { emit=1 } emit' "$home/data/$id/brief.md" > "$TMP_ROOT/pr-manual-promote/brief-dod"
   awk '/^# Definition of done$/ { emit=1 } emit' "$payload" > "$TMP_ROOT/pr-manual-promote/delivered-dod"
@@ -793,7 +912,7 @@ STUB
   id="pr-manual-p2"
   meta="$home/state/$id.meta"
   printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$home/projects/proj" > "$meta"
-  FM_HOME="$home" "$BRIEF" "$id" proj --scout >/dev/null 2>&1 \
+  FM_HOME="$home" brief_fixture "$id" proj --scout >/dev/null 2>&1 \
     || fail "scout brief generation should succeed"
   fill_brief_subsections "$home/data/$id/brief.md" "Fix it." "Carry over only the fix."
   FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode direct-PR --yolo off >/dev/null 2>&1 \
@@ -812,7 +931,7 @@ $rec
 EOF
 
   id=delivery-unfilled-ship
-  FM_HOME="$home" "$BRIEF" "$id" proj --mode no-mistakes >/dev/null 2>&1 \
+  FM_HOME="$home" brief_fixture "$id" proj --mode no-mistakes >/dev/null 2>&1 \
     || fail "unfilled ship brief should still scaffold"
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
   status=$?
@@ -857,7 +976,7 @@ EOF
     "a brief carrying the Herdr isolation contract was refused"
 
   id=delivery-herdr-lab-scaffold
-  FM_HOME="$home" "$BRIEF" "$id" proj --mode direct-PR --herdr-lab >/dev/null 2>&1 \
+  FM_HOME="$home" brief_fixture "$id" proj --mode direct-PR --herdr-lab >/dev/null 2>&1 \
     || fail "herdr-lab ship brief should scaffold"
   fill_brief_subsections "$home/data/$id/brief.md" \
     "Reproduce the session restart in an isolated lab." \
@@ -867,7 +986,7 @@ EOF
     "a brief scaffolded with --herdr-lab was refused by the Herdr lifecycle guard"
 
   id=delivery-filled-ship
-  FM_HOME="$home" "$BRIEF" "$id" proj --mode direct-PR >/dev/null 2>&1 \
+  FM_HOME="$home" brief_fixture "$id" proj --mode direct-PR >/dev/null 2>&1 \
     || fail "filled-ship brief should scaffold"
   fill_brief_subsections "$home/data/$id/brief.md" \
     "Fix replacement of \`{TASK}\` in Herdr briefs." \
@@ -989,7 +1108,7 @@ EOF
   assert_absent "$home/state/$id.meta" "unmarked legacy no-mistakes spawn wrote task metadata"
 
   id=delivery-unfilled-scout
-  FM_HOME="$home" "$BRIEF" "$id" proj --scout >/dev/null 2>&1 \
+  FM_HOME="$home" brief_fixture "$id" proj --scout >/dev/null 2>&1 \
     || fail "unfilled scout brief should still scaffold"
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --scout)
   status=$?
@@ -999,7 +1118,7 @@ EOF
   assert_absent "$home/state/$id.meta" "unfilled scout spawn wrote task metadata"
 
   id=delivery-empty-ship
-  FM_HOME="$home" "$BRIEF" "$id" proj --mode direct-PR >/dev/null 2>&1 \
+  FM_HOME="$home" brief_fixture "$id" proj --mode direct-PR >/dev/null 2>&1 \
     || fail "empty-ship brief should scaffold"
   fill_brief_subsections "$home/data/$id/brief.md" "" ""
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
@@ -1013,7 +1132,7 @@ EOF
   meta="$home/state/$id.meta"
   mkdir -p "$home/state"
   printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
-  FM_HOME="$home" "$BRIEF" "$id" proj --scout >/dev/null 2>&1 \
+  FM_HOME="$home" brief_fixture "$id" proj --scout >/dev/null 2>&1 \
     || fail "unfilled promote scout brief should scaffold"
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode direct-PR --yolo on 2>&1)
   status=$?
@@ -1063,7 +1182,7 @@ EOF
   id=promote-filled-e2
   meta="$home/state/$id.meta"
   printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
-  FM_HOME="$home" "$BRIEF" "$id" proj --scout >/dev/null 2>&1 \
+  FM_HOME="$home" brief_fixture "$id" proj --scout >/dev/null 2>&1 \
     || fail "filled promote scout brief should scaffold"
   fill_brief_subsections "$home/data/$id/brief.md" \
     "Investigate why the identity check is failing." \
@@ -1176,7 +1295,7 @@ $rec
 EOF
   id='intent-plain'
   words=$(printf '%s\n' 'Keep the original request intact.' '' "Preserve its provenance, punctuation, and \`literal code\`.")
-  FM_HOME="$home" "$BRIEF" "$id" proj --mode no-mistakes >/dev/null 2>&1 \
+  FM_HOME="$home" brief_fixture "$id" proj --mode no-mistakes >/dev/null 2>&1 \
     || fail "intent brief should scaffold"
   fill_brief_subsections "$home/data/$id/brief.md" "$words" 'This build constraint must not become intent.'
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
@@ -1447,7 +1566,7 @@ test_forge_gerrit_refuses_yolo() {
   IFS='|' read -r home proj fakebin <<EOF
 $rec
 EOF
-  FM_HOME="$home" "$BRIEF" forge-yolo-s1 proj --mode no-mistakes --forge gerrit >/dev/null \
+  FM_HOME="$home" brief_fixture forge-yolo-s1 proj --mode no-mistakes --forge gerrit >/dev/null \
     || fail "a gerrit ship brief should scaffold"
   fill_brief_subsections "$home/data/forge-yolo-s1/brief.md" \
     "Run the review loop on the Gerrit project." "Ship the review pass."
@@ -1497,15 +1616,15 @@ test_forge_gerrit_changes_what_no_mistakes_means() {
   local home brief plain
   home="$TMP_ROOT/forge-dod/home"
   mkdir -p "$home/data" "$home/state"
-  FM_HOME="$home" "$BRIEF" forge-dod-g1 review-server-project --mode no-mistakes --forge gerrit >/dev/null \
+  FM_HOME="$home" brief_fixture forge-dod-g1 review-server-project --mode no-mistakes --forge gerrit >/dev/null \
     || fail "a gerrit no-mistakes brief should scaffold"
   brief="$home/data/forge-dod-g1/brief.md"
   grep -qx "Delivery contract: mode=no-mistakes forge=gerrit shape=squash" "$brief" \
     || fail "the brief did not record the machine-readable forge in its delivery contract"
   assert_grep 'validation-ready [at=<epoch>]: {summary}' "$brief" \
     "the Gerrit handoff did not use its own status word"
-  assert_grep 'Firstmate starts the validation run by instructing you to run /no-mistakes' "$brief" \
-    "the Gerrit handoff did not name who starts validation"
+  assert_grep 'then run /no-mistakes yourself' "$brief" \
+    "the Gerrit brief did not tell the worker to continue into validation"
   assert_no_grep 'done [at=<epoch>]: {summary}' "$brief" \
     "the Gerrit handoff still uses done"
 
@@ -1549,7 +1668,7 @@ test_forge_gerrit_changes_what_no_mistakes_means() {
     "the gerrit worker lost the ask-user escalation rule"
   # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
   assert_grep 'NEVER pass `--yes` (or `-y`)' "$brief" "the gerrit worker lost the --yes ban"
-  FM_HOME="$home" "$BRIEF" forge-dod-n1 other-project --mode no-mistakes >/dev/null \
+  FM_HOME="$home" brief_fixture forge-dod-n1 other-project --mode no-mistakes >/dev/null \
     || fail "a default-forge no-mistakes brief should scaffold"
   plain="$home/data/forge-dod-n1/brief.md"
   awk '/^You drive no-mistakes by responding to its gates/ { emit = 1 }
@@ -1601,14 +1720,14 @@ EOF
     "the refusal did not say to preserve the filled subsections the re-scaffold discards"
   assert_absent "$home/state/forge-agree-a1.meta" "the refused spawn still recorded a task"
 
-  FM_HOME="$home" "$BRIEF" forge-agree-a2 proj --mode direct-PR --forge gerrit >/dev/null \
+  FM_HOME="$home" brief_fixture forge-agree-a2 proj --mode direct-PR --forge gerrit >/dev/null \
     || fail "a gerrit direct-PR brief should scaffold"
   fill_brief_subsections "$home/data/forge-agree-a2/brief.md" "Publish the change." "Ship it."
   out=$(run_spawn "$home" "$fakebin" forge-agree-a2 "$proj" claude --mode direct-PR --yolo off 2>&1)
   assert_not_contains "$out" "forge mismatch" "a gerrit direct-PR brief was reported as drift"
   assert_not_contains "$out" "cannot ship" "direct-PR was refused on the forge it publishes to"
 
-  FM_HOME="$home" "$BRIEF" forge-agree-a3 proj --mode no-mistakes --forge gerrit >/dev/null \
+  FM_HOME="$home" brief_fixture forge-agree-a3 proj --mode no-mistakes --forge gerrit >/dev/null \
     || fail "a gerrit ship brief should scaffold"
   fill_brief_subsections "$home/data/forge-agree-a3/brief.md" "Run the review loop." "Ship it."
   out=$(run_spawn "$home" "$fakebin" forge-agree-a3 "$proj" claude --mode no-mistakes --yolo off 2>&1)
@@ -1617,7 +1736,7 @@ EOF
   # local-only publishes nothing and cannot carry the forge, so a bound project
   # has no local-only brief that agrees with its registry: landing one would
   # fast-forward local main with content the review server never saw.
-  FM_HOME="$home" "$BRIEF" forge-agree-a4 proj --mode local-only >/dev/null \
+  FM_HOME="$home" brief_fixture forge-agree-a4 proj --mode local-only >/dev/null \
     || fail "a local-only ship brief should scaffold without a forge"
   fill_brief_subsections "$home/data/forge-agree-a4/brief.md" "Land it locally." "Stop at a ready branch."
   out=$(run_spawn "$home" "$fakebin" forge-agree-a4 "$proj" claude --mode local-only --yolo off 2>&1)
@@ -1632,7 +1751,7 @@ EOF
   IFS='|' read -r home proj fakebin <<EOF
 $rec
 EOF
-  FM_HOME="$home" "$BRIEF" forge-agree-a5 proj --mode no-mistakes --forge gerrit >/dev/null \
+  FM_HOME="$home" brief_fixture forge-agree-a5 proj --mode no-mistakes --forge gerrit >/dev/null \
     || fail "a gerrit ship brief should scaffold"
   fill_brief_subsections "$home/data/forge-agree-a5/brief.md" "Run the review loop." "Ship it."
   out=$(run_spawn "$home" "$fakebin" forge-agree-a5 "$proj" claude --mode no-mistakes --yolo off 2>&1)
@@ -1660,7 +1779,7 @@ test_spawn_requires_the_brief_to_carry_the_selected_branch() {
 $rec
 EOF
 
-  FM_HOME="$home" "$BRIEF" branch-agree-a1 proj --mode no-mistakes --branch-prefix fix/ >/dev/null \
+  FM_HOME="$home" brief_fixture branch-agree-a1 proj --mode no-mistakes --branch-prefix fix/ >/dev/null \
     || fail "a fix/-prefixed brief should scaffold"
   fill_brief_subsections "$home/data/branch-agree-a1/brief.md" "Run the review loop." "Ship it."
   out=$(run_spawn "$home" "$fakebin" branch-agree-a1 "$proj" claude --mode no-mistakes --yolo off --branch-prefix contrib/)
@@ -1685,7 +1804,7 @@ EOF
     "the legacy default did not warn about the brief's missing ship branch"
   assert_not_contains "$out" "branch mismatch" "the legacy default was refused as drift"
 
-  FM_HOME="$home" "$BRIEF" branch-agree-a4 proj --mode no-mistakes --branch-prefix fix/ >/dev/null \
+  FM_HOME="$home" brief_fixture branch-agree-a4 proj --mode no-mistakes --branch-prefix fix/ >/dev/null \
     || fail "a second fix/-prefixed brief should scaffold"
   fill_brief_subsections "$home/data/branch-agree-a4/brief.md" "Run the review loop." "Ship it."
   out=$(run_spawn "$home" "$fakebin" branch-agree-a4 "$proj" claude --mode no-mistakes --yolo off --branch-prefix fix/)
@@ -1734,7 +1853,7 @@ EOF
   assert_contains "$out" "will read as firstmate-authored" \
     "the deviation notice did not name the cost of the drift"
 
-  FM_HOME="$home" "$BRIEF" prefix-dev-a2 proj --mode no-mistakes --branch-prefix fix/ >/dev/null \
+  FM_HOME="$home" brief_fixture prefix-dev-a2 proj --mode no-mistakes --branch-prefix fix/ >/dev/null \
     || fail "a fix/-prefixed brief should scaffold"
   fill_brief_subsections "$home/data/prefix-dev-a2/brief.md" "Run the review loop." "Ship it."
   out=$(run_spawn "$home" "$fakebin" prefix-dev-a2 "$proj" claude --mode no-mistakes --yolo off --branch-prefix fix/)
@@ -1788,7 +1907,7 @@ STUB
   id="forge-promote-g1"
   meta="$home/state/$id.meta"
   printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$home/projects/proj" > "$meta"
-  FM_HOME="$home" "$BRIEF" "$id" proj --scout >/dev/null 2>&1 \
+  FM_HOME="$home" brief_fixture "$id" proj --scout >/dev/null 2>&1 \
     || fail "scout brief generation should succeed"
   fill_brief_subsections "$home/data/$id/brief.md" \
     "Fix what the investigation found on the Gerrit project." "Carry over only the fix."
@@ -1814,7 +1933,7 @@ STUB
   # Both real generation paths must end in the same contract, as they do for every
   # mode: a promoted worker is never handed a weaker one than a briefed worker.
   rm "$home/data/$id/brief.md"
-  FM_HOME="$home" "$BRIEF" "$id" proj --mode no-mistakes --forge gerrit >/dev/null 2>&1 \
+  FM_HOME="$home" brief_fixture "$id" proj --mode no-mistakes --forge gerrit >/dev/null 2>&1 \
     || fail "ordinary gerrit ship brief generation should succeed"
   awk '/^# Definition of done$/ { emit=1 } emit' "$home/data/$id/brief.md" > "$TMP_ROOT/forge-promote/brief-dod"
   awk '/^# Definition of done$/ { emit=1 } emit' "$payload" > "$TMP_ROOT/forge-promote/delivered-dod"
@@ -1842,7 +1961,7 @@ EOF
     "the refusal did not print the forgejo re-scaffold command"
   assert_absent "$home/state/forge-forgejo-s1.meta" "the refused spawn still recorded a task"
 
-  FM_HOME="$home" "$BRIEF" forge-forgejo-s2 proj --mode direct-PR --forge forgejo >/dev/null \
+  FM_HOME="$home" brief_fixture forge-forgejo-s2 proj --mode direct-PR --forge forgejo >/dev/null \
     || fail "a forgejo direct-PR brief should scaffold"
   fill_brief_subsections "$home/data/forge-forgejo-s2/brief.md" "Open the pull request." "Ship it."
   out=$(run_spawn "$home" "$fakebin" forge-forgejo-s2 "$proj" claude --mode direct-PR --yolo on 2>&1)
@@ -1859,7 +1978,7 @@ STUB
   id="forge-forgejo-p1"
   meta="$home/state/$id.meta"
   printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$proj" > "$meta"
-  FM_HOME="$home" "$BRIEF" "$id" proj --scout >/dev/null 2>&1 \
+  FM_HOME="$home" brief_fixture "$id" proj --scout >/dev/null 2>&1 \
     || fail "scout brief generation should succeed"
   fill_brief_subsections "$home/data/$id/brief.md" "Fix what the investigation found." "Carry over only the fix."
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode direct-PR --yolo on 2>&1) \
@@ -1884,7 +2003,7 @@ test_forge_gerrit_direct_pr_publishes_one_change() {
   local home brief out status
   home="$TMP_ROOT/forge-direct/home"
   mkdir -p "$home/data" "$home/state"
-  FM_HOME="$home" "$BRIEF" forge-direct-g1 review-server-project --mode direct-PR --forge gerrit >/dev/null \
+  FM_HOME="$home" brief_fixture forge-direct-g1 review-server-project --mode direct-PR --forge gerrit >/dev/null \
     || fail "a gerrit direct-PR brief should scaffold"
   brief="$home/data/forge-direct-g1/brief.md"
   grep -qx "Delivery contract: mode=direct-PR forge=gerrit shape=squash" "$brief" \
@@ -1908,16 +2027,16 @@ test_forge_gerrit_direct_pr_publishes_one_change() {
 
   # A stack is several changes and the merge watch follows one, so the shape is
   # refused with that reason until pinned-membership watching exists.
-  out=$(FM_HOME="$home" "$BRIEF" forge-direct-g2 review-server-project --mode direct-PR --forge gerrit --shape stack 2>&1)
+  out=$(FM_HOME="$home" brief_fixture forge-direct-g2 review-server-project --mode direct-PR --forge gerrit --shape stack 2>&1)
   status=$?
   [ "$status" -ne 0 ] || fail "a stack-shaped gerrit brief scaffolded"
   assert_contains "$out" "--shape stack is refused" "the stack refusal did not name the refused shape"
   assert_contains "$out" "pinned when its watch is armed" "the stack refusal did not carry its reason"
   assert_absent "$home/data/forge-direct-g2/brief.md" "the refused stack brief was still written"
-  out=$(FM_HOME="$home" "$BRIEF" forge-direct-g3 review-server-project --mode direct-PR --shape squash 2>&1)
+  out=$(FM_HOME="$home" brief_fixture forge-direct-g3 review-server-project --mode direct-PR --shape squash 2>&1)
   status=$?
   [ "$status" -ne 0 ] || fail "a shape was accepted without a forge that publishes changes"
-  out=$(FM_HOME="$home" "$BRIEF" forge-direct-g4 review-server-project --mode local-only --forge gerrit 2>&1)
+  out=$(FM_HOME="$home" brief_fixture forge-direct-g4 review-server-project --mode local-only --forge gerrit 2>&1)
   status=$?
   [ "$status" -ne 0 ] || fail "a local-only brief accepted a forge"
   assert_contains "$out" "cannot ship mode=local-only" "the local-only refusal did not name the mode"
@@ -1983,9 +2102,12 @@ EOF
 test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
-test_spawn_notices_a_rigor_downgrade_against_the_registry
+test_spawn_requires_reason_for_rigor_downgrade
+test_spawn_refuses_a_multiline_mode_reason_outside_a_downgrade
 test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract
+test_promote_requires_reason_for_rigor_downgrade
+test_promote_refuses_a_multiline_mode_reason_outside_a_downgrade
 test_promote_names_origin_for_a_publishing_mode_in_an_opted_in_home
 test_promote_refuses_a_symlinked_task_record
 test_promotion_delivers_the_real_definition_of_done

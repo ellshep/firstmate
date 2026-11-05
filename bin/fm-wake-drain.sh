@@ -50,6 +50,8 @@ ACK_FINGERPRINTS=
 ACK_NOTICE_FINGERPRINTS=
 PRESENTATION_LOCK_TIMEOUT=${FM_STATUS_PRESENTATION_LOCK_TIMEOUT:-10}
 BRANCH_OUTCOMES_RC=0
+OPEN_DECISIONS_CANDIDATE=
+OPEN_DECISIONS_CLEAR=0
 case "$PRESENTATION_LOCK_TIMEOUT" in ''|*[!0-9]*|0) PRESENTATION_LOCK_TIMEOUT=10 ;; esac
 
 # --- per-actor consume (docs/watcher-continuity.md "Per-actor acknowledgement") --
@@ -468,18 +470,29 @@ EOF
 # appended to each task's status log since the LAST drain, not that log's whole
 # lifetime, while still never dropping an old buried decision (see
 # fm-classify-lib.sh's "incremental (cursor-backed) open-decisions fold").
-# Bounded and silent: prints nothing when no decision is open, which is the
-# common case.
+# Prints a changed open set in full within the existing byte cap, then only a
+# count and status-log pointer while that set remains unchanged. No open
+# decision prints nothing, which is the common case.
 print_open_decisions_section() {
   local snapshot=${1:-} open task key verb note line item_bytes=220 global_bytes=4000
-  local output='' used=0 shown=0 omitted=0 bytes
+  local output='' used=0 shown=0 omitted=0 bytes count=0 cache="$STATE/.open-decisions-presented-$ACTOR" tmp
 
   if [ -n "$snapshot" ]; then
     open=$(scan_open_decisions_snapshot "$STATE" "$snapshot") || return 1
   else
     open=$(scan_open_decisions_incremental "$STATE") || return 1
   fi
-  [ -n "$open" ] || return 0
+  if [ -z "$open" ]; then
+    OPEN_DECISIONS_CLEAR=1
+    return 0
+  fi
+
+  count=$(printf '%s\n' "$open" | awk 'NF { n++ } END { print n+0 }')
+  if [ -f "$cache" ] && [ "$(cat "$cache" 2>/dev/null)" = "$open" ]; then
+    printf 'OPEN DECISIONS: %s open, unchanged since %s; full records in %s/*.status.\n' \
+      "$count" "$(date -r "$cache" '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || printf 'last presentation')" "$STATE"
+    return 0
+  fi
 
   while IFS=$(printf '\t') read -r task key verb note; do
     [ -n "$task" ] || continue
@@ -514,7 +527,7 @@ EOF
   printf 'OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):\n' || return 1
   printf '%s' "$output" || return 1
   if [ "$omitted" -gt 0 ]; then
-    printf 'OPEN DECISIONS: %d more omitted (byte cap)\n' "$omitted" || return 1
+    printf 'OPEN DECISIONS: %d more omitted (byte cap); full records in %s/*.status\n' "$omitted" "$STATE" || return 1
   fi
   # Answerer-closes hint, printed at exactly the moment an answer gets written:
   # the send that answers a listed decision also closes it, so closure never
@@ -522,6 +535,13 @@ EOF
   # bin/fm-send.sh header).
   printf "OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'\n" || return 1
   printf 'OPEN DECISIONS: <key> is the [key=...] printed before the verb; a token inside a note is prose, not a key.\n' || return 1
+  # An omitted item has not been presented; keep the full view eligible for
+  # the next drain instead of marking that hidden decision unchanged.
+  if [ "$omitted" -eq 0 ]; then
+    tmp=$(mktemp "$STATE/.open-decisions-presented.XXXXXX") || return 1
+    printf '%s\n' "$open" > "$tmp" || return 1
+    OPEN_DECISIONS_CANDIDATE=$tmp
+  fi
 }
 
 # Print the RECORD DIVERGENCE section: every captain call whose two records
@@ -773,6 +793,7 @@ print_status_sections() {
       && print_record_divergence_section
   } > "$prepared"; then
     rm -f -- "$prepared"
+    [ -z "$OPEN_DECISIONS_CANDIDATE" ] || rm -f -- "$OPEN_DECISIONS_CANDIDATE"
     return 1
   fi
   # Prepare every section before presentation, but do not commit its receipt
@@ -780,11 +801,19 @@ print_status_sections() {
   # leave the receipt behind so the next drain can recover the presentation.
   if ! command cat "$prepared"; then
     rm -f -- "$prepared"
+    [ -z "$OPEN_DECISIONS_CANDIDATE" ] || rm -f -- "$OPEN_DECISIONS_CANDIDATE"
     return 1
   fi
   if ! status_commit_presentation_snapshot "$STATE" "$acknowledged"; then
     rm -f -- "$prepared"
+    [ -z "$OPEN_DECISIONS_CANDIDATE" ] || rm -f -- "$OPEN_DECISIONS_CANDIDATE"
     return 1
+  fi
+  if [ -n "$OPEN_DECISIONS_CANDIDATE" ]; then
+    mv -f "$OPEN_DECISIONS_CANDIDATE" "$STATE/.open-decisions-presented-$ACTOR" || return 1
+    OPEN_DECISIONS_CANDIDATE=
+  elif [ "$OPEN_DECISIONS_CLEAR" -eq 1 ]; then
+    rm -f -- "$STATE/.open-decisions-presented-$ACTOR"
   fi
   rm -f -- "$prepared"
 }

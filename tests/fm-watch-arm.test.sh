@@ -444,16 +444,19 @@ test_rearm_resurfaces_durable_queue_and_remote_open_decision() {
     || fail "re-arm did not report the durable recovery wake: $(cat "$armout")"
 
   # The normal wake-handling drain is the one owner of both queue consumption
-  # and the cursor-backed fold. It must expose every queued record and the
-  # already-open remote decision without relying on another user message.
+  # and the cursor-backed fold. It must expose every queued record; the
+  # already-open remote decision is unchanged since the baseline drain already
+  # presented it in full, so this drain collapses it to the one-line summary
+  # (the same contract tests/fm-wake-drain-unread-status.test.sh's
+  # test_open_decisions_collapse_until_changed covers directly).
   FM_HOME="$home" FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drainout" \
     || fail "drain after re-arm recovery failed"
   grep "$(printf '\tcheck\tremote-reply-ios\t')" "$drainout" >/dev/null \
     || fail "remote-reply wake queued during downtime was not drained"
   grep "$(printf '\tcheck\tstartup-network\t')" "$drainout" >/dev/null \
     || fail "second durable wake queued during downtime was not drained"
-  grep -F 'ios [key=remote-signoff] needs-decision: remote secondmate is held for captain sign-off' "$drainout" >/dev/null \
-    || fail "remote parent-reply decision was not re-folded after watcher re-arm"
+  grep -F '1 open, unchanged since' "$drainout" >/dev/null \
+    || fail "remote parent-reply decision did not collapse to the unchanged summary after watcher re-arm"
   ack_wakes "$state" || fail "recovery handling acknowledgement failed"
   [ ! -s "$state/.wake-queue" ] || fail "re-arm recovery acknowledgement left durable wakes behind"
 
@@ -464,7 +467,7 @@ test_rearm_resurfaces_durable_queue_and_remote_open_decision() {
   is_live_non_zombie "$ARM_PID" || fail "recovery successor did not stay live after the drain"
 
   # A later down interval can have no new queue rows at all. The unchanged
-  # remote decision must still trigger a recovery wake and be folded again.
+  # remote decision must still trigger a recovery wake and remain counted as open.
   kill "$ARM_PID" 2>/dev/null || true
   wait "$ARM_PID" 2>/dev/null || true
   start_rearm_arm "$home" "$state" "$fakebin" "$dir/decision-only-arm.out"
@@ -475,9 +478,8 @@ test_rearm_resurfaces_durable_queue_and_remote_open_decision() {
   decision_successor=$ARM_PID
   FM_HOME="$home" FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/decision-only-drain.out" \
     2> "$dir/decision-only-drain.err" || fail "decision-only drain after re-arm recovery failed"
-  grep -F 'ios [key=remote-signoff] needs-decision: remote secondmate is held for captain sign-off' \
-    "$dir/decision-only-drain.out" >/dev/null \
-    || fail "unchanged remote decision was not re-folded after a later down interval"
+  grep -F 'OPEN DECISIONS: 1 open, unchanged since' "$dir/decision-only-drain.out" >/dev/null \
+    || fail "unchanged remote decision was not counted after a later down interval"
   sequence=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation [A-Za-z0-9._-][A-Za-z0-9._-]*$/\1/p' "$dir/decision-only-drain.err")
   generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through [0-9][0-9]* --recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$dir/decision-only-drain.err")
   [ "$sequence" = 0 ] && [ -n "$generation" ] \
@@ -495,9 +497,8 @@ test_rearm_resurfaces_durable_queue_and_remote_open_decision() {
     || fail "successor did not re-surface the unacknowledged decision recovery"
   FM_HOME="$home" FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/replayed-decision-drain.out" \
     2> "$dir/replayed-decision-drain.err" || fail "replayed decision recovery drain failed"
-  grep -F 'ios [key=remote-signoff] needs-decision: remote secondmate is held for captain sign-off' \
-    "$dir/replayed-decision-drain.out" >/dev/null \
-    || fail "interrupted decision recovery did not re-fold the open decision"
+  grep -F 'OPEN DECISIONS: 1 open, unchanged since' "$dir/replayed-decision-drain.out" >/dev/null \
+    || fail "interrupted decision recovery did not count the open decision"
   sequence=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation [A-Za-z0-9._-][A-Za-z0-9._-]*$/\1/p' "$dir/replayed-decision-drain.err")
   generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through [0-9][0-9]* --recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$dir/replayed-decision-drain.err")
   [ "$sequence" = 0 ] && [ -n "$generation" ] \
@@ -947,7 +948,7 @@ test_append_wakes_live_announced_watcher() {
 test_append_wakes_handling_successor() {
   local phase=$1 seq_state=${2:-intact} repeat=${3:-fresh}
   local dir home state fakebin predecessor successor generation watcher_pid pair sequence
-  local new_key=inbox:second new_payload='check: captain inbox note second' datebin real_date inherited_row
+  local new_key=inbox:second new_payload='check: captain inbox note second' datebin real_date inherited_row inherited_epoch
   dir=$(make_case "append-handling-$phase-$seq_state-$repeat")
   home="$dir/home"
   state="$dir/state"
@@ -990,10 +991,11 @@ test_append_wakes_handling_successor() {
     datebin="$dir/datebin"
     mkdir -p "$datebin"
     real_date=$(command -v date)
+    inherited_epoch=${inherited_row%%$'\t'*}
     cat > "$datebin/date" <<SH
 #!/usr/bin/env bash
 if [ "\${1:-}" = +%s ]; then
-  printf '%s\n' "${inherited_row%%$'\t'*}"
+  printf '%s\n' "$inherited_epoch"
 else
   exec "$real_date" "\$@"
 fi
