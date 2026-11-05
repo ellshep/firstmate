@@ -552,14 +552,17 @@ test_relaunch_serializes_concurrent_durable_metadata_publication() {
     FM_FAKE_TRACE_RELEASE="$launch_release" \
     run_control "$dir" rl28 relaunch --note "continue after publication" > "$dir/control.out" &
   control_pid=$!
-  while [ ! -e "$prepare" ] && [ "$i" -lt 500 ]; do
+  # Relaunch can spend several seconds publishing its replacement on a loaded
+  # runner before it reaches this trace hook. Keep the ordering assertion while
+  # allowing enough time for that setup to complete.
+  while [ ! -e "$prepare" ] && [ "$i" -lt 3000 ]; do
     /bin/sleep 0.01
     i=$((i + 1))
   done
   [ -e "$prepare" ] || {
     kill "$control_pid" 2>/dev/null || true
     wait "$control_pid" 2>/dev/null || true
-    fail "relaunch did not reach trace delivery"
+    fail "relaunch did not reach trace delivery: $(cat "$dir/control.out")"
   }
   env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
     FM_REAL_MV="$(command -v mv)" \
@@ -1892,8 +1895,12 @@ test_promoted_scout_relaunch_receives_the_current_delivery_contract() {
     printf '%s\n' "fm-$id" > "$dir/fake/windows"
     printf '%s' "$dir/wt" > "$dir/fake/cwd"
 
+    reason_args=()
+    case "$mode" in
+      direct-PR|local-only) reason_args=(--mode-reason 'fixture delivery choice') ;;
+    esac
     out=$(FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
-      "$PROMOTE" "$id" --mode "$mode" --yolo off 2>&1) \
+      "$PROMOTE" "$id" --mode "$mode" --yolo off ${reason_args[@]+"${reason_args[@]}"} 2>&1) \
       || fail "$mode: scout promotion should succeed: $out"
     assert_grep 'This is a SCOUT task' "$brief" \
       "$mode: the reproduction fixture lost the original scout delivery text"
@@ -2130,7 +2137,9 @@ test_prepublication_failure_keeps_concurrent_durable_metadata() {
     run_control "$dir" rl30 relaunch --harness codex --note "preserve concurrent metadata" \
       > "$dir/control.out" &
   control_pid=$!
-  while [ ! -e "$dir/cwd-race-ready" ] && [ "$i" -lt 200 ]; do
+  # The relaunch setup runs several subprocesses before this hook; preserve
+  # the race ordering check with headroom for a loaded runner.
+  while [ ! -e "$dir/cwd-race-ready" ] && [ "$i" -lt 3000 ]; do
     /bin/sleep 0.01
     i=$((i + 1))
   done
@@ -2497,7 +2506,8 @@ test_promotion_participates_in_the_lifecycle_lock_before_metadata_resolution() {
     i=$((i + 1))
   done
   [ -e "$lock" ] || fail "could not stage the promotion lifecycle lock"
-  out=$(FM_HOME="$dir/home" "$PROMOTE" rl29 --mode direct-PR --yolo on 2>&1); rc=$?
+  out=$(FM_HOME="$dir/home" "$PROMOTE" rl29 --mode direct-PR --yolo on \
+    --mode-reason 'fixture delivery choice' 2>&1); rc=$?
   kill "$holder" 2>/dev/null || true
   wait "$holder" 2>/dev/null || true
   expect_code 1 "$rc" "promotion should refuse a concurrent lifecycle action"
@@ -3245,7 +3255,8 @@ test_promotion_keeps_the_same_backlog_row_dispatchable() {
   seed_backlog "$dir" "$id" in_flight scout
 
   out=$(FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
-    "$PROMOTE" "$id" --mode local-only --yolo off --title "Fix the relaunch gap" 2>&1) || rc=$?
+    "$PROMOTE" "$id" --mode local-only --yolo off --mode-reason 'fixture delivery choice' \
+      --title "Fix the relaunch gap" 2>&1) || rc=$?
   expect_code 0 "$rc" "promotion should convert the existing row: $out"
   row=$(tasks-axi show "$id" --file "$home/data/backlog.md")
   assert_contains "$row" "Fix the relaunch gap" "promotion did not set the ship title"

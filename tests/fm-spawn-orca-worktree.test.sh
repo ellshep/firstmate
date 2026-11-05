@@ -295,7 +295,7 @@ EOF
       FM_TEST_ORCA_SEND_FAIL="$([ "$setting" = sendfail ] && echo 1 || echo 0)" \
       FM_TEST_ORCA_CONSUME=1 \
       PATH="$fb:$PATH" "$SPAWN" "$id" "$case_dir/project" \
-      --mode direct-PR --yolo off --backend orca --harness "/bin/sh '$case_dir/probe.sh' '$case_dir/stage-path'" 2>&1)
+      --mode direct-PR --yolo off --mode-reason 'fixture delivery choice' --backend orca --harness "/bin/sh '$case_dir/probe.sh' '$case_dir/stage-path'" 2>&1)
     status=$?
     if [ "$setting" = absent ] || [ "$setting" = unavailable ] || [ "$setting" = malformed ] || [ "$setting" = nonregular ] || [ "$setting" = missing ]; then
       expect_code 1 "$status" "unavailable source must refuse: $out"
@@ -603,7 +603,7 @@ EOF
         FM_TEST_ORCA_LOG="$case_dir/terminal.log" \
         FM_TEST_ORCA_HOLD_TEXT="$([ "$phase" = enter ] && echo 1 || echo 0)" \
         PATH="$fb:$PATH" python3 -c 'import os,signal,sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' \
-        "$SPAWN" "$id" "$case_dir/project" --mode direct-PR --yolo off --backend orca \
+        "$SPAWN" "$id" "$case_dir/project" --mode direct-PR --yolo off --mode-reason 'fixture delivery choice' --backend orca \
         --harness "touch '$case_dir/worker-ran'" > "$case_dir/spawn.log" 2>&1 &
       pid=$!
       for ((i = 0; i < 300; i++)); do
@@ -697,7 +697,7 @@ SH
       FM_SPAWN_NO_GUARD=1 FM_TEST_ORCA_DIR="$case_dir" \
       FM_TEST_ORCA_LOG="$case_dir/terminal.log" \
       PATH="$fb:$PATH" python3 -c 'import os,signal,sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' \
-      "$SPAWN" "$id" "$case_dir/project" --mode direct-PR --yolo off --backend orca \
+      "$SPAWN" "$id" "$case_dir/project" --mode direct-PR --yolo off --mode-reason 'fixture delivery choice' --backend orca \
       --harness "touch '$case_dir/worker-ran'" > "$case_dir/spawn.log" 2>&1 &
     pid=$!
     for ((i = 0; i < 300; i++)); do

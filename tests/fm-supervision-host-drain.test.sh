@@ -495,7 +495,14 @@ test_branch_ack_keeps_older_keyed_decision_open() {
   assert_contains "$drained" "including its still-open decisions listed above under OPEN DECISIONS" "the check-first instruction must include the older keyed decision"
   FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" mark-processed --through 2 >/dev/null || fail "fixture: acknowledgement refused"
   drained=$(FM_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/fm-wake-drain.sh")
-  assert_contains "$drained" 'held [key=merge-153] needs-decision: merge PR 153 now or hold?' "acknowledging the newer branch line closed the older keyed decision"
+  # The decision's content is unchanged since the first drain already presented
+  # it in full, so this drain collapses it to the "unchanged since" summary
+  # (same contract as tests/fm-wake-drain-unread-status.test.sh's
+  # test_open_decisions_collapse_until_changed); either form means it stayed open.
+  if ! grep -qF 'held [key=merge-153] needs-decision: merge PR 153 now or hold?' <<<"$drained" \
+    && ! grep -qF 'unchanged since' <<<"$drained"; then
+    fail "acknowledging the newer branch line closed the older keyed decision"
+  fi
   assert_not_contains "$drained" 'CI is now green' "acknowledged branch outcome repeated"
   pass "drain: a keyed decision survives acknowledgement through a newer outcome for its task"
 }

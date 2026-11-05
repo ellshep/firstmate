@@ -275,7 +275,7 @@ for a in "$@"; do
     --no-projects) NO_PROJECTS=1 ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
-    --mode-reason) want_value=mode-reason ;;
+    --mode-reason) want_value="mode-reason" ;;
     --mode-reason=*) MODE_REASON=${a#--mode-reason=} ;;
     --branch-prefix) want_value="branch-prefix" ;;
     --branch-prefix=*) BRANCH_PREFIX=${a#--branch-prefix=}; BRANCH_PREFIX_SET=1 ;;

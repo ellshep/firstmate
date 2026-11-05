@@ -77,7 +77,8 @@ in_home() {  # <command...>: run one real script against the case home
 # Spawn, write status lines, poll once, land locally, clean up.
 run_lifecycle() {
   local out
-  out=$(in_home "$ROOT/bin/fm-spawn.sh" "$TASK" "$PROJ_DIR" --mode local-only --yolo off 2>&1) \
+  out=$(in_home "$ROOT/bin/fm-spawn.sh" "$TASK" "$PROJ_DIR" --mode local-only --yolo off \
+    --mode-reason 'fixture delivery choice' 2>&1) \
     || fail "spawn failed: $out"
   {
     printf 'working [at=1790000000]: setup done\n'
@@ -157,7 +158,8 @@ test_flag_on_records_a_pr_registration() {
   # An unreadable forge answer: no draft refusal and no recorded head.
   printf '#!/usr/bin/env bash\nexit 1\n' > "$FAKEBIN/gh"
   chmod +x "$FAKEBIN/gh"
-  out=$(in_home "$ROOT/bin/fm-spawn.sh" "$TASK" "$PROJ_DIR" --mode direct-PR --yolo off 2>&1) \
+  out=$(in_home "$ROOT/bin/fm-spawn.sh" "$TASK" "$PROJ_DIR" --mode direct-PR --yolo off \
+    --mode-reason 'fixture delivery choice' 2>&1) \
     || fail "spawn failed: $out"
   printf 'done: PR %s\n' "$pr_url" >> "$HOME_DIR/state/$TASK.status"
   out=$(in_home "$ROOT/bin/fm-pr-check.sh" "$TASK" "$pr_url" 2>&1) || fail "PR registration failed: $out"

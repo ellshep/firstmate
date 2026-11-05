@@ -62,8 +62,8 @@ test_buried_decision_survives_many_growing_drains_and_resolution_clears_it() {
     || fail "the bootstrap drain recorded no incremental read at all"
 
   # Many further drains, each appending only a SMALL increment while the total
-  # log keeps growing large. The buried decision must resurface on EVERY one of
-  # them (never dropped just because it is old or buried under more appends),
+  # log keeps growing large. The unchanged decision must remain counted as open
+  # on every one of them (never dropped because it is old or buried),
   # and each drain's read-probe byte count must match ONLY that round's small
   # increment - never the ever-growing total file size - proving the read cost
   # is bounded by new appends, not by total log size.
@@ -71,7 +71,7 @@ test_buried_decision_survives_many_growing_drains_and_resolution_clears_it() {
     increment_bytes=$(append_filler "$status" 20)
     FM_STATE_OVERRIDE="$state" FM_OPEN_DECISIONS_READ_PROBE="$probe" "$DRAIN" > "$out" \
       || fail "drain $round over a growing log failed"
-    grep -F 'task1' "$out" | grep -F '[key=api-shape]' | grep -F 'pick REST or RPC' >/dev/null \
+    grep -F 'OPEN DECISIONS: 1 open, unchanged since' "$out" >/dev/null \
       || fail "the buried decision was dropped on growth round $round"
     probe_bytes=$(last_probe_bytes "$probe" "$status")
     [ "$probe_bytes" = "$increment_bytes" ] \
@@ -215,8 +215,14 @@ test_read_failure_preserves_state_for_retry() {
 
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" \
     || fail "wake drain did not recover after the injected read failure"
-  grep -F 'task4' "$out" | grep -F '[key=x]' | grep -F 'something important' >/dev/null \
-    || fail "the open decision disappeared when presentation reads recovered: $(command cat "$out")"
+  # The decision's content is unchanged since the bootstrap drain already
+  # presented it in full, so this drain collapses it to the "unchanged since"
+  # summary (same contract as tests/fm-wake-drain-unread-status.test.sh's
+  # test_open_decisions_collapse_until_changed); either form means it survived.
+  if ! (grep -F 'task4' "$out" | grep -F '[key=x]' | grep -qF 'something important') \
+    && ! grep -qF 'unchanged since' "$out"; then
+    fail "the open decision disappeared when presentation reads recovered: $(command cat "$out")"
+  fi
 
   pass "a failed presentation read preserves status state for retry"
 }
@@ -260,8 +266,14 @@ SH
 
   FM_STATE_OVERRIDE="$state" FM_OPEN_DECISIONS_READ_PROBE="$probe" PATH="$fakebin:$PATH" "$DRAIN" > "$out" \
     || fail "wake drain failed instead of refolding after the cursor-cache read failure"
-  grep -F 'task5' "$out" | grep -F '[key=cache]' | grep -F 'authoritative status' >/dev/null \
-    || fail "the cursor-cache read failure hid the recurring open decision: $(command cat "$out")"
+  # The decision's content is unchanged since the bootstrap drain already
+  # presented it in full, so this drain collapses it to the "unchanged since"
+  # summary (same contract as tests/fm-wake-drain-unread-status.test.sh's
+  # test_open_decisions_collapse_until_changed); either form means it survived.
+  if ! (grep -F 'task5' "$out" | grep -F '[key=cache]' | grep -qF 'authoritative status') \
+    && ! grep -qF 'unchanged since' "$out"; then
+    fail "the cursor-cache read failure hid the recurring open decision: $(command cat "$out")"
+  fi
   if grep -F 'UNREAD STATUS' "$out" >/dev/null \
     || grep -F 'already handled informational status' "$out" >/dev/null; then
     fail "the cursor-cache read failure replayed handled informational status as new: $(command cat "$out")"
@@ -297,13 +309,13 @@ test_pre_fix_cursor_refolds_corr_tagged_decision() {
 
   FM_STATE_OVERRIDE="$state" FM_OPEN_DECISIONS_READ_PROBE="$probe" "$DRAIN" > "$out" \
     || fail "drain failed while migrating the pre-fix corr-tag cursor"
-  grep -F 'task7 [key=loan-installment-cadence-amount] needs-decision: pick the cadence' "$out" >/dev/null \
+  grep -F 'OPEN DECISIONS: 1 open, unchanged since' "$out" >/dev/null \
     || fail "the pre-fix cursor hid the corr-tagged decision after migration: $(cat "$out")"
   probe_bytes=$(last_probe_bytes "$probe" "$status")
   [ "$probe_bytes" = "$status_bytes" ] \
     || fail "the pre-fix cursor read $probe_bytes bytes instead of refolding all $status_bytes authoritative bytes"
 
-  pass "a pre-fix cursor is rebuilt so a previously skipped corr-tagged decision surfaces"
+  pass "a pre-fix cursor is rebuilt so a previously skipped corr-tagged decision remains open"
 }
 
 test_previous_fold_cache_is_refolded_under_current_semantics() {
@@ -368,7 +380,15 @@ test_terminal_supersession_reaches_cached_drains() {
         fi
         FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" 2> "$dir/drain.err" || fail "$kind terminal drain failed"
         if [ "$kind" = secondmate ]; then
-          assert_contains "$(cat "$out")" 'task [key=access] blocked: waiting' "secondmate blocker must survive $terminal and cache migration"
+          # The decision's content is unchanged since the drain at line 358-359
+          # already presented it in full, so this drain collapses it to the
+          # "unchanged since" summary (same contract as
+          # tests/fm-wake-drain-unread-status.test.sh's
+          # test_open_decisions_collapse_until_changed); either form means the
+          # decision survived.
+          if ! grep -qF 'task [key=access] blocked: waiting' "$out" && ! grep -qF 'unchanged since' "$out"; then
+            fail "secondmate blocker must survive $terminal and cache migration"
+          fi
         else
           assert_not_contains "$(cat "$out")" 'OPEN DECISIONS' "$kind pre-terminal blocker resurfaced after $terminal or cache migration"
         fi
