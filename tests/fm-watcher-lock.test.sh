@@ -1447,18 +1447,12 @@ test_watcher_exits_on_state_teardown_during_startup() {
     [ -e "$state/.watch.lock/watcher-path" ] && kill -STOP "$pid" 2>/dev/null && { stopped=1; break; }
   done
   [ "$stopped" -eq 1 ] || fail "watcher never finished claiming its lock: $(cat "$out")"
-  # The watcher's first loop iteration can detach a side-band helper (e.g. the
-  # home-summary refresh) before kill -STOP above takes effect; that helper is
-  # a separate process so the STOP does not pause it, and it can still be
-  # writing into $state here. Retry the removal until it actually succeeds
-  # instead of recreating a directory that still holds leftover lock evidence.
-  i=0
-  while ! rm -rf "$state" 2>/dev/null && [ "$i" -lt 100 ]; do
-    sleep 0.1
-    i=$((i + 1))
-  done
-  [ -e "$state" ] && fail "could not tear down the state directory (left behind by a detached helper)"
-  mkdir -p "$state"
+  # Stopping the watcher shell does not stop its already-forked helpers.
+  # Atomically detach the old directory instead of racing their writes with
+  # recursive deletion. Retain it until fixture cleanup so its inode cannot
+  # be reused for the replacement and mistaken for a successor's release.
+  mv "$state" "$dir/retired-state" || fail "could not detach startup state"
+  mkdir -p "$state" || fail "could not recreate startup state"
   kill -CONT "$pid" 2>/dev/null || true
   # wait_for_exit returns the watcher's own status, or TERMs a watcher that
   # kept running in the torn-down directory.
