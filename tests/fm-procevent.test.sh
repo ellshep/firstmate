@@ -826,6 +826,12 @@ assert_contains "$(cat "$MULTI_ROOT/firstmate-arm.err")" "owned by task worker-1
 list_out=$(FM_HOME="$HMULTI" "$ROOT/bin/fm-procevent.sh" list)
 assert_contains "$list_out" "task:worker-1/listening" \
   "arm did not leave the worker-owned board with a live listener"
+owner_status=$(pe "$HMULTI" task-lavish-status worker-1)
+[ "$owner_status" = active ] \
+  || fail "task-lavish-status did not report the listening owner's board as active: $owner_status"
+sibling_status=$(pe "$HMULTI" task-lavish-status worker-2)
+[ -z "$sibling_status" ] \
+  || fail "task-lavish-status reported a board for a task that owns none: $sibling_status"
 PATH="$MULTI_BIN:$PATH" LAVISH_AXI_HOST=recovery.example LAVISH_AXI_PORT=34387 FM_HOME="$HMULTI" \
   pe "$HMULTI" start "$multi_id" > "$MULTI_ROOT/run1" 2>&1 &
 MULTI_RUN=$!
@@ -955,6 +961,9 @@ PATH="$MULTI_BIN:$PATH" pe "$HMULTI" handled "$multi_id" 3 >/dev/null
   || fail "the owner's acknowledgement of the terminal round was not recorded"
 [ ! -e "$HMULTI/state/procevent/$multi_id.source" ] \
   || fail "acknowledging the terminal round did not retire the worker-owned board"
+retired_status=$(pe "$HMULTI" task-lavish-status worker-1)
+[ -z "$retired_status" ] \
+  || fail "task-lavish-status reported a board for a task whose board was retired: $retired_status"
 PATH="$MULTI_BIN:$PATH" pe "$HMULTI" reconcile >/dev/null 2>&1 || true
 [ "$(cat "$MULTI_ROOT/count")" = 3 ] \
   || fail "the concluded board was polled again: $(cat "$MULTI_ROOT/count") polls"
