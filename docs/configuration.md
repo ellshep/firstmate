@@ -3016,6 +3016,12 @@ The Lavish version floors and feature probe are owned by `bin/fm-bootstrap.sh`.
 - The cross-home gap between worker rounds remains an accepted residual until lavish-axi's exclusive listener lands.
 - The interim crew instruction emitted by `bin/fm-brief.sh` points workers at this arm-and-acknowledge contract.
 
+**Teardown preserves an unsaved board and waits on an open one**
+
+- A non-forced teardown of any task kind except `secondmate` refuses while the worktree's untracked or ignored `.lavish/` holds an HTML board whose files, including assets and generators, are not already an identical copy under `data/<task-id>/boards/` (`cp -R .lavish/. data/<task-id>/boards/`); `--force` keeps its explicit discard behavior.
+- The same teardown refuses while that task's own Lavish process-event source is listening or has an unacknowledged round, and refuses a merely registered (dead) source while the captain still owes an answer - either the task's own backlog item is held, or a `decision_keys=` entry in its metadata names a decision still open through `bin/fm-captain-hold.sh open`.
+- `bin/fm-procevent.sh task-lavish-status <task-id>` is the read-only, task-scoped query behind this guard: it filters registered sources by `owner_task` before acquiring any source lock, so a task that owns no Lavish source never pays a lock's cost.
+
 **Register deterministic condition and action watches**
 
 The `when` adapter (`bin/fm-procevent-when.sh`) registers a deterministic condition and action once.
