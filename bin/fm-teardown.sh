@@ -3961,11 +3961,14 @@ teardown_guard_lavish_board() {
     done
   fi
 
-  board_state=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
-    FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-procevent.sh" task-lavish-status "$ID") || {
-    echo "REFUSED: cannot read task $ID's Lavish source state; retry when bin/fm-procevent.sh task-lavish-status succeeds." >&2
-    return 1
-  }
+  board_state=
+  if [ -d "$STATE/procevent" ]; then
+    board_state=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+      FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-procevent.sh" task-lavish-status "$ID") || {
+      echo "REFUSED: cannot read task $ID's Lavish source state; retry when bin/fm-procevent.sh task-lavish-status succeeds." >&2
+      return 1
+    }
+  fi
   if [ "$board_state" = active ]; then
     echo "REFUSED: task $ID still owns an active Lavish board; finish the board review and retire its process-event source before teardown." >&2
     return 1
