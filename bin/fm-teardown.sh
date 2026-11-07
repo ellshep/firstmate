@@ -84,6 +84,11 @@
 # declared scratch and the report at data/<task-id>/report.md is the work
 # product. Teardown proceeds only once the report exists and the shared
 # unresolved-decision completion gate verifies its captain-held inventory.
+# A non-forced task teardown also keeps an untracked or ignored .lavish/*.html
+# board until its .lavish/ files are copied to data/<task-id>/boards/. A
+# task-owned Lavish listener or open board decision keeps the task alive even
+# after the copy. The process-event list and captain-hold open command own those
+# live/decision verdicts; --force retains its explicit discard behavior.
 # A scratch copy (kind=scout) and a --force run discard untracked content.
 # Treehouse's return resets with `git clean -fd`, which never deletes a nested
 # git repository, so the pool slot stays dirty and later checkouts skip it.
@@ -3922,6 +3927,82 @@ if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
   fi
 fi
 
+# The board can be untracked or ignored, and scout scratch cleanup otherwise
+# discards it. Check the whole copy, including assets and generators, once an
+# untracked board HTML file is found. The destination follows `cp -R
+# .lavish/. data/<task-id>/boards/`.
+teardown_guard_lavish_board() {
+  local board path relative saved source_list board_state decision key status=0
+  [ "$FORCE" != "--force" ] && [ "$KIND" != secondmate ] || return 0
+  if [ -n "$WT" ] && [ -d "$WT/.lavish" ]; then
+    for board in "$WT"/.lavish/*.html; do
+      [ -f "$board" ] || continue
+      if git -C "$WT" ls-files --error-unmatch -- ".lavish/${board##*/}" >/dev/null 2>&1; then
+        continue
+      fi
+      while IFS= read -r -d '' path; do
+        relative=${path#"$WT/.lavish/"}
+        saved="$DATA/$ID/boards/$relative"
+        if [ -L "$path" ]; then
+          if [ ! -L "$saved" ] || [ "$(readlink "$path")" != "$(readlink "$saved")" ]; then
+            status=1
+            break
+          fi
+        elif [ ! -f "$saved" ] || ! cmp -s -- "$path" "$saved"; then
+          status=1
+          break
+        fi
+      done < <(find "$WT/.lavish" \( -type f -o -type l \) -print0)
+      if [ "$status" -ne 0 ]; then
+        echo "REFUSED: task $ID has an unsaved Lavish board at $board; copy .lavish/ to $DATA/$ID/boards/ before teardown." >&2
+        return 1
+      fi
+      break
+    done
+  fi
+
+  source_list=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+    FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-procevent.sh" list) || {
+    echo "REFUSED: cannot read task $ID's Lavish source state; retry when bin/fm-procevent.sh list succeeds." >&2
+    return 1
+  }
+  board_state=$(printf '%s\n' "$source_list" | awk -v owner="task:$ID/" '
+    $2 == "lavish" && index($3, owner) == 1 {
+      registered=1
+      if ($3 ~ /\/listening$/ || $3 ~ /\/round-open$/) active=1
+    }
+    END { if (active) print "active"; else if (registered) print "registered" }
+  ')
+  if [ "$board_state" = active ]; then
+    echo "REFUSED: task $ID still owns an active Lavish board; finish the board review and retire its process-event source before teardown." >&2
+    return 1
+  fi
+  [ "$board_state" = registered ] || return 0
+  if [ "$TEARDOWN_BACKLOG_TRANSITION" = retain ]; then
+    echo "REFUSED: task $ID's Lavish board still has a captain decision open; the captain still owes answers before teardown." >&2
+    return 1
+  fi
+  decision=$(fm_meta_get "$META" decision_keys)
+  if [ -n "$decision" ]; then
+    while IFS= read -r key; do
+      [ -n "$key" ] || continue
+      status=0
+      FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+        FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-captain-hold.sh" open "$key" >/dev/null || status=$?
+      case "$status" in
+        0)
+          echo "REFUSED: task $ID's Lavish board still has a captain decision open ($key); the captain still owes answers before teardown." >&2
+          return 1
+          ;;
+        1) ;;
+        *) echo "REFUSED: cannot read captain decision $key for task $ID; retry after the captain-hold read succeeds." >&2; return 1 ;;
+      esac
+    done < <(printf '%s\n' "$decision" | tr ',' '\n')
+  fi
+}
+
+teardown_guard_lavish_board || exit 1
+
 # A public commitment is not kept until its final reply lands in the ORIGINAL
 # thread, and this cleanup removes the task records that make the promise
 # reconcilable. Refuse while this home still owes a public reply for exactly this
@@ -4124,6 +4205,7 @@ fi
 # or its processes exit. Inspect the stopped copy before dropping its branch or
 # returning it on either backend path.
 if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
+  teardown_guard_lavish_board || exit 1
   validate_worktree_teardown_safety || exit 1
 fi
 
