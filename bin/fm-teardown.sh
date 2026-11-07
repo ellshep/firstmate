@@ -3932,7 +3932,7 @@ fi
 # untracked board HTML file is found. The destination follows `cp -R
 # .lavish/. data/<task-id>/boards/`.
 teardown_guard_lavish_board() {
-  local board path relative saved source_list board_state decision key status=0
+  local board path relative saved board_state decision key status=0
   [ "$FORCE" != "--force" ] && [ "$KIND" != secondmate ] || return 0
   if [ -n "$WT" ] && [ -d "$WT/.lavish" ]; then
     for board in "$WT"/.lavish/*.html; do
@@ -3961,18 +3961,11 @@ teardown_guard_lavish_board() {
     done
   fi
 
-  source_list=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
-    FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-procevent.sh" list) || {
-    echo "REFUSED: cannot read task $ID's Lavish source state; retry when bin/fm-procevent.sh list succeeds." >&2
+  board_state=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+    FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-procevent.sh" task-lavish-status "$ID") || {
+    echo "REFUSED: cannot read task $ID's Lavish source state; retry when bin/fm-procevent.sh task-lavish-status succeeds." >&2
     return 1
   }
-  board_state=$(printf '%s\n' "$source_list" | awk -v owner="task:$ID/" '
-    $2 == "lavish" && index($3, owner) == 1 {
-      registered=1
-      if ($3 ~ /\/listening$/ || $3 ~ /\/round-open$/) active=1
-    }
-    END { if (active) print "active"; else if (registered) print "registered" }
-  ')
   if [ "$board_state" = active ]; then
     echo "REFUSED: task $ID still owns an active Lavish board; finish the board review and retire its process-event source before teardown." >&2
     return 1

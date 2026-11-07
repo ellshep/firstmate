@@ -19,6 +19,7 @@
 #   fm-procevent.sh extension-bind <bind|receive-transfer-bind> <binding-arguments...>
 #   fm-procevent.sh extension-process-event <process-event-arguments...>
 #   fm-procevent.sh list
+#   fm-procevent.sh task-lavish-status <task-id>
 #
 # register   Record a built-in source: its adapter, its canonical id, and the
 #            exact argv to execute. argv is stored one argument per line and
@@ -130,6 +131,12 @@
 #            Serialize tracked binding publication against extension resolution,
 #            registration publication, and retirement in this home.
 # list       Show registered sources, owners, and pending captured results.
+# task-lavish-status
+#            Read-only query for one task's lavish sources: prints `active` if
+#            any is listening or has an open round, `registered` if one exists
+#            but is dead, or nothing if the task owns none. Filters by
+#            owner_task before locking anything, so a task with no lavish
+#            registration never pays a source lock's cost.
 #
 # Terminal knowledge is adapter-owned. This runner never inspects a result and
 # never names an adapter-specific status: built-ins keep the existing
@@ -2426,6 +2433,40 @@ cmd_sweep_home() {
   printf 'swept: attempted=%s\n' "$attempted"
 }
 
+# cmd_task_lavish_status <task-id>
+# Task-scoped counterpart to cmd_list for fm-teardown.sh's board guard: only
+# a lavish source whose owner_task matches pays the lock-and-claim-state cost
+# cmd_list pays for every registered source home-wide.
+cmd_task_lavish_status() {
+  local task=${1-} rec id adapter owner registered=0 pending claim_state
+  [ "$#" -eq 1 ] && fm_task_id_path_safe "$task" || die "task-lavish-status requires one task id"
+  owner_lease_refresh
+  for rec in "$REG"/*.source; do
+    [ -e "$rec" ] || continue
+    id=${rec##*/}; id=${id%.source}
+    adapter=$(read_adapter "$id" 2>/dev/null || true)
+    [ "$adapter" = lavish ] || continue
+    owner=$(source_owner_task "$id" 2>/dev/null || true)
+    [ "$owner" = "$task" ] || continue
+    registered=1
+    pending=$(fm_procevent_pending "$STATE" | grep -c "/$id\." || true)
+    if [ "$pending" -gt 0 ]; then
+      printf 'active\n'
+      return 0
+    fi
+    fm_procevent_source_lock_acquire "$id" || continue
+    fm_procevent_claim_state_locked "$id"
+    claim_state=$?
+    fm_procevent_source_lock_release "$id"
+    if [ "$claim_state" -eq 0 ]; then
+      printf 'active\n'
+      return 0
+    fi
+  done
+  [ "$registered" -eq 1 ] && printf 'registered\n'
+  return 0
+}
+
 cmd_list() {
   local rec id adapter owner pending claim_state kind task
   owner_lease_refresh
@@ -2589,6 +2630,7 @@ case "${1-}" in
   extension-bind) shift; cmd_extension_bind "$@" ;;
   extension-process-event) shift; cmd_extension_process_event "$@" ;;
   list)               shift; cmd_list "$@" ;;
+  task-lavish-status) shift; cmd_task_lavish_status "$@" ;;
   ''|-h|--help|help) usage ;;
   *) die "unknown command: $1" ;;
 esac
