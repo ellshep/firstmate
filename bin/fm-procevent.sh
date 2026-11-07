@@ -2439,7 +2439,9 @@ cmd_sweep_home() {
 # cmd_list pays for every registered source home-wide.
 cmd_task_lavish_status() {
   local task=${1-} rec id adapter owner registered=0 pending claim_state
-  [ "$#" -eq 1 ] && fm_task_id_path_safe "$task" || die "task-lavish-status requires one task id"
+  if [ "$#" -ne 1 ] || ! fm_task_id_path_safe "$task"; then
+    die "task-lavish-status requires one task id"
+  fi
   owner_lease_refresh
   for rec in "$REG"/*.source; do
     [ -e "$rec" ] || continue
