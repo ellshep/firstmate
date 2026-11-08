@@ -14,6 +14,13 @@ out=$(FM_HOME="$CLAUDE_HOME" CLAUDECODE=1 bash "$ROOT/bin/fm-afk-contract.sh" en
 assert_contains "$out" 'A phone nudge can ask you' 'Claude entry announces phone reach'
 case "$out" in *'No phone channel is configured'*) fail 'Claude entry falsely says no phone channel' ;; esac
 
+CLAUDE_HOME_DANGLING_OFF="$HOME_DIR/claude-dangling-off"
+mkdir -p "$CLAUDE_HOME_DANGLING_OFF/state" "$CLAUDE_HOME_DANGLING_OFF/config"
+ln -s "$CLAUDE_HOME_DANGLING_OFF/config/missing-target" "$CLAUDE_HOME_DANGLING_OFF/config/supervision-host-off"
+out=$(FM_HOME="$CLAUDE_HOME_DANGLING_OFF" CLAUDECODE=1 bash "$ROOT/bin/fm-afk-contract.sh" enter 2>&1)
+assert_contains "$out" 'No phone channel is configured' 'a dangling supervision-host-off symlink is treated as the host disabled'
+case "$out" in *'A phone nudge can ask you'*) fail 'a dangling supervision-host-off symlink falsely announced phone reach' ;; esac
+
 add() {
   tasks-axi add "$1" "$2" --kind "$3" --repo "$4" --body "$5" --file "$HOME_DIR/data/backlog.md" >/dev/null
 }

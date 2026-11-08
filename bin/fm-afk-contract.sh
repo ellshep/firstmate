@@ -302,10 +302,8 @@ fm_afk_contract_harness_helpers() {
 
 fm_afk_contract_phone_reachable() {
   local cfgdir=${FM_CONFIG_OVERRIDE:-$FM_HOME/config} cfg line directive=
-  if [ ! -e "$cfgdir/supervision-host-off" ] && [ ! -L "$cfgdir/supervision-host-off" ]; then
-    fm_afk_contract_harness_helpers
-    [ "$(fm_supervision_host_primary)" = claude ] && return 0
-  fi
+  fm_afk_contract_harness_helpers
+  fm_supervision_host_enabled "$cfgdir" && [ "$(fm_supervision_host_primary)" = claude ] && return 0
   # The one reading of config/wedge-alarm's command: directive, kept identical
   # to bin/fm-afk-nudge.mjs's channelCommand(): the env override as one whole
   # directive, else the first trimmed, non-comment command: line, with any off
