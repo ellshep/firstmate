@@ -398,6 +398,25 @@ fm_brief_task_content_valid() {  # <file>
   [ -n "$(printf '%s' "$task" | tr -d '[:space:]')" ]
 }
 
+# A new ship must carry a captain-settled decision entry, or the explicit
+# declaration that the captain described this task in the moment. Relaunches
+# keep their already-dispatched brief and do not re-enter this intake gate.
+fm_brief_ship_decisions_valid() {  # <file>
+  local file=$1 intent decisions
+  if fm_brief_task_heading_present "$file" "## Captain's intent"; then
+    intent=$(fm_brief_task_heading_body "$file" "## Captain's intent")
+  else
+    intent=$(fm_brief_heading_body "$file" '# Task')
+  fi
+  fm_brief_heading_parse - '### Decisions settled by the captain' present >/dev/null <<<"$intent" || return 1
+  decisions=$(fm_brief_heading_parse - '### Decisions settled by the captain' body <<<"$intent")
+  printf '%s\n' "$decisions" | awk '
+    /^[[:space:]]*Captain-described-in-the-moment:[[:space:]]*yes[[:space:]]*$/ { valid = 1 }
+    /^[[:space:]]*-[[:space:]]*[^[:space:]].*$/ && $0 !~ /\{DECISION_AND_ANSWER\}/ { valid = 1 }
+    END { exit !valid }
+  '
+}
+
 # Print the first `## Captain's intent` body line that opens with an operator
 # address spelling; fail when there is none. The body is never rewritten.
 fm_brief_intent_address_line() {  # <file>

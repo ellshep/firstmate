@@ -354,14 +354,24 @@ if ADDRESS_LINE=$(fm_brief_intent_address_line "$SCOUT_BRIEF"); then
   echo "error: $SCOUT_BRIEF ## Captain's intent has an operator-address line: $ADDRESS_LINE; write the captain's actual words without a Captain label or address before promotion, since the heading already records provenance" >&2
   exit 1
 fi
+LEGACY_INTENT=0
 if fm_brief_task_heading_present "$SCOUT_BRIEF" "## Captain's intent"; then
   INTENT_BODY=$(fm_brief_task_heading_body "$SCOUT_BRIEF" "## Captain's intent")
 else
+  LEGACY_INTENT=1
   TASK_BODY=$(fm_brief_heading_body "$SCOUT_BRIEF" "# Task")
   INTENT_BODY=$(fm_brief_marked_captain_words "$TASK_BODY")
 fi
 if [ -z "$(printf '%s' "$INTENT_BODY" | tr -d '[:space:]')" ]; then
   echo "error: $SCOUT_BRIEF has no provenance-marked Captain's intent; add the captain's actual words before promotion" >&2
+  exit 1
+fi
+if [ "$LEGACY_INTENT" -eq 1 ]; then
+  DECISIONS_BODY=$(fm_brief_task_heading_body "$SCOUT_BRIEF" '### Decisions settled by the captain')
+  INTENT_BODY=$(printf '%s\n\n### Decisions settled by the captain\n%s' "$INTENT_BODY" "$DECISIONS_BODY")
+fi
+if ! fm_brief_ship_decisions_valid "$SCOUT_BRIEF"; then
+  echo "error: $SCOUT_BRIEF needs a nonempty entry under ### Decisions settled by the captain, or Captain-described-in-the-moment: yes, before scout promotion" >&2
   exit 1
 fi
 

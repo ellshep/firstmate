@@ -4372,10 +4372,6 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     echo "error: $BRIEF still contains {TASK} or {FIRSTMATE_SPEC}; fill ## Captain's intent and ## Firstmate spec before spawn" >&2
     exit 1
   fi
-  if [ "$KIND" = ship ] && grep -Fq '{DECISION_AND_ANSWER}' "$BRIEF"; then
-    echo "error: $BRIEF still contains {DECISION_AND_ANSWER}; record the captain's settled product decisions, or explicitly that none remain, before spawn" >&2
-    exit 1
-  fi
   if ! fm_brief_task_content_valid "$BRIEF"; then
     echo "error: $BRIEF must contain nonempty ## Captain's intent and ## Firstmate spec subsections (or a nonempty legacy # Task body) before spawn" >&2
     exit 1
@@ -4395,6 +4391,10 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
         exit 1
       fi
     fi
+  fi
+  if [ "$KIND" = ship ] && [ "$RELAUNCH" -eq 0 ] && ! fm_brief_ship_decisions_valid "$BRIEF"; then
+    echo "error: $BRIEF needs a nonempty entry under ### Decisions settled by the captain, or Captain-described-in-the-moment: yes, before a new ship dispatch" >&2
+    exit 1
   fi
   if [ "$RELAUNCH" -eq 1 ]; then
     BASE_BRANCH=$(fm_meta_get "$RELAUNCH_META" base_branch)
