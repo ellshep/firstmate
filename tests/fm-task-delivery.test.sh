@@ -950,6 +950,33 @@ EOF
     "unfilled ship spawn did not name the intent subsection to fill"
   assert_absent "$home/state/$id.meta" "unfilled ship spawn wrote task metadata"
 
+  # Regression: a ship's `## Captain's intent` body always nests `### Decisions
+  # settled by the captain`, so an unfilled `{TASK}` is never the whole body
+  # once firstmate fills the spec and decisions list. The placeholder check
+  # must still catch the untouched `{TASK}` rather than reading it as filled.
+  id=delivery-task-placeholder-with-decisions
+  mkdir -p "$home/data/$id"
+  cat > "$home/data/$id/brief.md" <<'EOF'
+# Task
+## Captain's intent
+{TASK}
+
+### Decisions settled by the captain
+- Ship the fallback path, not the retry.
+
+## Firstmate spec
+Exercise the ready gate.
+
+# Definition of done
+Delivery contract: mode=no-mistakes
+EOF
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn accepted an untouched {TASK} once decisions were filled in"
+  assert_contains "$out" "still contains {TASK} or {FIRSTMATE_SPEC}" \
+    "untouched {TASK} with filled decisions did not name the leftover placeholder"
+  assert_absent "$home/state/$id.meta" "untouched {TASK} with filled decisions wrote task metadata"
+
   id=delivery-unsettled-ship
   FM_HOME="$home" brief_fixture "$id" proj --mode no-mistakes >/dev/null 2>&1 \
     || fail "unsettled ship brief should scaffold"

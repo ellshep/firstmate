@@ -92,3 +92,43 @@ fm_brief_task_heading_present() {  # <file> <heading>
   task=$(fm_brief_heading_body "$1" "# Task")
   fm_brief_heading_parse - "$2" present >/dev/null <<<"$task"
 }
+
+# Print a heading's body up to (excluding) its own first nested heading. A
+# ship's `## Captain's intent` body always nests `### Decisions settled by
+# the captain`, so callers that must see only the captain's own words - e.g.
+# detecting an untouched `{TASK}` placeholder - read this instead of the full
+# body, which would otherwise never equal the bare placeholder once a nested
+# heading is present.
+fm_brief_task_heading_own_body() {  # <file> <heading>
+  fm_brief_task_heading_body "$1" "$2" | awk '
+    {
+      scan = $0
+      spaces = 0
+      while (spaces < 3 && substr(scan, 1, 1) == " ") {
+        scan = substr(scan, 2)
+        spaces++
+      }
+      marker = substr(scan, 1, 1)
+      marker_len = 0
+      if (marker == "`" || marker == "~") {
+        while (substr(scan, marker_len + 1, 1) == marker) marker_len++
+      }
+      if (marker_len >= 3) {
+        if (!fenced) {
+          fenced = 1
+          fence_marker = marker
+          fence_len = marker_len
+        } else if (marker == fence_marker && marker_len >= fence_len && substr(scan, marker_len + 1) ~ /^[[:space:]]*$/) {
+          fenced = 0
+        }
+        print
+        next
+      }
+      if (fenced) { print; next }
+      level = 0
+      while (substr(scan, level + 1, 1) == "#") level++
+      if (level > 0 && substr(scan, level + 1, 1) ~ /^[[:space:]]?$/) exit
+      print
+    }
+  '
+}
