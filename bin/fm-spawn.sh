@@ -4372,6 +4372,10 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     echo "error: $BRIEF still contains {TASK} or {FIRSTMATE_SPEC}; fill ## Captain's intent and ## Firstmate spec before spawn" >&2
     exit 1
   fi
+  if [ "$KIND" = ship ] && grep -Fq '{DECISION_AND_ANSWER}' "$BRIEF"; then
+    echo "error: $BRIEF still contains {DECISION_AND_ANSWER}; record the captain's settled product decisions, or explicitly that none remain, before spawn" >&2
+    exit 1
+  fi
   if ! fm_brief_task_content_valid "$BRIEF"; then
     echo "error: $BRIEF must contain nonempty ## Captain's intent and ## Firstmate spec subsections (or a nonempty legacy # Task body) before spawn" >&2
     exit 1

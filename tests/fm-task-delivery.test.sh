@@ -71,6 +71,7 @@ fill_brief_subsections() {  # <file> <intent> <spec>
   content=$(cat "$file")
   content=${content//'{TASK}'/$intent}
   content=${content//'{FIRSTMATE_SPEC}'/$spec}
+  content=${content//'{DECISION_AND_ANSWER}'/None remain after review.}
   printf '%s\n' "$content" > "$file"
 }
 
@@ -942,6 +943,21 @@ EOF
     "unfilled ship spawn did not name the intent subsection to fill"
   assert_absent "$home/state/$id.meta" "unfilled ship spawn wrote task metadata"
 
+  id=delivery-unsettled-ship
+  FM_HOME="$home" brief_fixture "$id" proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "unsettled ship brief should scaffold"
+  brief="$home/data/$id/brief.md"
+  intent_body=$(cat "$brief")
+  intent_body=${intent_body//'{TASK}'/Build the requested change.}
+  intent_body=${intent_body//'{FIRSTMATE_SPEC}'/Exercise the ready gate.}
+  printf '%s\n' "$intent_body" > "$brief"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn accepted an unfilled captain decision list"
+  assert_contains "$out" "still contains {DECISION_AND_ANSWER}" \
+    "unsettled ship refusal did not name the decision placeholder"
+  assert_absent "$home/state/$id.meta" "unsettled ship spawn wrote task metadata"
+
   id=delivery-herdr-lifecycle-unguarded
   mkdir -p "$home/data/$id"
   cat > "$home/data/$id/brief.md" <<'EOF'
@@ -1301,7 +1317,8 @@ EOF
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
   assert_present "$home/data/$id/launch-brief.md" "plain intent was not serialized"
   authorized=$(awk '$0 == "## Captain intent authorized for --intent" { emit=1; next } emit { print }' "$home/data/$id/launch-brief.md")
-  [ "$authorized" = "$words" ] || fail "authorized --intent must contain exactly the request, without headings, address, or contract prose: $authorized"
+  [ "$authorized" = "$words"$'\n\n''### Decisions settled by the captain'$'\n''- None remain after review.' ] || \
+    fail "authorized --intent must contain the request and settled decisions, without build prose: $authorized"
 
   # The request itself may discuss an address spelling. It is data, not an
   # invitation to scrub the user's words or synthesize a different request.
