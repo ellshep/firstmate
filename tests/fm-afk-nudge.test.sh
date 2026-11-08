@@ -31,6 +31,7 @@ add x1 'Change billing' ship app $'Ready gate: passed\nAway start: app-pr'
 add x2 'Unreviewed issue' scout app 'Away start: scout'
 add x3 'Migrate records' ship app $'Ready gate: passed\nAway start: app-pr'
 add x4 'Fix app' ship app $'Ready gate: passed\nAway start: app-pr'
+add x5 'Fix deployment script typo' ship app $'Ready gate: passed\nAway start: app-pr'
 tasks-axi block x4 --by x2 --file "$HOME_DIR/data/backlog.md" >/dev/null
 
 out=$(check 87000)
@@ -42,7 +43,7 @@ if FM_HOME="$HOME_DIR" "$NUDGE" guard-start s1 >/dev/null 2>&1; then
 fi
 assert_contains "$out" 'f1: Fix Firstmate tool' 'fork fix listed'
 assert_contains "$out" 'a1: Fix the form' 'app fix listed'
-for id in x1 x2 x3 x4; do
+for id in x1 x2 x3 x4 x5; do
   case "$out" in *"$id:"*) fail "unsafe item $id listed" ;; esac
 done
 
@@ -64,6 +65,16 @@ printf 'command: printf "%%s" "$1" > "%s"\n' "$COMMAND_HOME/delivered" > "$COMMA
 FM_HOME="$COMMAND_HOME" FM_AWAY_NUDGE_NOW_EPOCH=90000 "$NUDGE" check --command >/dev/null
 [ -s "$COMMAND_HOME/delivered" ] || fail 'command channel did not receive nudge'
 [ -z "$(FM_HOME="$COMMAND_HOME" FM_AWAY_NUDGE_NOW_EPOCH=90000 "$NUDGE" check)" ] || fail 'command channel nudge repeated'
+
+MISMATCH_HOME="$HOME_DIR/mismatch"
+mkdir -p "$MISMATCH_HOME/data" "$MISMATCH_HOME/state" "$MISMATCH_HOME/config"
+cp "$HOME_DIR/data/backlog.md" "$MISMATCH_HOME/data/backlog.md"
+printf 'command:\ncommand: printf "%%s" "$1" > "%s"\n' "$MISMATCH_HOME/delivered" > "$MISMATCH_HOME/config/wedge-alarm"
+out=$(FM_HOME="$MISMATCH_HOME" FM_TEST_HARNESS=codex bash "$ROOT/bin/fm-afk-contract.sh" enter 2>&1)
+assert_contains "$out" 'No phone channel is configured' 'an empty command: line before a real one is not announced as reachable'
+entered=$(FM_HOME="$MISMATCH_HOME" bash "$ROOT/bin/fm-afk-contract.sh" field entered_epoch)
+FM_HOME="$MISMATCH_HOME" FM_AWAY_NUDGE_NOW_EPOCH=$((entered + 90000)) "$NUDGE" check --command >/dev/null 2>&1 || true
+[ ! -s "$MISMATCH_HOME/delivered" ] || fail 'an empty command: line before a real one must not deliver, matching the announcement'
 
 add s2 'Inspect the list' scout app $'Ready gate: passed\nAway start: scout'
 out=$(check 90000)

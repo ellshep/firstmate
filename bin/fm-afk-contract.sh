@@ -301,16 +301,37 @@ fm_afk_contract_harness_helpers() {
 }
 
 fm_afk_contract_phone_reachable() {
-  local cfg
-  if [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/supervision-host-off" ]; then
+  local cfgdir=${FM_CONFIG_OVERRIDE:-$FM_HOME/config} cfg line directive=
+  if [ ! -e "$cfgdir/supervision-host-off" ] && [ ! -L "$cfgdir/supervision-host-off" ]; then
     fm_afk_contract_harness_helpers
     [ "$(fm_supervision_host_primary)" = claude ] && return 0
   fi
-  cfg="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/wedge-alarm"
+  # The one reading of config/wedge-alarm's command: directive, kept identical
+  # to bin/fm-afk-nudge.mjs's channelCommand(): the env override as one whole
+  # directive, else the first trimmed, non-comment command: line, with any off
+  # line disabling it.
+  if [ -n "${FM_WEDGE_ALARM_CHANNEL:-}" ]; then
+    case "$FM_WEDGE_ALARM_CHANNEL" in
+      command:?*) return 0 ;;
+      *) return 1 ;;
+    esac
+  fi
+  cfg="$cfgdir/wedge-alarm"
   [ -f "$cfg" ] || return 1
-  grep -Eq '^[[:space:]]*command:.+' "$cfg" || return 1
-  grep -Eq '^[[:space:]]*off[[:space:]]*$' "$cfg" && return 1
-  return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [ -n "$line" ] || continue
+    case "$line" in '#'*) continue ;; esac
+    [ "$line" = off ] && return 1
+    case "$line" in
+      command:*) [ -n "$directive" ] || directive=$line ;;
+    esac
+  done < "$cfg"
+  case "$directive" in
+    command:?*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # --- record writing ---------------------------------------------------------
