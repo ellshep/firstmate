@@ -207,8 +207,8 @@ fm_busy_codex_semantic_source() {
 }
 
 # Codex pins its active-turn status immediately above the composer. The
-# composer also appears during a turn, so it proves idle only with the normal
-# shortcut footer and no active-turn row. Read a viewport, never scrollback.
+# composer also appears during a turn, so it proves idle only with a recognized
+# footer and no active-turn row. Read a viewport, never scrollback.
 fm_busy_codex_viewport_state() {  # <plain visible viewport on stdin>
   local screen
   screen=$(tail -n 12) || { printf 'unknown'; return; }
@@ -217,7 +217,8 @@ fm_busy_codex_viewport_state() {  # <plain visible viewport on stdin>
   elif printf '%s\n' "$screen" | grep -Eq '^[[:space:]]*• Working \([0-9][0-9smh ]*[^)]*esc to interrupt\)'; then
     printf 'busy'
   elif printf '%s\n' "$screen" | grep -Eq '^[[:space:]]*› Ask Codex to do anything[[:space:]]*$' \
-    && printf '%s\n' "$screen" | grep -Eq '(^|[[:space:]])\? for shortcuts([[:space:]]|$)'; then
+    && { printf '%s\n' "$screen" | grep -Eq '(^|[[:space:]])\? for shortcuts([[:space:]]|$)' \
+      || printf '%s\n' "$screen" | grep -Eq '^[[:space:]]*[^[:space:]]+ [^[:space:]]+ · .*⚠ [0-9]+ warnings? · f2 to view[[:space:]]*$'; }; then
     printf 'idle'
   else
     printf 'unknown'
