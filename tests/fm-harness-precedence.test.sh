@@ -823,7 +823,7 @@ test_supervision_protocol_follows_corrected_verdict() {
     "a Codex primary carrying a retained CLAUDECODE did not render the Codex protocol"
   assert_contains "$got" "Mode: Codex foreground checkpoint." \
     "the rendered block is not Codex's foreground-checkpoint protocol"
-  assert_not_contains "$got" "Mode: Claude Stop-hook-owned supervision." \
+  assert_not_contains "$got" "Mode: Claude Stop/StopFailure-hook-owned supervision." \
     "the rendered block still carries Claude's Stop-owned protocol"
   pass "session start renders the Codex protocol for a Codex primary holding a retained CLAUDECODE"
 }

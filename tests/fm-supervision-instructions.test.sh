@@ -14,7 +14,7 @@ test_selected_harness_block_only() {
   assert_contains "$out" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: codex" "codex heading missing"
   assert_contains "$out" "Mode: Codex foreground checkpoint." "codex snippet missing"
   assert_contains "$out" "bin/fm-watch-checkpoint.sh" "codex checkpoint helper missing"
-  assert_not_contains "$out" "Mode: Claude Stop-hook-owned supervision." "renderer printed the claude snippet too"
+  assert_not_contains "$out" "Mode: Claude Stop/StopFailure-hook-owned supervision." "renderer printed the claude snippet too"
   assert_not_contains "$out" "Mode: Pi extension background wake." "renderer printed the pi snippet too"
   pass "renderer prints exactly the selected harness block"
 }
@@ -36,7 +36,7 @@ test_supervision_host_protocol_on_a_claude_home_unless_off() {
   assert_equals "$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness claude)" "$hosted" \
     "a claude home without config/supervision-host must render exactly what an opted-in claude home renders"
   assert_contains "$hosted" "- Supervision host: on;" "an opted-in claude home did not render the host state line"
-  assert_contains "$hosted" "Mode: Claude Stop-hook-owned supervision." "the host protocol replaced the claude protocol instead of adding to it"
+  assert_contains "$hosted" "Mode: Claude Stop/StopFailure-hook-owned supervision." "the host protocol replaced the claude protocol instead of adding to it"
   assert_contains "$hosted" "supervision-host: cycle boundary" "the host protocol did not tell main how to handle a park boundary"
   assert_contains "$hosted" "never run the return from it" "the host protocol did not say a handed-back wake is not the captain's return"
   [ "$(printf '%s\n' "$hosted" | grep -vF -e '- Supervision host: on;' | head -n "$(printf '%s\n' "$plain" | wc -l)")" = "$plain" ] \
