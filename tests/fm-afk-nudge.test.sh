@@ -68,6 +68,7 @@ COMMAND_HOME="$HOME_DIR/command"
 mkdir -p "$COMMAND_HOME/data" "$COMMAND_HOME/state" "$COMMAND_HOME/config"
 cp "$HOME_DIR/data/backlog.md" "$COMMAND_HOME/data/backlog.md"
 printf 'entered_epoch: 1000\n' > "$COMMAND_HOME/state/.afk-contract"
+# shellcheck disable=SC2016 # $1 expands in the command channel's child shell, not here
 printf 'command: printf "%%s" "$1" > "%s"\n' "$COMMAND_HOME/delivered" > "$COMMAND_HOME/config/wedge-alarm"
 FM_HOME="$COMMAND_HOME" FM_AWAY_NUDGE_NOW_EPOCH=90000 "$NUDGE" check --command >/dev/null
 [ -s "$COMMAND_HOME/delivered" ] || fail 'command channel did not receive nudge'
@@ -76,6 +77,7 @@ FM_HOME="$COMMAND_HOME" FM_AWAY_NUDGE_NOW_EPOCH=90000 "$NUDGE" check --command >
 MISMATCH_HOME="$HOME_DIR/mismatch"
 mkdir -p "$MISMATCH_HOME/data" "$MISMATCH_HOME/state" "$MISMATCH_HOME/config"
 cp "$HOME_DIR/data/backlog.md" "$MISMATCH_HOME/data/backlog.md"
+# shellcheck disable=SC2016 # $1 expands in the command channel's child shell, not here
 printf 'command:\ncommand: printf "%%s" "$1" > "%s"\n' "$MISMATCH_HOME/delivered" > "$MISMATCH_HOME/config/wedge-alarm"
 out=$(FM_HOME="$MISMATCH_HOME" FM_TEST_HARNESS=codex bash "$ROOT/bin/fm-afk-contract.sh" enter 2>&1)
 assert_contains "$out" 'No phone channel is configured' 'an empty command: line before a real one is not announced as reachable'
@@ -106,7 +108,7 @@ add s2 'Inspect the list' scout app $'Ready gate: passed\nAway start: scout'
 out=$(check 90000)
 assert_contains "$out" 's2: Inspect the list' 'changed set can be nudged'
 FM_HOME="$HOME_DIR" FM_AWAY_NUDGE_NOW_EPOCH=90000 "$NUDGE" mark-sent
-tasks-axi done s2 --file "$HOME_DIR/data/backlog.md" >/dev/null
+tasks-axi 'done' s2 --file "$HOME_DIR/data/backlog.md" >/dev/null
 [ -z "$(check 90000)" ] || fail 'returning to an already nudged set fired again'
 
 pass 'away nudge filters ready tickets, parses explicit replies, and deduplicates item sets'
