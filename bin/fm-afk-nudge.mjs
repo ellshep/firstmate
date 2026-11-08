@@ -70,14 +70,14 @@ function candidates() {
   for (const id of ids) {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) continue;
     const detail = runAxi(['show', id, '--full']);
-    const kind = field(detail, '  kind');
-    const repo = field(detail, '  repo');
-    const title = field(detail, '  title');
-    const bodyLine = field(detail, '  body');
-    let body = bodyLine;
-    if (bodyLine.startsWith('"')) {
-      try { body = JSON.parse(bodyLine); } catch { continue; }
-    }
+    let kind, repo, title, body;
+    try {
+      const unquote = (value) => (value.startsWith('"') ? JSON.parse(value) : value);
+      kind = unquote(field(detail, '  kind'));
+      repo = unquote(field(detail, '  repo'));
+      title = unquote(field(detail, '  title'));
+      body = unquote(field(detail, '  body'));
+    } catch { continue; }
     if (!/^Ready gate: passed\s*$/im.test(body)) continue;
     const category = body.match(/^Away start: (scout|firstmate-fork-pr|app-pr)\s*$/im)?.[1]?.toLowerCase();
     if (!category) continue;
@@ -118,7 +118,7 @@ function main() {
   }
   if (op === 'reply') {
     const reply = process.argv.slice(3).join(' ').trim().toLowerCase();
-    const last = saved.lastSent;
+    const last = saved.pending || saved.lastSent;
     if (!last || !Array.isArray(last.items)) return;
     let chosen = [];
     if (/^(go|yes)[.!]?$/i.test(reply)) chosen = last.items;
