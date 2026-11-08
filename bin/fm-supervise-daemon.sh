@@ -2289,6 +2289,9 @@ fm_super_main() {
     if [ "$(_file_age "$STATE/.subsuper-last-housekeep")" -ge "${FM_HOUSEKEEPING_TICK:-$HOUSEKEEPING_TICK_DEFAULT}" ]; then
       _now > "$STATE/.subsuper-last-housekeep"
       housekeeping "$STATE"
+      if fm_afk_contract_away_present "$STATE"; then
+        "$FM_DAEMON_DIR/fm-afk-nudge.mjs" check --command >/dev/null 2>&1 || true
+      fi
     fi
   done
 }

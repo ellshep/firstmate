@@ -84,6 +84,7 @@ Handle it start to finish in one turn sequence:
 A crash after the report but before acknowledgement re-presents the wake, and re-handling may append a second outcome note; that benign over-reporting is deliberately accepted because replay is preferred over loss, and no idempotency machinery exists for it by design.
 
 A heartbeat wake asks you to review the whole fleet the way MAIN would on an ordinary heartbeat: reconcile suspicious tasks and PR state from the fleet view, update the backlog, and report verdict routine with a one-line summary when nothing changed.
+While away on Pi, run `bin/fm-afk-nudge.mjs check --command` after that review; it uses only an active configured `command:` alert channel and never dispatches the listed items.
 Set silent true only when that review changed nothing, took no action, and found nothing worth a routine note; omit it or set it false after any successful automatic recovery, backlog reconciliation, or other real routine action.
 Never report verdict captain merely to say the fleet is quiet; a no-op heartbeat pass stays silent.
 

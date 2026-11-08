@@ -9,8 +9,8 @@
 # path in bin/fm-afk-return.sh calls `archive` through bin/fm-afk-launch.sh stop).
 # Being away changes how the captain is informed and what happens at a
 # captain-owned decision point, never the authority set. Hold-for-return is the
-# only reach profile this release records: there is no phone channel, and the
-# entry announcement says so every time.
+# reach announcement records whether a Claude primary or a configured command
+# can deliver an away nudge; a missing channel keeps the hold-for-return line.
 #
 # AWAY OR QUIET. The same record also backs daemon-backed quiet mode, which a
 # quiet entry marks with `mode: quiet`: the captain is present there, so a quiet
@@ -50,7 +50,7 @@
 #   entered: <UTC ISO 8601>
 #   entered_epoch: <seconds>
 #   expected_return: <UTC ISO 8601> | -
-#   reach_channels: none
+#   reach_channels: none | phone
 #   reach_announced: <the one-sentence reach announcement>
 #   spend_max_concurrent_workers: <n>   without --spend, the ordinary worker
 #                                  records this home already holds at entry,
@@ -289,6 +289,21 @@ fm_afk_contract_now_iso() {
   date -u +%Y-%m-%dT%H:%M:%SZ
 }
 
+fm_afk_contract_phone_reachable() {
+  local cfg
+  if [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/supervision-host-off" ]; then
+    if [ "${FM_SUPERVISION_PRIMARY_HARNESS:-}" = claude ] \
+      || { [ -z "${FM_SUPERVISION_PRIMARY_HARNESS:-}" ] && [ "${CLAUDECODE:-}" = 1 ]; }; then
+      return 0
+    fi
+  fi
+  cfg="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/wedge-alarm"
+  [ -f "$cfg" ] || return 1
+  grep -Eq '^[[:space:]]*command:.+' "$cfg" || return 1
+  grep -Eq '^[[:space:]]*off[[:space:]]*$' "$cfg" && return 1
+  return 0
+}
+
 # --- record writing ---------------------------------------------------------
 
 fm_afk_contract_validate_iso() {  # <ts>
@@ -303,8 +318,13 @@ fm_afk_contract_render_record() {  # <entered-iso> <entered-epoch> <confirmed-is
   printf 'entered: %s\n' "$entered"
   printf 'entered_epoch: %s\n' "$entered_epoch"
   printf 'expected_return: %s\n' "${EXPECTED_RETURN:--}"
-  printf 'reach_channels: none\n'
-  printf 'reach_announced: %s\n' "$FM_AFK_CONTRACT_REACH_ANNOUNCED"
+  if [ "${FM_AFK_CONTRACT_ENTRY_MODE:-away}" = away ] && fm_afk_contract_phone_reachable; then
+    printf 'reach_channels: phone\n'
+    printf 'reach_announced: A phone nudge can ask you to approve ready work after the away threshold; nothing suggested starts before your reply.\n'
+  else
+    printf 'reach_channels: none\n'
+    printf 'reach_announced: %s\n' "$FM_AFK_CONTRACT_REACH_ANNOUNCED"
+  fi
   printf 'spend_max_concurrent_workers: %s\n' "${SPEND:-$FM_AFK_CONTRACT_SPEND_DEFAULT}"
   printf 'confirmed: %s\n' "$confirmed"
   printf 'confirmed_epoch: %s\n' "$confirmed_epoch"
@@ -399,7 +419,7 @@ fm_afk_contract_validate() {  # <path>
   expected=$(fm_afk_contract_read_field "$path" expected_return)
   [ "$expected" = - ] || fm_afk_contract_validate_iso "$expected" || { fm_afk_contract_log "record $path has no valid expected_return"; return 1; }
   reach=$(fm_afk_contract_read_field "$path" reach_channels)
-  [ "$reach" = none ] || { fm_afk_contract_log "record $path has no valid reach_channels"; return 1; }
+  case "$reach" in none|phone) ;; *) fm_afk_contract_log "record $path has no valid reach_channels"; return 1 ;; esac
   announced=$(fm_afk_contract_read_field "$path" reach_announced)
   [ -n "$announced" ] || { fm_afk_contract_log "record $path has no reach announcement"; return 1; }
   spend=$(fm_afk_contract_read_field "$path" spend_max_concurrent_workers)
@@ -441,7 +461,11 @@ fm_afk_contract_render_readback() {  # <path>
     printf '  entered: %s\n' "$(fm_afk_contract_read_field "$path" entered)"
     printf '  expected return: %s\n' "$( [ "$expected" = - ] && printf 'not given' || printf '%s' "$expected")"
     printf '  spend cap: %s concurrent workers\n' "$spend"
-    printf '  reach: hold-for-return only. %s\n' "$(fm_afk_contract_read_field "$path" reach_announced)"
+    if [ "$(fm_afk_contract_read_field "$path" reach_channels)" = phone ]; then
+      printf '  reach: %s\n' "$(fm_afk_contract_read_field "$path" reach_announced)"
+    else
+      printf '  reach: hold-for-return only. %s\n' "$(fm_afk_contract_read_field "$path" reach_announced)"
+    fi
   fi
   words=$(fm_afk_contract_read_words "$path"; rc=$?; printf x; exit "$rc") || return 1
   words=${words%x}
@@ -469,8 +493,11 @@ fm_afk_contract_render_announcement() {  # <path>
   else
     mandate_text='No away instructions were recorded; the away session acts on standing authority only, and anything that needs you waits for your return.'
   fi
-  printf 'Away posture recorded at %s: hold-for-return only. %s %s Destructive, irreversible, and security-sensitive actions are never pre-authorizable, whatever the words say. Expected return: %s. Spend cap: %s concurrent workers.\n' \
+  local reach_prefix='hold-for-return only. '
+  [ "$(fm_afk_contract_read_field "$path" reach_channels)" != phone ] || reach_prefix=''
+  printf 'Away posture recorded at %s: %s%s %s Destructive, irreversible, and security-sensitive actions are never pre-authorizable, whatever the words say. Expected return: %s. Spend cap: %s concurrent workers.\n' \
     "$(fm_afk_contract_read_field "$path" confirmed)" \
+    "$reach_prefix" \
     "$(fm_afk_contract_read_field "$path" reach_announced)" \
     "$mandate_text" \
     "$( [ "$expected" = - ] && printf 'not given' || printf '%s' "$expected")" \

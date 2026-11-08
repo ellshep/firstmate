@@ -2357,6 +2357,10 @@ spawn_refuse_if_away_spend_cap() {
   [ -f "$STATE/.afk-contract" ] || return 0
   FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-afk-contract.sh" validate >/dev/null 2>&1 || return 0
   [ "$(FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-afk-contract.sh" mode 2>/dev/null)" = away ] || return 0
+  if ! FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-afk-nudge.mjs" guard-start "$ID"; then
+    echo "error: spawn refused - $ID was suggested in an away phone nudge and needs the captain's reply" >&2
+    exit 1
+  fi
   cap=$(FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-afk-contract.sh" field spend_max_concurrent_workers 2>/dev/null || true)
   case "$cap" in
   '' | *[!0-9]* | 0) return 0 ;;
