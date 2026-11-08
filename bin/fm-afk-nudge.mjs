@@ -86,7 +86,7 @@ function candidates() {
     if (category === 'firstmate-fork-pr' && repo !== 'firstmate') continue;
     if (category === 'app-pr' && repo === 'firstmate') continue;
     const prose = body.replace(/^Ready gate: passed\s*$/gim, '').replace(/^Away start: (scout|firstmate-fork-pr|app-pr)\s*$/gim, '');
-    if (/\b(money|financial|payment|billing|invoice|pricing|subscription|charge|migrat\w*|production|prod|provider settings?|credential|secret|deploy|release|publish|outward.facing|external|merg\w*)\b/i.test(`${title} ${prose}`)) continue;
+    if (/\b(money\w*|financial\w*|payment\w*|billing\w*|invoice\w*|pricing\w*|subscription\w*|charge\w*|migrat\w*|production\w*|prod\w*|provider settings?|credential\w*|secret\w*|deploy\w*|release\w*|publish\w*|outward.facing|external\w*|merg\w*)\b/i.test(`${title} ${prose}`)) continue;
     safe.push({ id, title, category });
   }
   return safe;
