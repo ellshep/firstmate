@@ -12,6 +12,12 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# Every assertion in this file predates the phone-reach announcement and
+# assumes hold-for-return only; pin the primary harness away from claude
+# (FM_TEST_SEAM is already armed by lib.sh) so an ambient CLAUDECODE, such as
+# this suite running inside a Claude Code session, cannot flip it.
+export FM_TEST_HARNESS=unknown
+
 CONTRACT="$ROOT/bin/fm-afk-contract.sh"
 TMP_ROOT=$(fm_test_tmproot fm-afk-contract-tests)
 

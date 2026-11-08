@@ -140,29 +140,46 @@ function main() {
   }
   if (op !== 'check') throw new Error('usage: check [--command] | mark-sent | reply <message>');
   if (now - entered < threshold) return;
-  const items = candidates();
-  if (!items.length) return;
-  const key = crypto.createHash('sha256').update(items.map((item) => item.id).sort().join('\n')).digest('hex');
-  if (saved.sent.includes(key)) return;
-  if (saved.pending?.key !== key) {
-    saved.pending = { key, items, message: messageFor(items, now - entered) };
-    writeLedger(saved);
+  const lockPath = `${ledger}.lock`;
+  let fd;
+  try {
+    fd = fs.openSync(lockPath, 'wx', 0o600);
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    const mtime = fs.statSync(lockPath, { throwIfNoEntry: false })?.mtimeMs ?? Date.now();
+    if (Date.now() - mtime < 60000) return;
+    fs.rmSync(lockPath, { force: true });
+    try { fd = fs.openSync(lockPath, 'wx', 0o600); } catch { return; }
   }
-  if (process.argv.includes('--command')) {
-    const command = channelCommand();
-    if (!command) return;
-    const result = spawnSync('sh', ['-c', command, 'fm-away-nudge', saved.pending.message], {
-      input: `${saved.pending.message}\n`, encoding: 'utf8', timeout: Number(process.env.FM_WEDGE_ALARM_TIMEOUT_SECS || 10000),
-    });
-    if (result.status !== 0) throw new Error(`command notification failed: ${result.error || result.stderr || result.status}`);
-    saved.sent.push(key);
-    saved.suggested = [...new Set([...(saved.suggested || []), ...saved.pending.items.map((item) => item.id)])];
-    saved.lastSent = saved.pending;
-    saved.pending = null;
-    writeLedger(saved);
-    console.log('sent');
-    return;
+  try {
+    const current = readLedger(entered);
+    const items = candidates();
+    if (!items.length) return;
+    const key = crypto.createHash('sha256').update(items.map((item) => item.id).sort().join('\n')).digest('hex');
+    if (current.sent.includes(key)) return;
+    if (current.pending?.key !== key) {
+      current.pending = { key, items, message: messageFor(items, now - entered) };
+      writeLedger(current);
+    }
+    if (process.argv.includes('--command')) {
+      const command = channelCommand();
+      if (!command) return;
+      const result = spawnSync('sh', ['-c', command, 'fm-away-nudge', current.pending.message], {
+        input: `${current.pending.message}\n`, encoding: 'utf8', timeout: Number(process.env.FM_WEDGE_ALARM_TIMEOUT_SECS || 10000),
+      });
+      if (result.status !== 0) throw new Error(`command notification failed: ${result.error || result.stderr || result.status}`);
+      current.sent.push(key);
+      current.suggested = [...new Set([...(current.suggested || []), ...current.pending.items.map((item) => item.id)])];
+      current.lastSent = current.pending;
+      current.pending = null;
+      writeLedger(current);
+      console.log('sent');
+      return;
+    }
+    console.log(current.pending.message);
+  } finally {
+    fs.closeSync(fd);
+    fs.rmSync(lockPath, { force: true });
   }
-  console.log(saved.pending.message);
 }
 try { main(); } catch (error) { console.error(`fm-afk-nudge: ${error.message}`); process.exitCode = 1; }

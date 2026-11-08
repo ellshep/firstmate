@@ -289,13 +289,22 @@ fm_afk_contract_now_iso() {
   date -u +%Y-%m-%dT%H:%M:%SZ
 }
 
+# Lazily reach the primary-harness detector. bin/fm-supervision-engine-lib.sh's
+# fm_supervision_host_primary is the one boundary that already combines the
+# FM_SUPERVISION_PRIMARY_HARNESS pin, the test seam, and bin/fm-harness.sh's
+# marker-vs-ancestry detection, the same reason fm_afk_contract_lock_helpers
+# keeps its own primitive an analysis boundary.
+fm_afk_contract_harness_helpers() {
+  command -v fm_supervision_host_primary >/dev/null 2>&1 && return 0
+  # shellcheck source=/dev/null
+  . "$FM_AFK_CONTRACT_DIR/fm-supervision-engine-lib.sh"
+}
+
 fm_afk_contract_phone_reachable() {
   local cfg
   if [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/supervision-host-off" ]; then
-    if [ "${FM_SUPERVISION_PRIMARY_HARNESS:-}" = claude ] \
-      || { [ -z "${FM_SUPERVISION_PRIMARY_HARNESS:-}" ] && [ "${CLAUDECODE:-}" = 1 ]; }; then
-      return 0
-    fi
+    fm_afk_contract_harness_helpers
+    [ "$(fm_supervision_host_primary)" = claude ] && return 0
   fi
   cfg="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/wedge-alarm"
   [ -f "$cfg" ] || return 1
