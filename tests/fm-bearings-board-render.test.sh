@@ -94,12 +94,12 @@ require_listener_reached_poll() {  # <home>
 
 # Build the board from <underway-json> plus <charted-json> and return what the
 # renderer produced.
-render_board() {  # <home> <underway-json> <charted-json> [charted_more] [charted_warning_more] [calls-json]
-  local home=$1 underway=$2 charted=$3 more=${4:-0} warning_more=${5:-0} calls=${6:-'[]'} data="$1/payload.json"
+render_board() {  # <home> <underway-json> <charted-json> [charted_more] [charted_warning_more] [calls-json] [lavish-json]
+  local home=$1 underway=$2 charted=$3 more=${4:-0} warning_more=${5:-0} calls=${6:-'[]'} lavish=${7:-'[]'} data="$1/payload.json"
   jq -n --argjson underway "$underway" --argjson charted "$charted" \
-    --argjson more "$more" --argjson warning_more "$warning_more" --argjson calls "$calls" '{
+    --argjson more "$more" --argjson warning_more "$warning_more" --argjson calls "$calls" --argjson lavish "$lavish" '{
     schema:"fm-bearings-board.v1", home:"render-home", generated:"2026-08-26T00:00Z",
-    prs_live:false, captains_call:$calls, underway:$underway, landed:[],
+    prs_live:false, captains_call:$calls, underway:$underway, landed:[], lavish_boards:$lavish,
     charted:$charted, charted_more:$more, charted_warning_more:$warning_more}' > "$data"
   PATH="$home/fakebin:$PATH" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
@@ -114,6 +114,29 @@ render_board() {  # <home> <underway-json> <charted-json> [charted_more] [charte
 # Build the board from <charted-json> alone and return what the renderer produced.
 render() {  # <home> <charted-json> [charted_more] [charted_warning_more]
   render_board "$1" '[]' "$2" "${3:-0}" "${4:-0}"
+}
+
+test_lavish_board_links_and_empty_state_render() {
+  local home out
+  home=$(make_home lavish-links)
+  out=$(render_board "$home" '[]' '[]' 0 0 '[]' '[
+    {"file":"/tmp/review.html","title":"Review choice","url":"http://127.0.0.1:4387/session/one",
+     "status":"open","needs_you":"Choose the rollout","unclaimed":false},
+    {"file":"/tmp/other.html","title":"Other review","url":"http://127.0.0.1:4387/session/two",
+     "status":"feedback","needs_you":null,"unclaimed":true}
+  ]') || fail "the Lavish board index did not render"
+  printf '%s' "$out" | jq -e '
+    .error == "" and (.lavishBoards | length) == 2
+    and .lavishBoards[0].url == "http://127.0.0.1:4387/session/one"
+    and (.lavishBoards[0].markers | any(contains("needs you · Choose the rollout")))
+    and (.lavishBoards[1].badges | any(.text == "feedback waiting"))
+    and (.lavishBoards[1].markers | any(. == "unclaimed"))
+  ' >/dev/null || fail "the Lavish rows lost a link, status, or marker: $out"
+  home=$(make_home lavish-empty)
+  out=$(render "$home" '[]') || fail "the empty Lavish board index did not render"
+  printf '%s' "$out" | jq -e '.lavishEmpty == ["No outstanding Lavish boards."]' >/dev/null \
+    || fail "the Lavish empty state is missing: $out"
+  pass "Lavish board links, badges, markers, and empty state render"
 }
 
 test_later_option_queues_a_dated_deferral() {
@@ -318,6 +341,7 @@ EOF
 }
 
 test_full_snapshot_question_reaches_the_rendered_decision
+test_lavish_board_links_and_empty_state_render
 test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status
 test_an_underway_identifier_label_is_not_replaced_by_run_status
 test_charted_next_reads_newest_filed_first

@@ -70,6 +70,7 @@ cat > "$LAB/payload.json" <<'JSON'
   ],
   "underway": [],
   "landed": [],
+  "lavish_boards": [],
   "charted": []
 }
 JSON

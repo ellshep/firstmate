@@ -81,7 +81,13 @@ SH
 echo "curl $*" >> "$NET_LOG"
 exit 1
 SH
-  chmod +x "$fb/no-mistakes" "$fb/tmux" "$fb/gh" "$fb/gh-axi" "$fb/curl"
+  cat > "$fb/lavish-axi" <<'SH'
+#!/usr/bin/env bash
+if [ -n "${FAKE_LAVISH_LIST:-}" ]; then cat "$FAKE_LAVISH_LIST"; else
+  printf 'sessions[0]{file,status,url,pending_prompts,listener}:\n'
+fi
+SH
+  chmod +x "$fb/no-mistakes" "$fb/tmux" "$fb/gh" "$fb/gh-axi" "$fb/curl" "$fb/lavish-axi"
   printf '%s\n' "$fb"
 }
 
@@ -1085,6 +1091,39 @@ test_default_is_bounded_and_local_only() {
       and (.in_flight | any(.id == "ship-task" and .repo == "firstmate"))
   ' >/dev/null || fail "json schema or main Underway repository wrong: $json"
   pass "default output is bounded, local-only, and marks omitted surfaces"
+}
+
+test_lavish_inventory_includes_feedback_and_discloses_unclaimed() {
+  local home fakebin json rc
+  home=$(make_home lavish-inventory); write_fixture "$home"
+  fakebin=$(make_fakebin "$home")
+  cat > "$home/lavish.list" <<'EOF'
+sessions[4]{file,status,url,pending_prompts,listener}:
+  /tmp/review-one.html,open,"http://127.0.0.1:4387/session/one",0,agent-listener
+  /tmp/review-two.html,feedback,"http://127.0.0.1:4387/session/two",0,none
+  /tmp/status-only.html,open,"http://127.0.0.1:4387/session/status",0,agent-listener
+  /tmp/ended.html,ended,"http://127.0.0.1:4387/session/ended",0,none
+EOF
+  awk '/^## Done$/ { print "- [ ] review-choice - Review /tmp/review-one.html (repo: firstmate) (kind: captain) (hold: choose /tmp/review-one.html) (hold-kind: captain)"; print "" } { print }' \
+    "$home/data/backlog.md" > "$home/data/backlog.tmp" && mv "$home/data/backlog.tmp" "$home/data/backlog.md"
+  printf 'needs-decision [key=review]: choose /tmp/status-only.html\n' > "$home/state/ship-task.status"
+  json=$(FAKE_LAVISH_LIST="$home/lavish.list" run "$home" "$fakebin" --json) \
+    || fail "Lavish inventory snapshot failed"
+  printf '%s' "$json" | jq -e '
+    [.lavish_boards[].title] == ["review one", "review two", "status only"]
+    and .lavish_boards[0].needs_you == "Review /tmp/review-one.html"
+    and .lavish_boards[0].unclaimed == true
+    and .lavish_boards[1].status == "feedback"
+    and .lavish_boards[1].unclaimed == true
+    and (.lavish_boards[2].needs_you | contains("choose /tmp/status-only.html"))
+    and .lavish_boards[2].unclaimed == false
+  ' >/dev/null || fail "Lavish board inventory lost a session or marker: $json"
+  set +e
+  FAKE_LAVISH_LIST="$home/lavish.list" FM_BEARINGS_LAVISH_BOARDS=1 run "$home" "$fakebin" --json > "$home/over-bound" 2>&1
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "an over-bound Lavish inventory was silently truncated"
+  pass "Lavish inventory includes open and feedback sessions and refuses truncation"
 }
 
 test_toon_json_parity() {
@@ -3485,6 +3524,7 @@ fm_test_run \
   test_registry_unavailability_and_bounds_are_explicit \
   test_current_landed_baseline_is_repeatable_and_prior_report_independent \
   test_default_is_bounded_and_local_only \
+  test_lavish_inventory_includes_feedback_and_discloses_unclaimed \
   test_toon_json_parity \
   test_landed_includes_secondmate_home_merges \
   test_landed_accepts_only_kind_owned_delivery_artifacts \

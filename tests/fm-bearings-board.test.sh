@@ -175,6 +175,7 @@ write_valid_payload() {  # <path>
   ],
   "underway": [],
   "landed": [],
+  "lavish_boards": [],
   "charted": [
     { "id": "sample-queued", "repo": "sample", "title": "Queued work", "reason": "", "dispatchable": true }
   ],
@@ -320,7 +321,18 @@ test_build_refuses_malformed_payloads_before_touching_the_board() {
   set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
   [ "$rc" -ne 0 ] || fail "a non-HTTPS Landed PR URL was accepted"
 
+  write_valid_payload "$data"
+  jq 'del(.lavish_boards)' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a payload without the Lavish inventory was accepted"
+
+  write_valid_payload "$data"
+  jq '.lavish_boards = [{file:"/tmp/unsafe.html",title:"Unsafe",url:"javascript:alert(1)",status:"open",needs_you:null,unclaimed:true}]' \
+    "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "an unsafe Lavish session URL was accepted"
   assert_absent "$board" "a refused payload still produced a board"
+
   pass "build refuses malformed payloads before touching the board"
 }
 
@@ -330,8 +342,12 @@ test_build_injects_binds_then_arms() {
   data="$home/payload.json"
   board="$home/.lavish/bearings-board.html"
   write_valid_payload "$data"
+  jq '.lavish_boards = [{file:"/tmp/review.html",title:"Review",url:"http://127.0.0.1:4387/session/one",status:"feedback",needs_you:"Choose",unclaimed:false}]' \
+    "$data" > "$data.tmp" && mv "$data.tmp" "$data"
 
   out=$(run_board "$home" build "$data") || fail "a valid payload did not build"
+  extract_payload "$board" | jq -e '.lavish_boards[0].status == "feedback"' >/dev/null \
+    || fail "the Lavish session was lost from the built payload"
   assert_contains "$out" "board: $board" "build did not report the board path: $out"
   assert_contains "$out" "served: $board" "build did not establish the Lavish session: $out"
   assert_contains "$out" "bound: " "build did not report the answer binding: $out"

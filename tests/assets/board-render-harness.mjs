@@ -154,6 +154,14 @@ const captains_call = (byId.get("bb-call") || new Node("div")).children
 
 const ch = byId.get("bb-charted") || new Node("div");
 const charted = rowsOf(ch);
+const boardList = byId.get("bb-lavish-boards") || new Node("div");
+const lavishBoards = boardList.children.filter((r) => r.className.includes("bb-row")).map((row) => {
+  const main = row.children.find((c) => c.className.includes("bb-row__main"));
+  const link = main?.children.find((c) => c.tagName === "a");
+  return { title: link?.textContent, url: link?.href, badges: badgesOf(row),
+    markers: main?.children.filter((c) => c.className.includes("bb-row__sub")).map((c) => c.textContent) };
+});
+const lavishEmpty = boardList.children.filter((c) => c.className.includes("bb-empty")).map((c) => c.textContent);
 // A fail-closed render replaces the page body instead of the board sections, so
 // surface it rather than reporting an empty board as a successful render.
 const errorText = [...byId.entries()]
@@ -164,4 +172,4 @@ const empty = ch.children.filter((c) => c.className.includes("bb-empty")).map((c
 const more = ch.children.filter((c) => c.className.includes("bb-morechip")).map((c) => c.textContent);
 
 process.stdout.write(
-  JSON.stringify({ stats, captains_call, underway, charted, empty, more, error: errorText, callOptions, queued }) + "\n");
+  JSON.stringify({ stats, captains_call, underway, charted, lavishBoards, lavishEmpty, empty, more, error: errorText, callOptions, queued }) + "\n");

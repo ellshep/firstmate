@@ -154,6 +154,8 @@ a { color: inherit; text-decoration: none; }
 .bb-section { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .bb-section__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .bb-cols { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 22px; }
+.bb-board-link { color: var(--text-strong); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.bb-board-link:focus-visible { outline: 2px solid var(--rust-500); outline-offset: 3px; }
 
 /* ---- Captain's Call: one card at a time, dealt off a visible stack ---- */
 .bb-callwrap { display: flex; flex-direction: column; gap: 12px; }
@@ -365,6 +367,13 @@ a { color: inherit; text-decoration: none; }
     </section>
   </div>
 
+  <section class="bb-section">
+    <div class="bb-section__head">
+      <span class="fm-sign fm-sign--eyebrow">Outstanding Lavish boards</span>
+    </div>
+    <div class="fm-card"><div class="bb-rows" id="bb-lavish-boards"></div></div>
+  </section>
+
   <footer class="bb-foot">
     <span class="bb-meta-mono" id="bb-provenance">-</span>
   </footer>
@@ -414,7 +423,7 @@ __FM_BEARINGS_BOARD_DATA__
     renderBoardError("Unsupported board data schema: " + (data && data.schema ? data.schema : "(none)"));
     return;
   }
-  var fleetLists = [data.captains_call, data.underway, data.landed, data.charted];
+  var fleetLists = [data.captains_call, data.underway, data.landed, data.charted, data.lavish_boards];
   var callItemsValid = Array.isArray(data.captains_call) && data.captains_call.every(function (item) {
     return item && typeof item === "object" &&
       typeof item.key === "string" && item.key.length > 0 &&
@@ -663,6 +672,23 @@ __FM_BEARINGS_BOARD_DATA__
       row.appendChild(a);
     }
     ld.appendChild(row);
+  });
+
+  /* The board index is always visible, including when Lavish has no sessions. */
+  var boards = document.getElementById("bb-lavish-boards");
+  if (!data.lavish_boards.length) boards.appendChild(el("div", "bb-empty", "No outstanding Lavish boards."));
+  data.lavish_boards.forEach(function (board) {
+    var row = el("div", "bb-row");
+    row.appendChild(badge(board.status === "feedback" ? "info" : "online",
+      board.status === "feedback" ? "feedback waiting" : "open"));
+    var main = el("div", "bb-row__main");
+    var link = el("a", "bb-row__title bb-board-link", board.title);
+    link.href = board.url; link.target = "_blank"; link.rel = "noopener";
+    main.appendChild(link);
+    if (board.needs_you) main.appendChild(el("div", "bb-row__sub", "needs you · " + board.needs_you));
+    if (board.unclaimed) main.appendChild(el("div", "bb-row__sub", "unclaimed"));
+    row.appendChild(main);
+    boards.appendChild(row);
   });
 
   /* Charted Next + dispatch picker */

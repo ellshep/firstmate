@@ -117,6 +117,7 @@ FM_BEARINGS_UNHEALTHY=${FM_BEARINGS_UNHEALTHY:-20}
 FM_BEARINGS_PR_REPOS=${FM_BEARINGS_PR_REPOS:-10}
 FM_BEARINGS_PR_LIMIT=${FM_BEARINGS_PR_LIMIT:-20}
 FM_BEARINGS_PR_TIMEOUT=${FM_BEARINGS_PR_TIMEOUT:-20}
+FM_BEARINGS_LAVISH_BOARDS=${FM_BEARINGS_LAVISH_BOARDS:-100}
 case "$FM_BEARINGS_PR_TIMEOUT" in ''|*[!0-9]*|0) FM_BEARINGS_PR_TIMEOUT=20 ;; esac
 validate_bound() {  # <name> <value>
   case "$2" in ''|*[!0-9]*|0) echo "fm-bearings-snapshot: $1 must be a positive integer" >&2; exit 2 ;; esac
@@ -132,6 +133,7 @@ validate_bound FM_BEARINGS_RECORDED_PRS "$FM_BEARINGS_RECORDED_PRS"
 validate_bound FM_BEARINGS_UNHEALTHY "$FM_BEARINGS_UNHEALTHY"
 validate_bound FM_BEARINGS_PR_REPOS "$FM_BEARINGS_PR_REPOS"
 validate_bound FM_BEARINGS_PR_LIMIT "$FM_BEARINGS_PR_LIMIT"
+validate_bound FM_BEARINGS_LAVISH_BOARDS "$FM_BEARINGS_LAVISH_BOARDS"
 
 usage() {
   cat <<'EOF'
@@ -152,6 +154,7 @@ Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
   decisions_open{id,key,verb,summary,title,question,hold_bucket,owner}, landed{id,what,artifact,owner},
   gates{id,title,blocked_by,reason,owner,filed}, reports{id,path}, recorded_prs{id,url},
+  lavish_boards{file,title,url,status,needs_you,unclaimed},
   unhealthy_endpoints{...} (only when non-empty), omitted{surface,reveal}.
 Default gates are selected newest filed first before their bound; undated gates
   retain input order after dated gates.
@@ -246,6 +249,39 @@ else
 fi
 HOME_LABEL=$(printf '%s' "$SNAP" | jq -er '.fm_home | strings | split("/") | (.[-2:] | join("/"))') \
   || { echo "fm-bearings-snapshot: invalid canonical snapshot" >&2; exit 1; }
+
+# Lavish owns the session inventory. Refuse an unavailable or over-bound list
+# rather than silently publishing a board that hides outstanding sessions.
+command -v lavish-axi >/dev/null 2>&1 \
+  || { echo "fm-bearings-snapshot: lavish-axi not found" >&2; exit 1; }
+LAVISH_LIST=$(fm_run_timed 10 lavish-axi) \
+  || { echo "fm-bearings-snapshot: cannot list Lavish sessions" >&2; exit 1; }
+LAVISH_ROWS=$(printf '%s\n' "$LAVISH_LIST" | awk '
+  /^[[:space:]]*sessions\[[0-9]+\]/ { listed=1; next }
+  listed && /,(open|feedback),/ {
+    if ($0 !~ /^[[:space:]]*[^[:space:]].*,(open|feedback),"https?:\/\//) { bad=1; next }
+    line=$0; sub(/^[[:space:]]+/, "", line)
+    file=line; sub(/,(open|feedback),"https?:\/\/.*$/, "", file)
+    rest=substr(line, length(file)+2)
+    count=split(rest, fields, ",")
+    url=fields[2]; gsub(/^"|"$/, "", url)
+    if (file != "" && (fields[1] == "open" || fields[1] == "feedback") &&
+        (count == 3 || count == 4) && fields[3] ~ /^[0-9]+$/) {
+      listener=(count == 4 && fields[4] != "" ? fields[4] : "none")
+      print file "\t" fields[1] "\t" url "\t" listener
+    }
+    else bad=1
+  }
+  END { if (!listed || bad) exit 1 }
+') || { echo "fm-bearings-snapshot: malformed Lavish session listing" >&2; exit 1; }
+LAVISH_BOARDS=$(printf '%s\n' "$LAVISH_ROWS" | jq -R -s --argjson limit "$FM_BEARINGS_LAVISH_BOARDS" '
+  [split("\n")[] | select(length > 0) | split("\t")
+    | if length == 4 then . else error("malformed Lavish session row") end
+    | {file:.[0],status:.[1],url:.[2],listener:.[3]}] as $rows
+  | if ($rows | length) > $limit then error("Lavish session bound exceeded") else
+      $rows
+    end
+') || { echo "fm-bearings-snapshot: cannot project Lavish sessions" >&2; exit 1; }
 
 # --- optional live GitHub PR enrichment -------------------------------------
 PR_STATUS='not_requested (run: /bearings include PRs)'
@@ -384,7 +420,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   --argjson pr_rows_capped "$PR_ROWS_CAPPED" \
   --argjson pr_rows_min_total "$PR_ROWS_MIN_TOTAL" \
   --argjson return_catchup "$RETURN_CATCHUP" \
-  --argjson candidate_prs "$CANDIDATE_PRS" "$FM_LANDED_JQ_DEFS"'
+  --argjson candidate_prs "$CANDIDATE_PRS" \
+  --argjson lavish_boards "$LAVISH_BOARDS" "$FM_LANDED_JQ_DEFS"'
   def trunc($n): if . == null then null else
     (tostring | gsub("\\s+"; " ") | if (length > $n) then (.[:$n] + "…") else . end) end;
   def fit($n):
@@ -661,6 +698,28 @@ MODEL=$(printf '%s' "$SNAP" | jq \
                  | if $all_queued == 1 then . else .[:$gates_n] end)),
       reports: (if $all_reports == 1 then $reports_all else $reports_all[:$reports_n] end),
       recorded_prs: (if $all_recorded_prs == 1 then $recorded_prs_all else $recorded_prs_all[:$recorded_prs_n] end)
+      ,lavish_boards: [ $lavish_boards[] | . as $board
+        | (([ $snap.backlog.records[]?
+             | select(.hold_bucket == "live" and ((.raw // .title // "") | contains($board.file)))
+             | (.title // .hold_reason // .id) ]
+           + [ ($snap.secondmate_current.records // [])[] | .queued[]?
+             | select(.hold_bucket == "live" and ((.hold_reason // .title // "") | contains($board.file)))
+             | (.title // .hold_reason // .id) ]
+           + [ $snap.tasks[]?
+             | select(.paths.status_log.last_event.state == "needs-decision" and
+                 ((.paths.status_log.last_event.raw // "") | contains($board.file)))
+             | (.paths.status_log.last_event.note // .id) ]
+           + [ $snap.tasks[]? | .hints.open_decisions[]?
+             | select(((.raw // .note // .summary // "") | contains($board.file)))
+             | (.note // .summary // .key) ]) | .[0] // null) as $decision
+        | ([ $snap.tasks[]?
+             | select(.current.state != "done" and .current.state != "failed"
+                 and ((.paths.status_log.last_event.raw // "") | contains($board.file))) ]
+           | length > 0) as $matching_task
+        | {file:$board.file,
+           title:($board.file | split("/") | last | sub("\\.html?$"; "") | gsub("[-_]"; " ")),
+           url:$board.url,status:$board.status,needs_you:$decision,
+           unclaimed:($board.listener != "agent-listener" or ($matching_task | not))} ]
     }
   | . + (if ($unhealthy_all | length) > 0 then
            {unhealthy_endpoints:(if $all_unhealthy == 1 then $unhealthy_all else $unhealthy_all[:$unhealthy_n] end)}
