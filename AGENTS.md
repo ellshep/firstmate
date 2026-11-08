@@ -191,7 +191,7 @@ Classify the deliverable:
 - Load `diagnostic-reasoning` before scoping a reported bug and before acting on a diagnostic report.
 
 Before dispatching a ship from a backlog item the captain did not just describe in the moment, list its open product decisions and grill the captain in rounds of numbered questions, each with a recommended answer; use the Matt Pocock grilling skill when available.
-Record the captain's answers in the task note and the brief's `## Captain's intent` decision list; if the captain just described the task, record the decisions they supplied there instead.
+Record the captain's answers in the task note and the brief's `## Captain's intent` decision list; if the captain just described the task, write `Captain-described-in-the-moment: yes` under `### Decisions settled by the captain` instead of a decision list.
 Never leave a product choice for the worker to settle: the worker escalates an unsettled choice with `needs-decision`.
 
 Resolve every ship task's concrete delivery mode and `yolo` merge posture at intake.

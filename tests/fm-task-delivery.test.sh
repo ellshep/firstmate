@@ -1024,6 +1024,34 @@ EOF
     "misplaced decision entry refusal did not name the decision gate"
   assert_absent "$home/state/$id.meta" "misplaced decision entry spawn wrote task metadata"
 
+  # Regression: a decision list answering only its first bullet and leaving the
+  # rest as the unfilled placeholder must still be refused - the captain's
+  # standing rule requires every listed decision to be settled, not just one.
+  id=delivery-decisions-partially-answered
+  mkdir -p "$home/data/$id"
+  cat > "$home/data/$id/brief.md" <<'EOF'
+# Task
+## Captain's intent
+Build the requested change.
+
+### Decisions settled by the captain
+- {DECISION_AND_ANSWER}
+- Use Postgres, not Mongo.
+- {DECISION_AND_ANSWER}
+
+## Firstmate spec
+Exercise the ready gate.
+
+# Definition of done
+Delivery contract: mode=no-mistakes
+EOF
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn accepted a decision list with unanswered bullets left"
+  assert_contains "$out" "needs a nonempty entry under ### Decisions settled by the captain" \
+    "partially-answered decision list refusal did not name the decision gate"
+  assert_absent "$home/state/$id.meta" "partially-answered decision list spawn wrote task metadata"
+
   id=delivery-herdr-lifecycle-unguarded
   mkdir -p "$home/data/$id"
   cat > "$home/data/$id/brief.md" <<'EOF'

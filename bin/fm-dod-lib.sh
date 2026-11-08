@@ -398,9 +398,11 @@ fm_brief_task_content_valid() {  # <file>
   [ -n "$(printf '%s' "$task" | tr -d '[:space:]')" ]
 }
 
-# A new ship must carry a captain-settled decision entry, or the explicit
-# declaration that the captain described this task in the moment. Relaunches
-# keep their already-dispatched brief and do not re-enter this intake gate.
+# A new ship must carry only answered captain-settled decision entries - every
+# bullet must be answered, not merely one of several - or the explicit
+# declaration that the captain described this task in the moment with no
+# decision bullets at all. Relaunches keep their already-dispatched brief and
+# do not re-enter this intake gate.
 fm_brief_ship_decisions_valid() {  # <file>
   local file=$1 intent decisions
   if fm_brief_task_heading_present "$file" "## Captain's intent"; then
@@ -411,9 +413,15 @@ fm_brief_ship_decisions_valid() {  # <file>
   fm_brief_heading_parse - '### Decisions settled by the captain' present >/dev/null <<<"$intent" || return 1
   decisions=$(fm_brief_heading_parse - '### Decisions settled by the captain' body <<<"$intent")
   printf '%s\n' "$decisions" | awk '
-    /^[[:space:]]*Captain-described-in-the-moment:[[:space:]]*yes[[:space:]]*$/ { valid = 1 }
-    /^[[:space:]]*-[[:space:]]*[^[:space:]].*$/ && $0 !~ /\{DECISION_AND_ANSWER\}/ { valid = 1 }
-    END { exit !valid }
+    /^[[:space:]]*Captain-described-in-the-moment:[[:space:]]*yes[[:space:]]*$/ { sentinel = 1; next }
+    /^[[:space:]]*-/ {
+      bullets++
+      if (!($0 ~ /^[[:space:]]*-[[:space:]]*[^[:space:]].*$/ && $0 !~ /\{DECISION_AND_ANSWER\}/)) unanswered++
+    }
+    END {
+      if (bullets > 0) { exit !(unanswered == 0) }
+      exit !sentinel
+    }
   '
 }
 
