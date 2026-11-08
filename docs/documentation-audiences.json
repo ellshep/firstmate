@@ -670,6 +670,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "tests/fixtures/codex-busy-recap-visible.txt",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "tests/fixtures/codex-busy-visible.txt",
       "audience": "maintainer-verification"
     },
@@ -678,7 +682,15 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "tests/fixtures/codex-idle-recap-visible.txt",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "tests/fixtures/codex-idle-visible.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/fixtures/codex-recap-no-footer-visible.txt",
       "audience": "maintainer-verification"
     },
     {

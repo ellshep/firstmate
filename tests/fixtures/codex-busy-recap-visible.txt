@@ -1,0 +1,8 @@
+↳ Recap: The goal is to document and safely re-check release readiness.
+         Next: Remain paused until 2026-11-12T12:00Z; then re-check.
+
+• Working (12s • esc to interrupt)
+
+› Ask Codex to do anything
+
+  GPT-6-Luna high · ~/.treehouse/... · Follow worker role contract    ⚠ 12 warnings · f2 to view

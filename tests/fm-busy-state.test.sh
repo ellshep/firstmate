@@ -559,14 +559,14 @@ test_codex_viewport_source() {
     || fail "codex must not trust an unwired push source"
   # shellcheck disable=SC2329 # exercised through fm_busy_classify
   fm_backend_visible_capture() { cat "$ROOT/tests/fixtures/codex-$2-visible.txt"; }
-  for case_name in busy idle idle-agents approval unrecognized; do
+  for case_name in busy busy-recap idle idle-agents idle-recap approval recap-no-footer unrecognized; do
     out=$(fm_busy_classify herdr "$case_name" codex t1 "$state")
-    case "$case_name" in busy) expected='busy codex-viewport' ;; idle|idle-agents) expected='idle codex-viewport' ;; *) expected='unknown codex-viewport' ;; esac
+    case "$case_name" in busy|busy-recap) expected='busy codex-viewport' ;; idle|idle-agents|idle-recap) expected='idle codex-viewport' ;; *) expected='unknown codex-viewport' ;; esac
     [ "$out" = "$expected" ] || fail "codex $case_name viewport: expected '$expected', got '$out'"
   done
   out=$(fm_busy_classify herdr busy claude t1 "$state")
   [ "$out" = 'unknown source-mismatch' ] || fail "Codex viewport must not classify another adapter, got '$out'"
-  pass "captured Codex busy, idle, approval, and unrecognized viewports classify conservatively"
+  pass "captured Codex busy, idle, recap, approval, and unrecognized viewports classify conservatively"
 }
 
 test_kimi_unverified_gate() {
