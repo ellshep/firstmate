@@ -1732,6 +1732,99 @@ prepare_scout_teardown() {
   printf '%s\n' 'decisions_reviewed=1' >> "$case_dir/state/task-x1.meta"
 }
 
+test_scout_unsaved_lavish_board_refuses() {
+  local case_dir out rc head
+  case_dir=$(make_case scout-unsaved-lavish)
+  write_meta "$case_dir" no-mistakes scout
+  prepare_scout_teardown "$case_dir"
+  mkdir -p "$case_dir/wt/.lavish/img"
+  printf '<h1>board</h1>\n' > "$case_dir/wt/.lavish/review.html"
+  printf 'asset\n' > "$case_dir/wt/.lavish/img/asset.txt"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  rc=0
+  out=$(run_teardown "$case_dir" 2>&1) || rc=$?
+  expect_code 1 "$rc" "untracked Lavish board should refuse teardown"
+  assert_contains "$out" "copy .lavish/ to $case_dir/data/task-x1/boards/" \
+    "board refusal did not name the preservation remedy"
+  assert_refusal_retained_task_state "$case_dir" "unsaved Lavish board" "$head"
+
+  mkdir -p "$case_dir/data/task-x1/boards"
+  cp "$case_dir/wt/.lavish/review.html" "$case_dir/data/task-x1/boards/review.html"
+  rc=0
+  out=$(run_teardown "$case_dir" 2>&1) || rc=$?
+  expect_code 1 "$rc" "HTML-only copy should not discard the board asset"
+  assert_contains "$out" "unsaved Lavish board" "partial board copy was not diagnosed"
+
+  cp -R "$case_dir/wt/.lavish/." "$case_dir/data/task-x1/boards/"
+  rc=0
+  out=$(run_teardown "$case_dir" 2>&1) || rc=$?
+  expect_code 0 "$rc" "preserved Lavish board should allow scout teardown"
+  pass "untracked Lavish board requires a complete preserved copy"
+}
+
+test_scout_ignored_lavish_board_and_force() {
+  local case_dir out rc
+  case_dir=$(make_case scout-ignored-lavish)
+  write_meta "$case_dir" no-mistakes scout
+  prepare_scout_teardown "$case_dir"
+  printf '.lavish/\n' > "$case_dir/wt/.gitignore"
+  mkdir -p "$case_dir/wt/.lavish"
+  printf 'board\n' > "$case_dir/wt/.lavish/review.html"
+  rc=0
+  out=$(run_teardown "$case_dir" 2>&1) || rc=$?
+  expect_code 1 "$rc" "ignored Lavish board should refuse teardown"
+  assert_contains "$out" "unsaved Lavish board" "ignored board refusal was not diagnosed"
+  rc=0
+  out=$(run_teardown "$case_dir" --force 2>&1) || rc=$?
+  expect_code 0 "$rc" "force should keep its discard semantics"
+  pass "ignored Lavish board refuses unless force explicitly discards"
+}
+
+test_scout_open_lavish_round_refuses() {
+  local case_dir out rc head
+  case_dir=$(make_case scout-open-lavish-round)
+  write_meta "$case_dir" no-mistakes scout
+  prepare_scout_teardown "$case_dir"
+  FM_STATE_OVERRIDE="$case_dir/state" FM_DATA_OVERRIDE="$case_dir/data" \
+    FM_CONFIG_OVERRIDE="$case_dir/config" \
+    "$ROOT/bin/fm-procevent.sh" register-task lavish review-source task-x1 -- poll "$case_dir/wt/review.html" >/dev/null \
+    || fail "could not register task-owned Lavish source"
+  mkdir -p "$case_dir/state/procevent-inbox"
+  printf 'captured\n' > "$case_dir/state/procevent-inbox/review-source.1.result"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  rc=0
+  out=$(run_teardown "$case_dir" 2>&1) || rc=$?
+  expect_code 1 "$rc" "open Lavish round should refuse teardown"
+  assert_contains "$out" "active Lavish board" "open board refusal was not diagnosed"
+  assert_refusal_retained_task_state "$case_dir" "open Lavish round" "$head"
+  pass "task-owned Lavish round blocks scout cleanup"
+}
+
+test_scout_lavish_source_with_open_captain_decision_refuses() {
+  local case_dir out rc head
+  case_dir=$(make_case scout-lavish-decision)
+  write_meta "$case_dir" no-mistakes scout
+  prepare_scout_teardown "$case_dir"
+  seed_backlog_in_flight "$case_dir" scout
+  FM_STATE_OVERRIDE="$case_dir/state" FM_DATA_OVERRIDE="$case_dir/data" \
+    FM_CONFIG_OVERRIDE="$case_dir/config" \
+    "$ROOT/bin/fm-captain-hold.sh" hold board-answer --reason 'Review the board' \
+      --title 'Answer board review' --origin task-x1 >/dev/null \
+    || fail "could not hold the board decision"
+  printf 'decision_keys=board-answer\n' >> "$case_dir/state/task-x1.meta"
+  FM_STATE_OVERRIDE="$case_dir/state" FM_DATA_OVERRIDE="$case_dir/data" \
+    FM_CONFIG_OVERRIDE="$case_dir/config" \
+    "$ROOT/bin/fm-procevent.sh" register-task lavish review-source task-x1 -- poll "$case_dir/wt/review.html" >/dev/null \
+    || fail "could not register task-owned Lavish source"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  rc=0
+  out=$(run_teardown "$case_dir" 2>&1) || rc=$?
+  expect_code 1 "$rc" "open board decision should refuse teardown"
+  assert_contains "$out" "captain still owes answers" "board decision refusal was not diagnosed"
+  assert_refusal_retained_task_state "$case_dir" "open board decision" "$head"
+  pass "registered Lavish board with an open captain decision blocks cleanup"
+}
+
 # Clone a nested repository into the copy and add one plain scratch file.
 seed_nested_clone_and_scratch() {
   local case_dir=$1 wt=$2
@@ -6582,6 +6675,10 @@ test_untracked_only_refusal_diagnostic
 test_tracked_edit_refusal_diagnostic
 test_mixed_refusal_diagnostic
 test_scout_nested_clone_returns_with_no_untracked_entries
+test_scout_unsaved_lavish_board_refuses
+test_scout_ignored_lavish_board_and_force
+test_scout_open_lavish_round_refuses
+test_scout_lavish_source_with_open_captain_decision_refuses
 test_ship_nested_clone_is_refused_and_bytes_stay
 test_dirty_return_warns_which_slot_was_lost
 test_dirty_return_warns_even_when_a_later_step_refuses
