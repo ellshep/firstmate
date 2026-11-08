@@ -83,6 +83,25 @@ entered=$(FM_HOME="$MISMATCH_HOME" bash "$ROOT/bin/fm-afk-contract.sh" field ent
 FM_HOME="$MISMATCH_HOME" FM_AWAY_NUDGE_NOW_EPOCH=$((entered + 90000)) "$NUDGE" check --command >/dev/null 2>&1 || true
 [ ! -s "$MISMATCH_HOME/delivered" ] || fail 'an empty command: line before a real one must not deliver, matching the announcement'
 
+QUOTE_HOME="$HOME_DIR/quote"
+mkdir -p "$QUOTE_HOME/data" "$QUOTE_HOME/state"
+printf 'entered_epoch: 1000\n' > "$QUOTE_HOME/state/.afk-contract"
+tasks-axi add q1 'Fix: colon title bug' --kind ship --repo app --body $'Ready gate: passed\nAway start: app-pr' --file "$QUOTE_HOME/data/backlog.md" >/dev/null
+out=$(FM_HOME="$QUOTE_HOME" FM_AWAY_NUDGE_NOW_EPOCH=90000 "$NUDGE" check)
+assert_contains "$out" 'q1: Fix: colon title bug' 'a title tasks-axi JSON-quotes renders plain, not escaped'
+case "$out" in *'"Fix: colon title bug"'*) fail 'a quoted title leaked its JSON escaping into the nudge message' ;; esac
+
+PENDING_HOME="$HOME_DIR/pending"
+mkdir -p "$PENDING_HOME/data" "$PENDING_HOME/state"
+printf 'entered_epoch: 1000\n' > "$PENDING_HOME/state/.afk-contract"
+tasks-axi add p1 'Fix the widget' --kind ship --repo app --body $'Ready gate: passed\nAway start: app-pr' --file "$PENDING_HOME/data/backlog.md" >/dev/null
+tasks-axi add p2 'Fix the gadget' --kind ship --repo app --body $'Ready gate: passed\nAway start: app-pr' --file "$PENDING_HOME/data/backlog.md" >/dev/null
+FM_HOME="$PENDING_HOME" FM_AWAY_NUDGE_NOW_EPOCH=90000 "$NUDGE" check >/dev/null
+[ "$(FM_HOME="$PENDING_HOME" FM_AWAY_NUDGE_NOW_EPOCH=90000 "$NUDGE" reply yes)" = $'p1\np2' ] \
+  || fail 'a reply arriving before mark-sent did not resolve against the still-pending, unacked nudge'
+[ "$(FM_HOME="$PENDING_HOME" FM_AWAY_NUDGE_NOW_EPOCH=90000 "$NUDGE" reply '2')" = p2 ] \
+  || fail 'a numbered reply arriving before mark-sent did not resolve against the still-pending, unacked nudge'
+
 add s2 'Inspect the list' scout app $'Ready gate: passed\nAway start: scout'
 out=$(check 90000)
 assert_contains "$out" 's2: Inspect the list' 'changed set can be nudged'
