@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Private routing ledger: safe concurrent launch appends and a deduplicated outcome.
 set -eu
+# shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-routing-outcomes)
