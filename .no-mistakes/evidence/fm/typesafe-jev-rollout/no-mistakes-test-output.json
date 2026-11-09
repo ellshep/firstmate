@@ -1,0 +1,79 @@
+{
+  "verdict": "go",
+  "summary": "TypeSafe Jev advisory routing, private routing-outcomes ledger, best-effort spawn/teardown logging, and compact-adviser removal all behaved as intended under targeted live and executable tests.",
+  "testing_summary": "Ran tests/fm-routing-outcomes.test.sh and the full tests/fm-dispatch-resolve.test.sh suite (including Jev effort advisory clipping), then drove real fm-spawn.sh and fm-teardown.sh with a PATH-stubbed failing python3 so ledger failures only warn. Confirmed compact-adviser symbols are gone from bin/ and tests. Evidence logs are in this evidence directory.",
+  "tested": [
+    "`bash tests/fm-routing-outcomes.test.sh`",
+    "`bin/fm-test-run.sh tests/fm-dispatch-resolve.test.sh`",
+    "`bash ~/.no-mistakes/evidence/01M6ZA648NZKMD2P0YHERRC75S/live-routing-best-effort.sh`",
+    "`grep -rq 'COMPACT_ADVISER|compact.adviser|compact-adviser' bin tests` (exit 1 = absent)"
+  ],
+  "scenarios": [
+    {
+      "name": "Operator dispatches a task: launch event lands once in data/routing-outcomes.jsonl with qualification fields and no brief text",
+      "result": "pass",
+      "live": true,
+      "evidence": "tests/fm-routing-outcomes.test.sh",
+      "reason": ""
+    },
+    {
+      "name": "Typed dispatch resolves a matched rule whose profile omits effort: Jev suggested effort is visible but clipped to rule ceiling/floor",
+      "result": "pass",
+      "live": true,
+      "evidence": "tests/fm-dispatch-resolve.test.sh — Jev effort is advisory and clipped by rule ceiling and floor",
+      "reason": ""
+    },
+    {
+      "name": "Firstmate spawns a worker when advisory routing ledger append fails: spawn still succeeds with repair warning",
+      "result": "pass",
+      "live": true,
+      "evidence": "spawn-routing-ledger-best-effort.log",
+      "reason": ""
+    },
+    {
+      "name": "Firstmate tears down a scout when routing outcome finalize fails: teardown still completes and backlog closes",
+      "result": "pass",
+      "live": true,
+      "evidence": "teardown-routing-ledger-best-effort.log",
+      "reason": ""
+    },
+    {
+      "name": "compact-adviser removed: no COMPACT_ADVISER / compact-adviser references in bin or tests",
+      "result": "pass",
+      "live": true,
+      "evidence": "live-routing-best-effort.sh compact_adviser_removed check",
+      "reason": ""
+    }
+  ],
+  "artifacts": [
+    {
+      "kind": "log",
+      "label": "Routing outcomes behavior test",
+      "path": "~/.no-mistakes/evidence/01M6ZA648NZKMD2P0YHERRC75S/fm-routing-outcomes-test.log",
+      "url": "",
+      "content": "ok - routing ledger serializes concurrent appends and deduplicates launch and outcome events"
+    },
+    {
+      "kind": "log",
+      "label": "Spawn with failing routing ledger",
+      "path": "~/.no-mistakes/evidence/01M6ZA648NZKMD2P0YHERRC75S/spawn-routing-ledger-best-effort.log",
+      "url": "",
+      "content": "warning: ledger-fail-spawn was launched but routing evidence could not be appended to the advisory ledger; spawned ledger-fail-spawn harness=codex"
+    },
+    {
+      "kind": "log",
+      "label": "Teardown with failing routing ledger",
+      "path": "~/.no-mistakes/evidence/01M6ZA648NZKMD2P0YHERRC75S/teardown-routing-ledger-best-effort.log",
+      "url": "",
+      "content": "warning: task-x1's routing outcome could not be appended to the advisory ledger; teardown continues; teardown task-x1 complete"
+    },
+    {
+      "kind": "command-output",
+      "label": "Live best-effort harness summary",
+      "path": "~/.no-mistakes/evidence/01M6ZA648NZKMD2P0YHERRC75S/live-routing-best-effort-summary.txt",
+      "url": "",
+      "content": "summary ok=3 fail=0"
+    }
+  ],
+  "findings": []
+}

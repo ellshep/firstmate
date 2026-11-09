@@ -1,0 +1,11 @@
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no live watcher process holds this home lock (last beat: 1s ago).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision is owned by the stop-hook park; inspect the hook registration and watcher startup path before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+fm-routing-outcomes: simulated ledger failure
+warning: task-x1's routing outcome could not be appended to the advisory ledger; teardown continues
+teardown task-x1 complete (window firstmate:fm-task-x1, worktree /var/folders/yl/r0vn90j910bdmdqt36txn9sh0000gn/T//fm-live-routing.gzOyNl/teardown-case/wt)
+Backlog: task-x1 is closed in /private/var/folders/yl/r0vn90j910bdmdqt36txn9sh0000gn/T/fm-live-routing.gzOyNl/teardown-case/data/backlog.md. Run bin/fm-tasks-axi.sh ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due.

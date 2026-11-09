@@ -1,0 +1,1 @@
+summary ok=3 fail=0
