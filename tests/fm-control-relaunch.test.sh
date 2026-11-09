@@ -1880,7 +1880,9 @@ test_promoted_scout_relaunch_receives_the_current_delivery_contract() {
     brief="$home/data/$id/brief.md"
     sed 's/{TASK}/Fix the promotion relaunch contract./; s/{FIRSTMATE_SPEC}/Preserve the current delivery mode./' \
       "$brief" > "$brief.filled"
-    mv "$brief.filled" "$brief"
+    awk '/^## Firstmate spec$/ { print "### Decisions settled by the captain"; print "Captain-described-in-the-moment: yes"; print "" } { print }' \
+      "$brief.filled" > "$brief"
+    rm -f "$brief.filled"
     {
       echo "window=fmses:fm-$id"
       echo "endpoint_task_id=$id"
@@ -3239,7 +3241,9 @@ test_promotion_keeps_the_same_backlog_row_dispatchable() {
   brief="$home/data/$id/brief.md"
   sed 's/{TASK}/Investigate the relaunch gap./; s/{FIRSTMATE_SPEC}/Preserve the current work./' \
     "$brief" > "$brief.filled"
-  mv "$brief.filled" "$brief"
+  awk '/^## Firstmate spec$/ { print "### Decisions settled by the captain"; print "Captain-described-in-the-moment: yes"; print "" } { print }' \
+    "$brief.filled" > "$brief"
+  rm -f "$brief.filled"
   {
     echo "window=fmses:fm-$id"
     echo "endpoint_task_id=$id"
