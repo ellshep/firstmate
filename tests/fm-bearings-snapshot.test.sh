@@ -1118,10 +1118,11 @@ EOF
     and (.lavish_boards[2].needs_you | contains("choose /tmp/status-only.html"))
     and .lavish_boards[2].unclaimed == false
   ' >/dev/null || fail "Lavish board inventory lost a session or marker: $json"
-  set +e
-  FAKE_LAVISH_LIST="$home/lavish.list" FM_BEARINGS_LAVISH_BOARDS=1 run "$home" "$fakebin" --json > "$home/over-bound" 2>&1
-  rc=$?
-  set -e
+  if FAKE_LAVISH_LIST="$home/lavish.list" FM_BEARINGS_LAVISH_BOARDS=1 run "$home" "$fakebin" --json > "$home/over-bound" 2>&1; then
+    rc=0
+  else
+    rc=$?
+  fi
   [ "$rc" -ne 0 ] || fail "an over-bound Lavish inventory was silently truncated"
   pass "Lavish inventory includes open and feedback sessions and refuses truncation"
 }

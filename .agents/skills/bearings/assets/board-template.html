@@ -681,7 +681,7 @@ __FM_BEARINGS_BOARD_DATA__
   if (!data.lavish_boards.length) {
     boards.appendChild(el("div", "bb-empty",
       data.lavish_status && data.lavish_status !== "ok"
-        ? "Board list unavailable (" + data.lavish_status + ")."
+        ? "Board list " + data.lavish_status + "."
         : "No outstanding Lavish boards."));
   }
   data.lavish_boards.forEach(function (board) {

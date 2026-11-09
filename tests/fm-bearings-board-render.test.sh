@@ -94,13 +94,15 @@ require_listener_reached_poll() {  # <home>
 
 # Build the board from <underway-json> plus <charted-json> and return what the
 # renderer produced.
-render_board() {  # <home> <underway-json> <charted-json> [charted_more] [charted_warning_more] [calls-json] [lavish-json]
-  local home=$1 underway=$2 charted=$3 more=${4:-0} warning_more=${5:-0} calls=${6:-'[]'} lavish=${7:-'[]'} data="$1/payload.json"
+render_board() {  # <home> <underway-json> <charted-json> [charted_more] [charted_warning_more] [calls-json] [lavish-json] [lavish-status]
+  local home=$1 underway=$2 charted=$3 more=${4:-0} warning_more=${5:-0} calls=${6:-'[]'} lavish=${7:-'[]'} lavish_status=${8:-} data="$1/payload.json"
   jq -n --argjson underway "$underway" --argjson charted "$charted" \
-    --argjson more "$more" --argjson warning_more "$warning_more" --argjson calls "$calls" --argjson lavish "$lavish" '{
+    --argjson more "$more" --argjson warning_more "$warning_more" --argjson calls "$calls" --argjson lavish "$lavish" \
+    --arg lavish_status "$lavish_status" '{
     schema:"fm-bearings-board.v1", home:"render-home", generated:"2026-08-26T00:00Z",
     prs_live:false, captains_call:$calls, underway:$underway, landed:[], lavish_boards:$lavish,
-    charted:$charted, charted_more:$more, charted_warning_more:$warning_more}' > "$data"
+    charted:$charted, charted_more:$more, charted_warning_more:$warning_more}
+    | if $lavish_status != "" then . + {lavish_status:$lavish_status} else . end' > "$data"
   PATH="$home/fakebin:$PATH" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROCEVENT_CLAIM_ROOT="$home/procevent-claims" \
@@ -136,6 +138,11 @@ test_lavish_board_links_and_empty_state_render() {
   out=$(render "$home" '[]') || fail "the empty Lavish board index did not render"
   printf '%s' "$out" | jq -e '.lavishEmpty == ["No outstanding Lavish boards."]' >/dev/null \
     || fail "the Lavish empty state is missing: $out"
+  home=$(make_home lavish-unavailable)
+  out=$(render_board "$home" '[]' '[]' 0 0 '[]' '[]' 'unavailable (lavish-axi not found)') \
+    || fail "the unavailable Lavish board index did not render"
+  printf '%s' "$out" | jq -e '.lavishEmpty == ["Board list unavailable (lavish-axi not found)."]' >/dev/null \
+    || fail "the Lavish unavailable disclosure was lost or double-wrapped: $out"
   pass "Lavish board links, badges, markers, and empty state render"
 }
 
