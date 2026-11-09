@@ -100,6 +100,9 @@ make_settle_case() {
 ## Captain's intent
 Exercise settled-worktree detection for $id.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Record only the pane's stable worktree.
 EOF
