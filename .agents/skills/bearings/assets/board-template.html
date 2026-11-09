@@ -674,9 +674,16 @@ __FM_BEARINGS_BOARD_DATA__
     ld.appendChild(row);
   });
 
-  /* The board index is always visible, including when Lavish has no sessions. */
+  /* The board index is always visible, including when Lavish has no sessions.
+     lavish_status, when present, says WHY the list is empty - unavailable is
+     a different fact from no sessions being open. */
   var boards = document.getElementById("bb-lavish-boards");
-  if (!data.lavish_boards.length) boards.appendChild(el("div", "bb-empty", "No outstanding Lavish boards."));
+  if (!data.lavish_boards.length) {
+    boards.appendChild(el("div", "bb-empty",
+      data.lavish_status && data.lavish_status !== "ok"
+        ? "Board list unavailable (" + data.lavish_status + ")."
+        : "No outstanding Lavish boards."));
+  }
   data.lavish_boards.forEach(function (board) {
     var row = el("div", "bb-row");
     row.appendChild(badge(board.status === "feedback" ? "info" : "online",

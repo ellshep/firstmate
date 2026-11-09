@@ -113,7 +113,7 @@ Compose the payload from the same snapshot with the same ranking judgment as the
   Follow `bin/fm-bearings-board.sh`'s payload contract for the accepted format.
   Omit it or pass null for a row with no durable filed date - the main-inventory or return-catchup warning, an unavailable secondmate home, or a queued row filed before dates were recorded - and the board keeps those rows in payload order after every dated row.
 - Every Captain's Call item and every Underway, Recently Landed, and Charted Next row carries an explicit `repo` field. Fill it from the snapshot and task records wherever known; use null or an empty string only as the deliberate genuinely-no-repo marker, in which case the template may show the internal id. Ids otherwise stay in the payload only as the routing channel, and composed reasons name blockers in plain words.
-- Copy the snapshot's full `lavish_boards` array into the board payload unchanged.
+- Copy the snapshot's full `lavish_boards` array into the board payload unchanged, along with `lavish_status` when the snapshot included one.
   The board always shows this section, including an empty state; the snapshot owns its Lavish session inventory and decision markers.
 
 Run `build` once after composing the payload.

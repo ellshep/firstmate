@@ -1126,6 +1126,53 @@ EOF
   pass "Lavish inventory includes open and feedback sessions and refuses truncation"
 }
 
+# Every home's board file shares the same stable basename
+# (bin/fm-bearings-board.sh board_path), so two worker copies of the same
+# project - exactly the captain's many-open-sessions scenario - list two
+# sessions both titled "bearings board" unless the home/worktree each lives
+# under also makes it into the title.
+test_lavish_titles_disambiguate_same_named_boards() {
+  local home fakebin json file1 file2
+  home=$(make_home lavish-title-collision); write_fixture "$home"
+  fakebin=$(make_fakebin "$home")
+  file1="$TMP_ROOT/.treehouse/firstmate-57a1ea/1/firstmate/.lavish/bearings-board.html"
+  file2="$TMP_ROOT/.treehouse/firstmate-57a1ea/6/firstmate/.lavish/bearings-board.html"
+  cat > "$home/lavish.list" <<EOF
+sessions[2]{file,status,url,pending_prompts,listener}:
+  $file1,open,"http://127.0.0.1:4387/session/one",0,agent-listener
+  $file2,open,"http://127.0.0.1:4387/session/two",0,agent-listener
+EOF
+  json=$(FAKE_LAVISH_LIST="$home/lavish.list" run "$home" "$fakebin" --json) \
+    || fail "Lavish inventory snapshot failed"
+  printf '%s' "$json" | jq -e '
+    (.lavish_boards | length) == 2
+    and (.lavish_boards[0].title | startswith("bearings board"))
+    and (.lavish_boards[1].title | startswith("bearings board"))
+    and (.lavish_boards[0].title != .lavish_boards[1].title)
+  ' >/dev/null || fail "same-named Lavish boards were not disambiguated: $json"
+  pass "Lavish board titles disambiguate two same-named worker-copy boards"
+}
+
+# fm-captain-glance.sh and pre-existing suites (fm-afk-return, fm-contributions,
+# fm-secondmate-reconcile) call this script for fields that have nothing to do
+# with Lavish, with no lavish-axi stub on PATH - a hard Lavish dependency here
+# would break every one of them in CI, which never installs lavish-axi.
+test_lavish_unavailable_degrades_without_failing() {
+  local home fakebin json path
+  home=$(make_home lavish-unavailable); write_fixture "$home"
+  fakebin=$(make_fakebin "$home")
+  rm -f "$fakebin/lavish-axi"
+  path="$fakebin:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin"
+  PATH="$path" refresh_local_secondmate_ledgers "$home"
+  json=$(PATH="$path" FM_HOME="$home" FM_BEARINGS_NOW=2026-07-11T18:00:00Z \
+    NET_LOG="$home/net.log" "$BEARINGS" --json) \
+    || fail "bearings snapshot failed outright when lavish-axi is unavailable"
+  printf '%s' "$json" | jq -e '
+    .lavish_boards == [] and (.lavish_status | type == "string") and .lavish_status != "ok"
+  ' >/dev/null || fail "missing lavish-axi was not disclosed as an unavailable, empty board list: $json"
+  pass "A missing lavish-axi degrades to an empty disclosed board list, not a failure"
+}
+
 test_toon_json_parity() {
   local home fakebin toon json keys k
   home=$(make_home parity); write_fixture "$home"
@@ -3525,6 +3572,8 @@ fm_test_run \
   test_current_landed_baseline_is_repeatable_and_prior_report_independent \
   test_default_is_bounded_and_local_only \
   test_lavish_inventory_includes_feedback_and_discloses_unclaimed \
+  test_lavish_titles_disambiguate_same_named_boards \
+  test_lavish_unavailable_degrades_without_failing \
   test_toon_json_parity \
   test_landed_includes_secondmate_home_merges \
   test_landed_accepts_only_kind_owned_delivery_artifacts \

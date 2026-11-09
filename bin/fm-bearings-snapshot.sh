@@ -149,13 +149,19 @@ Default collection performs bounded concurrent remote-ledger reads for registere
 remote homes under one shared snapshot budget and may refresh the parent-side cache.
 --include-prs additionally performs live GitHub discovery and checks.
 
-Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,doing},
+Default fields: schema, home, generated, prs, lavish_status, in_flight{id,kind,state,repo,name,doing},
   secondmates{id,state,doing,provenance,freshness,age_seconds,contradiction,reason},
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
   decisions_open{id,key,verb,summary,title,question,hold_bucket,owner}, landed{id,what,artifact,owner},
   gates{id,title,blocked_by,reason,owner,filed}, reports{id,path}, recorded_prs{id,url},
-  lavish_boards{file,title,url,status,needs_you,unclaimed},
+  lavish_boards{file,title,url,status,needs_you,unclaimed} (title carries a
+    disambiguating "· <home>" suffix when the home/worktree is known),
   unhealthy_endpoints{...} (only when non-empty), omitted{surface,reveal}.
+lavish_status is "ok" or "unavailable (<reason>)" when lavish-axi is missing,
+  slow, or returns an unexpected session listing; lavish_boards is then empty
+  rather than failing the whole snapshot. A Lavish list that answered but
+  exceeded FM_BEARINGS_LAVISH_BOARDS still refuses outright, since that is a
+  deliberate bound, not an availability problem.
 Default gates are selected newest filed first before their bound; undated gates
   retain input order after dated gates.
 Decision presentation uses question, the full title and hold reason; summary
@@ -250,13 +256,21 @@ fi
 HOME_LABEL=$(printf '%s' "$SNAP" | jq -er '.fm_home | strings | split("/") | (.[-2:] | join("/"))') \
   || { echo "fm-bearings-snapshot: invalid canonical snapshot" >&2; exit 1; }
 
-# Lavish owns the session inventory. Refuse an unavailable or over-bound list
-# rather than silently publishing a board that hides outstanding sessions.
-command -v lavish-axi >/dev/null 2>&1 \
-  || { echo "fm-bearings-snapshot: lavish-axi not found" >&2; exit 1; }
-LAVISH_LIST=$(fm_run_timed 10 lavish-axi) \
-  || { echo "fm-bearings-snapshot: cannot list Lavish sessions" >&2; exit 1; }
-LAVISH_ROWS=$(printf '%s\n' "$LAVISH_LIST" | awk '
+# Lavish owns the session inventory, but it must never be able to take the
+# whole snapshot down with it: fm-captain-glance.sh and several pre-existing
+# test suites call this script for fields that have nothing to do with
+# Lavish, with no lavish-axi stub on PATH. A missing, slow, or malformed
+# lavish-axi therefore degrades to an empty, disclosed board list and the
+# snapshot still exits 0. An over-bound live list is a different, deliberate
+# refusal below: Lavish answered fine, there is just more to show than the
+# display bound allows, and hiding that silently is worse than refusing.
+LAVISH_STATUS=ok
+LAVISH_BOARDS='[]'
+if ! command -v lavish-axi >/dev/null 2>&1; then
+  LAVISH_STATUS='unavailable (lavish-axi not found)'
+elif ! LAVISH_LIST=$(fm_run_timed 10 lavish-axi); then
+  LAVISH_STATUS='unavailable (cannot list Lavish sessions)'
+elif ! LAVISH_ROWS=$(printf '%s\n' "$LAVISH_LIST" | awk '
   /^[[:space:]]*sessions\[[0-9]+\]/ { listed=1; next }
   listed && /,(open|feedback),/ {
     if ($0 !~ /^[[:space:]]*[^[:space:]].*,(open|feedback),"https?:\/\//) { bad=1; next }
@@ -273,15 +287,18 @@ LAVISH_ROWS=$(printf '%s\n' "$LAVISH_LIST" | awk '
     else bad=1
   }
   END { if (!listed || bad) exit 1 }
-') || { echo "fm-bearings-snapshot: malformed Lavish session listing" >&2; exit 1; }
-LAVISH_BOARDS=$(printf '%s\n' "$LAVISH_ROWS" | jq -R -s --argjson limit "$FM_BEARINGS_LAVISH_BOARDS" '
-  [split("\n")[] | select(length > 0) | split("\t")
-    | if length == 4 then . else error("malformed Lavish session row") end
-    | {file:.[0],status:.[1],url:.[2],listener:.[3]}] as $rows
-  | if ($rows | length) > $limit then error("Lavish session bound exceeded") else
-      $rows
-    end
-') || { echo "fm-bearings-snapshot: cannot project Lavish sessions" >&2; exit 1; }
+'); then
+  LAVISH_STATUS='unavailable (malformed Lavish session listing)'
+else
+  LAVISH_BOARDS=$(printf '%s\n' "$LAVISH_ROWS" | jq -R -s --argjson limit "$FM_BEARINGS_LAVISH_BOARDS" '
+    [split("\n")[] | select(length > 0) | split("\t")
+      | if length == 4 then . else error("malformed Lavish session row") end
+      | {file:.[0],status:.[1],url:.[2],listener:.[3]}] as $rows
+    | if ($rows | length) > $limit then error("Lavish session bound exceeded") else
+        $rows
+      end
+  ') || { echo "fm-bearings-snapshot: cannot project Lavish sessions" >&2; exit 1; }
+fi
 
 # --- optional live GitHub PR enrichment -------------------------------------
 PR_STATUS='not_requested (run: /bearings include PRs)'
@@ -421,7 +438,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   --argjson pr_rows_min_total "$PR_ROWS_MIN_TOTAL" \
   --argjson return_catchup "$RETURN_CATCHUP" \
   --argjson candidate_prs "$CANDIDATE_PRS" \
-  --argjson lavish_boards "$LAVISH_BOARDS" "$FM_LANDED_JQ_DEFS"'
+  --argjson lavish_boards "$LAVISH_BOARDS" \
+  --arg lavish_status "$LAVISH_STATUS" "$FM_LANDED_JQ_DEFS"'
   def trunc($n): if . == null then null else
     (tostring | gsub("\\s+"; " ") | if (length > $n) then (.[:$n] + "…") else . end) end;
   def fit($n):
@@ -657,6 +675,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
       home: $home,
       generated: $now,
       prs: $prs,
+      lavish_status: $lavish_status,
       contributions:(
         ([$snap.contributions + {owner:"(main)"}]
           + [($snap.secondmate_current.records // [])[] as $m | if $m.contributions == null then null else $m.contributions + {owner:$m.id} end])
@@ -716,8 +735,15 @@ MODEL=$(printf '%s' "$SNAP" | jq \
              | select(.current.state != "done" and .current.state != "failed"
                  and ((.paths.status_log.last_event.raw // "") | contains($board.file))) ]
            | length > 0) as $matching_task
+        # Every home board file shares the same basename
+        # ($FM_HOME/.lavish/<name>.html, bin/fm-bearings-board.sh board_path),
+        # so the two path segments above `.lavish/` - the home/worktree,
+        # the same last-two-segments shape HOME_LABEL above already uses for
+        # $home - is what tells two same-named boards apart.
+        | ($board.file | split("/") | .[:-2][-2:] | join("/")) as $location
         | {file:$board.file,
-           title:($board.file | split("/") | last | sub("\\.html?$"; "") | gsub("[-_]"; " ")),
+           title:(($board.file | split("/") | last | sub("\\.html?$"; "") | gsub("[-_]"; " "))
+                  + (if ($location | length) > 0 then " · " + $location else "" end)),
            url:$board.url,status:$board.status,needs_you:$decision,
            unclaimed:($board.listener != "agent-listener" or ($matching_task | not))} ]
     }
