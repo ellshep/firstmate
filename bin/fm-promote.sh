@@ -15,8 +15,10 @@
 # `## Captain's intent` preserved from the scout brief and promotion's ship-time
 # instructions under `## Firstmate spec`; the scout-time spec remains context but
 # is not relabeled as the ship spec. Promotion refuses leftover `{TASK}` /
-# `{FIRSTMATE_SPEC}` placeholders and a `## Captain's intent` line opening with
-# a Captain label or address (bin/fm-dod-lib.sh). A pre-subsection scout
+# `{FIRSTMATE_SPEC}` placeholders, a `## Captain's intent` line opening with
+# a Captain label or address, and a `### Decisions settled by the captain`
+# subsection that is missing, empty, or carries an unanswered entry
+# (bin/fm-dod-lib.sh fm_brief_ship_decisions_valid). A pre-subsection scout
 # brief contributes only Task lines explicitly marked as captain words to intent,
 # read outside fenced blocks and indented examples so a quoted `Captain:` sample
 # never passes the provenance gate as the ask (bin/fm-dod-lib.sh).
