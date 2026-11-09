@@ -149,6 +149,9 @@ make_spawn_case() {
 ## Captain's intent
 Exercise Muse dispatch.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Verify the Muse harness behavior under test.
 EOF

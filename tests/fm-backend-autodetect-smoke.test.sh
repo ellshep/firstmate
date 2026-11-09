@@ -101,6 +101,9 @@ cat > "$DATA/$ID/brief.md" <<'EOF'
 ## Captain's intent
 Exercise Herdr backend auto-detection.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Verify the real spawn path selects Herdr.
 EOF

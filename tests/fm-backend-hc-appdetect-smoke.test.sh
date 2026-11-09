@@ -108,6 +108,9 @@ write_brief() {
 ## Captain's intent
 Exercise Herdr.app backend auto-detection for $1.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Verify the real spawn path selects hc.
 EOF

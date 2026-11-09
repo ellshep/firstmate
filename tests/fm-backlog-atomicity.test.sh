@@ -86,6 +86,9 @@ EOF
 ## Captain's intent
 Exercise backlog dispatch for $id.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Verify the atomic backlog transition.
 

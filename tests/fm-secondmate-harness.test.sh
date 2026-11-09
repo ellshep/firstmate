@@ -1266,6 +1266,9 @@ test_spawn_fallback_chain_and_crew_scout_unaffected() {
 ## Captain's intent
 Exercise an ordinary crew launch.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Verify secondmate harness settings do not affect it.
 EOF

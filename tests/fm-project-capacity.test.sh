@@ -33,6 +33,9 @@ write_brief() {  # <home> <id>
 ## Captain's intent
 Run the project's heavy suite for $2.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Exercise project capacity admission.
 

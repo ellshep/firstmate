@@ -792,6 +792,9 @@ make_polytoken_spawn_case() {
 ## Captain's intent
 Exercise Polytoken dispatch.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Verify launch and delivery behavior.
 EOF

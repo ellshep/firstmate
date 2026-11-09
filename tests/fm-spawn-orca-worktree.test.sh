@@ -161,6 +161,9 @@ test_orca_fresh_spawn_enters_the_worktree_it_created() {
 ## Captain's intent
 Exercise an Orca-backed spawn for $id.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Confirm the launch enters the worktree Orca created for it.
 EOF
@@ -198,6 +201,9 @@ test_orca_relaunch_is_refused_before_the_worktree_carveout_could_run() {
 # Task
 ## Captain's intent
 Exercise a relaunch attempt against a recorded Orca task.
+
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
 
 ## Firstmate spec
 Confirm the relaunch is refused before any worktree re-entry logic runs.
@@ -256,6 +262,9 @@ test_orca_launch_uses_controlled_tmux_environment() {
 # Task
 ## Captain's intent
 Verify the controlled Orca environment source.
+
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
 
 ## Firstmate spec
 Execute read-only environment checks.
@@ -399,6 +408,9 @@ test_orca_spawn_waits_for_a_slow_pane_before_a_later_failure() {
 ## Captain's intent
 Exercise a failed Orca spawn after launch delivery.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Confirm a slow pane still receives the staged launch file before the spawn fails later.
 EOF
@@ -447,6 +459,9 @@ test_orca_unrun_launch_file_is_reclaimed() {
 ## Captain's intent
 Exercise an Orca pane that never runs the launch command.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Confirm the staged credential file is reclaimed.
 EOF
@@ -488,6 +503,9 @@ test_orca_pane_wins_launch_file_race_at_deadline() {
 # Task
 ## Captain's intent
 Exercise an Orca pane that unlinks the launch file at the reclaim deadline.
+
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
 
 ## Firstmate spec
 Confirm the spawn treats the launch as consumed.
@@ -540,6 +558,9 @@ test_orca_launch_file_delete_failure_keeps_terminal() {
 ## Captain's intent
 Exercise an Orca pane that cannot remove the launch file.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Confirm the worker is refused and the terminal stays open.
 EOF
@@ -587,6 +608,9 @@ test_orca_interrupted_spawn_reclaims_launch_file() {
 # Task
 ## Captain's intent
 Exercise an interrupted Orca spawn after launch delivery.
+
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
 
 ## Firstmate spec
 Confirm the staged credential file is reclaimed.
@@ -672,6 +696,9 @@ test_orca_interrupted_spawn_before_send_removes_launch_file() {
 # Task
 ## Captain's intent
 Exercise an Orca spawn interrupted before launch delivery.
+
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
 
 ## Firstmate spec
 Confirm the staged credential file is removed.
@@ -770,6 +797,9 @@ test_orca_allowlist_without_source_warns() {
 # Task
 ## Captain's intent
 Exercise an Orca allowlist without a configured source.
+
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
 
 ## Firstmate spec
 Confirm the spawn reports where allowlisted values come from.

@@ -40,6 +40,9 @@ write_promotion_brief() {  # <home> <id>
 ## Captain's intent
 Promote the selected scout.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Verify promotion preserves the behavior under test.
 EOF

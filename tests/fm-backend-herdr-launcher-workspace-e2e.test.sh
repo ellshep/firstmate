@@ -193,6 +193,9 @@ write_ship_brief() {  # <file> <id>
 ## Captain's intent
 Exercise Herdr launcher placement for $2.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Verify the worker is placed in the correct workspace.
 EOF

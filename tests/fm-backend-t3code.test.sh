@@ -155,6 +155,9 @@ write_spawn_brief() {  # <data-dir> <id>
 ## Captain's intent
 Exercise T3 dispatch.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Verify the T3 lifecycle behavior under test.
 EOF

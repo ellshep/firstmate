@@ -61,6 +61,9 @@ write_spawn_brief() {  # <file> <id>
 ## Captain's intent
 Exercise backend dispatch for $2.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Verify backend selection without changing task intent.
 EOF
