@@ -1764,7 +1764,7 @@ SSH_AUTH_SOCK
 
 ### Variables retained and where values come from
 
-Firstmate retains basic home, executable search, terminal, locale, temporary-directory, and backend routing variables, plus its explicit launch assignments, its ship and scout task marker, the compact-adviser kill switch described below, and enabled task trace.
+Firstmate retains basic home, executable search, terminal, locale, temporary-directory, and backend routing variables, plus its explicit launch assignments, its ship and scout task marker, and enabled task trace.
 The allowlist floor also retains Tern block markers `TERN_IDENTITY`, `TERN_PANE`, `TERN_PANE_SOCKET`, `TERN_WINDOW_KEY`, and `TERN_WINDOW_SOCKET` so a worker's own Tern/TSP integration survives `env -i`.
 It retains `HC_SESSION`, `HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET`, and `HC_SCOPE` the same way, so a worker in an hc terminal still reports its status to herdr-core.
 [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns the exact retained names and parsing mechanics.
@@ -1815,16 +1815,6 @@ The filter runs at the worker command boundary, after the terminal daemon and pa
 This is not a sandbox: it cannot revoke same-user access to credential files, prevent tools or later shells from loading credentials again, or isolate processes from the same user's other processes.
 
 Regression coverage executes emitted launch commands with synthetic nonsecret values in [`tests/fm-spawn-dispatch-profile.test.sh`](../tests/fm-spawn-dispatch-profile.test.sh), and the Orca environment source in [`tests/fm-spawn-orca-worktree.test.sh`](../tests/fm-spawn-orca-worktree.test.sh).
-
-### Compact adviser setting
-
-Every crewmate, scout, and secondmate Firstmate launches starts with `COMPACT_ADVISER_DISABLE=1` in its environment, on a fresh spawn and on a relaunch alike, so an unattended session never activates the compact adviser.
-This guarantee also covers raw launch commands, remote secondmates, and launches filtered by `config/launch-env-allowlist`; it does not depend on the destination environment already containing the variable.
-
-Firstmate provides no configuration or flag to change this value.
-This applies only to agents Firstmate launches; the captain's own primary Firstmate session is never given the variable.
-
-[`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns the delivery mechanics, with focused regression coverage in [`tests/fm-spawn-compact-adviser-disable.test.sh`](../tests/fm-spawn-compact-adviser-disable.test.sh) and [`tests/fm-spawn-compact-adviser-disable-remote.test.sh`](../tests/fm-spawn-compact-adviser-disable-remote.test.sh).
 
 ### Commit attribution
 
@@ -1900,6 +1890,8 @@ This section is the single owner of the canonical schema and its per-field seman
       "when": "<natural-language condition describing a kind of task>",
       "approval": "captain",
       "min_confidence": 0.85,
+      "effort_ceiling": "high",
+      "effort_floor": "low",
       "floor": { "scope": "<quota-axi scope>", "min_percent": 20, "provider": "<quota-axi provider>" },
       "use": [
         { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>", "provider": "<optional quota-axi provider>", "quota_scope": "<optional quota-axi scope>", "floor": { "scope": "<quota-axi scope>", "min_percent": 50 } }
@@ -1924,6 +1916,12 @@ This section is the single owner of the canonical schema and its per-field seman
 | Profile `model` and `effort`; rule `why` | Optional. |
 | Top-level `preferred_provider` | Optional provider-family preference, applied after eligibility checks under `quota-array-dispatch`. |
 | Top-level `shared_quota` | Optional; see "Shared-quota opt-out" below. |
+| Rule `effort_ceiling` and `effort_floor` | Optional `low`, `medium`, or `high` bounds on the selected profile's effort, whether suggested by Jev or fixed in `use`. |
+
+When a rule declares `effort_ceiling` or `effort_floor` and its selected profile omits `effort`, typed resolution uses Jev's `low`, `medium`, or `high` suggestion from the same request as the rule choice.
+The selected effort is clipped to the ceiling, then raised to `effort_floor` if present; the floor wins when it exceeds the ceiling.
+A profile's explicit effort takes priority over Jev's suggestion within those bounds, and Firstmate may override the resolver's concrete profile with a recorded reason.
+The bounds apply to matched rules only; the default profile remains a Firstmate decision when it omits effort.
 
 **Preferred provider**
 
@@ -2052,7 +2050,7 @@ Firstmate invokes the resolve path directly after writing the brief, without a p
 
 **What the model receives**
 
-When on and at least one rule exists, the tool sends the project name and the brief's task-specific text as state and asks one Choice question whose options are every rule's `when` plus the fixed neutral option for no matching rule; the model never sees quota, catalogs, `why`, `use`, approvals, or confidence floors.
+When on and at least one rule exists, the tool sends the home label (`main` or `.fm-secondmate-home`), project name, and the brief's task-specific text as state and asks two Choice questions in one request: the rule options are every rule's `when` plus the fixed neutral option, and the effort options are low, medium, and high; the model never sees quota, catalogs, `why`, `use`, approvals, or confidence floors.
 OpenRouter's Decisions API and a `systemone` host accept the same Choice request shape and return the same typed answer, including confidence and a probability per option.
 For OpenAI's Decisions API the resolver rewrites that request into OpenAI's shape - the state as JSON text `input` and one `choice` question named `rule` whose `choices` are the same options - and maps the answer's per-option probability array back; a refusal, a missing or duplicated rule answer, or duplicated option values is rejected as malformed.
 Every provider then uses the same response validation and post-model gates.
@@ -2153,7 +2151,15 @@ Firstmate passes its profile line unless it states a reason to override, such as
 For a brief at `data/<id>/brief.md`, or `<FM_DATA_OVERRIDE>/<id>/brief.md` when that override is set, each run first removes that task's `dispatch-resolution.json`, so a decision never outlives a later run.
 Every outcome that exits 0, including off, then writes one JSON object there: `task` (the `<id>`), `status` (`clear`, `ambiguous`, `escalate`, `error`, or `off`), and `profile`.
 On `clear`, `profile` holds `harness`, `model`, and `effort`, each `null` when the chosen profile leaves it unset; otherwise `profile` is `null`.
+Response-backed records also keep `jev_pick`, `selected_rule`, `confidence`, `suggested_effort`, the selected rule's effort bounds, `matched_probability`, `qualification_floor`, and `qualification_score` as bounded evidence; they never store the raw reply or task text.
 A usage or configuration error (exit 2) writes no record.
+
+**Routing outcome ledger**
+
+`bin/fm-routing-outcomes.sh` appends private `launch` and `outcome` events to each home's `data/routing-outcomes.jsonl`, keyed by task and spawn generation.
+The launch event joins the resolver's rule, confidence and suggested effort to the actual harness, model, effort, override reason, any effort difference reason, and a threshold-based `would_have_qualified` flag.
+The outcome event records review rounds when no-mistakes spend evidence is available, status-derived stalled, escalated and failed flags, scout report success, and review cost as null until a reliable cost source exists.
+It uses an OS file lock and deduplicates a retried event; records have no brief text or raw provider response and remain until the operator removes them.
 `fm-spawn.sh` reads this record as the task's decision, as "Per-launch overrides and inherited defaults" describes.
 
 **Credential source declaration (config/dispatch-credential-sources.json)**

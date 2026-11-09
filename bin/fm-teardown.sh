@@ -4505,6 +4505,15 @@ retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
 # Opt-in fleet activity ledger (docs/fleet-ledger.md), before the status log is
 # retired so its last lines are captured; off costs one file test.
 [ ! -e "$CONFIG/fleet-ledger" ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-fleet-ledger.sh" cleaned_up "$ID" || true
+ROUTING_STALLED=unknown ROUTING_ESCALATED=unknown ROUTING_FAILED=unknown ROUTING_SUCCESS=unknown
+if [ -f "$STATE/$ID.status" ] && [ ! -L "$STATE/$ID.status" ]; then
+  ROUTING_STALLED=false ROUTING_ESCALATED=false ROUTING_FAILED=false ROUTING_SUCCESS=false
+  grep -q '^blocked ' "$STATE/$ID.status" && ROUTING_STALLED=true
+  grep -q '^needs-decision ' "$STATE/$ID.status" && ROUTING_ESCALATED=true
+  grep -q '^failed ' "$STATE/$ID.status" && ROUTING_FAILED=true
+  grep -q '^done ' "$STATE/$ID.status" && ROUTING_SUCCESS=true
+fi
+if [ "$KIND" = scout ] && [ -s "$DATA/$ID/report.md" ]; then ROUTING_SUCCESS=true; fi
 teardown_retire_status "$STATE" "$ID" || exit 1
 fm_wake_queue_prune_task "$STATE" "$ID" "$T" 2>/dev/null || true
 rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
@@ -4557,6 +4566,16 @@ fi
 # racing the same id stays serialized exactly as it was before. A captain-held
 # row takes the retain transition here instead of the close: same record, same
 # ordering, the row returns to Queued with its deliverable recorded.
+if [ "$KIND" != secondmate ]; then
+  FM_HOME="$FM_HOME" FM_DATA_OVERRIDE="$DATA" FM_STATE_OVERRIDE="$STATE" \
+    "$SCRIPT_DIR/fm-routing-outcomes.sh" finalize "$ID" "$TEARDOWN_META_SPAWN_GEN" \
+    "$ROUTING_STALLED" "$ROUTING_ESCALATED" "$ROUTING_FAILED" "$ROUTING_SUCCESS" || {
+      fm_lock_release "$META_LOCK"
+      META_LOCK_HELD=0
+      echo "error: $ID's routing outcome could not be appended; retaining its task record for retry" >&2
+      exit 1
+    }
+fi
 if [ "$BACKLOG_CLOSED" = 1 ]; then
   BACKLOG_CLOSE_MARKER=$(fm_backlog_close_marker_path "$STATE" "$ID") || exit 1
   if ! fm_backlog_atomic_transition "$BACKLOG_TRANSITION" "$STATE/$ID.meta" "$BACKLOG_CLOSE_MARKER" \

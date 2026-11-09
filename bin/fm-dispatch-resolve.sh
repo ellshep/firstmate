@@ -43,11 +43,11 @@
 #   credential, and runs no credential tool, so a configuration installer can
 #   refuse an unsupported activation before it writes anything.
 #
-# What it does when on with at least one rule: one POST with the project name and the brief's
+# What it does when on with at least one rule: one POST with the home label, project name and the brief's
 #   `## Captain's intent` and `## Firstmate spec` sections, tagged when it is a
 #   scout brief (the whole brief when it has neither section), as state and
-#   ONE Choice question whose options are every rule's `when` from
-#   config/crew-dispatch.json plus one fixed generic none option. The provider
+#   two Choice questions: every rule's `when` from config/crew-dispatch.json
+#   plus one fixed generic none option, and low/medium/high effort. The provider
 #   returns the matched rule, a probability per option, and a confidence. Everything
 #   after that is jq: the confidence floor (0.6 on the answer confidence, or a
 #   rule's declared `min_confidence` on that rule's probability, falling to the
@@ -103,8 +103,10 @@
 #   else $FM_HOME/data, every run first removes
 #   <data>/<id>/dispatch-resolution.json, then every outcome except exit 2 writes
 #   {"task", "status" (clear, ambiguous, escalate, error, or off), "profile"}
-#   there; profile holds harness, model, and effort on clear and is null
-#   otherwise. fm-spawn.sh reads it as the task's dispatch decision.
+#   there; response-backed records also include the picked and selected rule,
+#   confidence, effort suggestion, and qualification evidence. Profile holds
+#   harness, model, and effort on clear and is null otherwise. fm-spawn.sh
+#   reads it as the task's dispatch decision.
 #   clear     -> pass the profile line to fm-spawn.sh unless you state a reason to override
 #   ambiguous -> confidence below the floor; decide as today from the probabilities
 #   escalate  -> the rule requires captain approval, no candidate is rankable, or a genuine tie
@@ -168,6 +170,10 @@ SO_TIMEOUT=10
 OA_BASE=https://api.openai.com
 OA_TIMEOUT=10
 DEFAULT_WHEN="No listed rule applies to this task."
+HOME_SCOPE=main
+if [ -f "$FM_HOME/.fm-secondmate-home" ]; then
+  HOME_SCOPE=$(head -n 1 "$FM_HOME/.fm-secondmate-home")
+fi
 
 die() { printf 'error: %s\n' "$1" >&2; exit 2; }
 record_task() {
@@ -413,6 +419,8 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
   elif any((.rules // [])[]; (profiles(.use) | length) == 0) then "each rule needs at least one use profile"
   elif any((.rules // [])[]; has("approval") and .approval != "captain") then "approval must be \"captain\" when present"
   elif any((.rules // [])[]; has("min_confidence") and ((.min_confidence | type) != "number" or .min_confidence < 0 or .min_confidence > 1)) then "min_confidence must be a number from 0 through 1 when present"
+  elif any((.rules // [])[]; has("effort_ceiling") and (.effort_ceiling as $e | ["low","medium","high"] | index($e)) == null) then "effort_ceiling must be low, medium, or high"
+  elif any((.rules // [])[]; has("effort_floor") and (.effort_floor as $e | ["low","medium","high"] | index($e)) == null) then "effort_floor must be low, medium, or high"
   elif any((.rules // [])[]; has("select") and ((.select | type) != "string" or (.select | length) == 0)) then "select must be a non-empty string"
   elif any((.rules // [])[]; has("select") and .select != "quota-balanced") then
     "unknown select: " + ([.rules[] | select(has("select") and .select != "quota-balanced") | .select] | unique | join(", "))
@@ -535,18 +543,23 @@ else
 fi
 LAT_MS=null
 command -v curl >/dev/null 2>&1 || emit_error "curl not installed"
-  REQUEST=$(jq -n --rawfile brief "$TASK_TEXT" --arg project "$PROJECT" --arg model "$DISPATCH_MODEL" \
+  REQUEST=$(jq -n --rawfile brief "$TASK_TEXT" --arg project "$PROJECT" --arg home_scope "$HOME_SCOPE" --arg model "$DISPATCH_MODEL" \
     --arg none_criterion "$DEFAULT_WHEN" --slurpfile rules "$RULES" '
     ($rules[0]) as $cfg |
     ($cfg.rules | to_entries | map({key: ("rule_" + ((.key + 1) | tostring)), value: .value.when}) | from_entries) as $criteria |
     {
       model: $model,
-      state: {task: {project: $project, brief: $brief}},
+      state: {task: {home: $home_scope, project: $project, brief: $brief}},
       questions: {
         rule: {
           type: "choice",
-          instructions: "Which ONE dispatch rule best fits `task` (read `task.brief` and `task.project`)? Each option is the rule'"'"'s own matching condition; pick `default` when no rule'"'"'s condition is met, including when a rule'"'"'s own exemption text excludes this task.",
+          instructions: "Which ONE dispatch rule best fits `task` (read `task.home`, `task.brief`, and `task.project`)? Each option is the rule'"'"'s own matching condition; pick `default` when no rule'"'"'s condition is met, including when a rule'"'"'s own exemption text excludes this task.",
           criteria: ($criteria + {default: $none_criterion})
+        },
+        effort: {
+          type: "choice",
+          instructions: "Suggest the reasoning effort this task needs. This is advisory; choose one level from low, medium, or high without considering model names.",
+          criteria: {low: "Routine explicit work", medium: "Some uncertainty or coordination", high: "Complex investigation or design"}
         }
       }
     }')
@@ -559,6 +572,9 @@ command -v curl >/dev/null 2>&1 || emit_error "curl not installed"
       questions: [{
         type: "choice", name: "rule", instructions: .questions.rule.instructions,
         choices: [.questions.rule.criteria | to_entries[] | {value: .key, description: .value}]
+      }, {
+        type: "choice", name: "effort", instructions: .questions.effort.instructions,
+        choices: [.questions.effort.criteria | to_entries[] | {value: .key, description: .value}]
       }]
     }' <<<"$REQUEST") || emit_error "could not build the OpenAI request"
   else
@@ -594,16 +610,26 @@ command -v curl >/dev/null 2>&1 || emit_error "curl not installed"
       ($rule | length) == 1 and $rule[0].type == "choice" and
       ($rule[0].probabilities | type) == "array" and
       all($rule[0].probabilities[]; type == "object" and (.value | type) == "string") and
-      ($rule[0].probabilities | map(.value) | length) == ($rule[0].probabilities | map(.value) | unique | length))' \
+      ($rule[0].probabilities | map(.value) | length) == ($rule[0].probabilities | map(.value) | unique | length)) and
+      (([.answers[] | select(type == "object" and .name == "effort")]) as $effort |
+       ($effort | length) <= 1 and
+       (if ($effort | length) == 0 then true else
+         $effort[0].type == "choice" and ($effort[0].probabilities | type) == "array" and
+         all($effort[0].probabilities[]; type == "object" and (.value | type) == "string") and
+         ($effort[0].probabilities | map(.value) | length) == ($effort[0].probabilities | map(.value) | unique | length)
+       end))' \
       "$RESP_FILE" >/dev/null 2>&1 || emit_error "response is not a rule Choice answer"
     if ! jq --arg model "$DISPATCH_MODEL" '
       ([.answers[] | select(type == "object" and .name == "rule")][0]) as $a |
       {
         model: (if (.model | type) == "string" then .model else $model end),
-        answers: {rule: {
+        answers: ({rule: {
           choice: $a.choice, confidence: $a.confidence,
           probabilities: ($a.probabilities | map({key: .value, value: .probability}) | from_entries)
-        }}
+        }} + (if ([.answers[] | select(type == "object" and .name == "effort")] | length) == 1 then
+          {effort: ([.answers[] | select(type == "object" and .name == "effort")][0] |
+            {choice, confidence, probabilities: (.probabilities | map({key: .value, value: .probability}) | from_entries)})}
+          else {} end))
       }
       + (if (.usage.input_tokens | type) == "number" and (.usage.output_tokens | type) == "number"
          then {usage: {input_tokens: .usage.input_tokens, output_tokens: .usage.output_tokens}} else {} end)' \
@@ -621,6 +647,14 @@ jq -e --slurpfile rules "$RULES" '
     ((.answers.rule.probabilities | keys | sort) == $choices) and
     all(.answers.rule.probabilities[]; type == "number" and . >= 0 and . <= 1) and
     ((.answers.rule.probabilities | [.[]] | add) as $total | $total >= 0.99 and $total <= 1.01) and
+    ((.answers | has("effort") | not) or
+      ((.answers.effort.choice | IN("low", "medium", "high")) and
+       (.answers.effort.confidence | type) == "number" and
+       .answers.effort.confidence >= 0 and .answers.effort.confidence <= 1 and
+       (.answers.effort.probabilities | type) == "object" and
+       ((.answers.effort.probabilities | keys | sort) == ["high", "low", "medium"]) and
+       all(.answers.effort.probabilities[]; type == "number" and . >= 0 and . <= 1) and
+       ((.answers.effort.probabilities | [.[]] | add) as $total | $total >= 0.99 and $total <= 1.01))) and
     ((has("usage") | not) or
       ((.usage | type) == "object" and
        (.usage.input_tokens | type) == "number" and
@@ -723,6 +757,15 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
       ($c | ltrimstr("rule_") | tonumber) as $n |
       if $n <= (($cfg.rules // []) | length) then $cfg.rules[$n - 1] else null end
     else null end;
+  def resolved_effort($p; $rule; $suggest):
+    if $rule == null then $p
+    elif (($p.effort // $suggest) | IN("low", "medium", "high") | not) then $p
+    else
+      (["low", "medium", "high"] | index($p.effort // $suggest)) as $asked |
+      (["low", "medium", "high"] | index($rule.effort_ceiling // "high")) as $ceiling |
+      (["low", "medium", "high"] | index($rule.effort_floor // "low")) as $floor |
+      $p + {effort: ["low", "medium", "high"][([[$asked, $ceiling] | min, $floor] | max)]}
+    end;
   def declared_confidence($c): rule_at($c) as $x | $x != null and ($x | has("min_confidence"));
   def confidence_floor($c): if declared_confidence($c) then rule_at($c).min_confidence else ($floor | tonumber) end;
   ($a.choice) as $picked |
@@ -761,7 +804,8 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
     model: $r.model, latency_ms: $lat, tokens: ($r.usage // null),
     rule: $picked,
     rule_when: when_of($picked),
-    confidence: $a.confidence, probabilities: $a.probabilities
+    confidence: $a.confidence, probabilities: $a.probabilities,
+    suggested_effort: ($r.answers.effort.choice // null)
   }
   + (if $fb.to then {fallback: "\($choice) (\(when_of($choice))) probability \($fb.p) clears its floor \($fb.to_floor); \($picked) probability \($a.probabilities[$picked]) is below its floor \($picked_floor)"} else {} end)
   as $ev |
@@ -793,7 +837,8 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
       (if $sq then ($elig | first) else ($elig | max_by(.spendPriority)) end) as $best |
       (if $sq then 1 else ([$elig[] | select(.spendPriority == $best.spendPriority)] | length) end) as $ties |
       if $ties > 1 then $ev + {status: "escalate", reason: "genuine spendPriority tie", note: $sel.note, candidates: $cands}
-      else $ev + {status: "clear", note: $sel.note, candidates: $cands, chosen: $best}
+      else $ev + {status: "clear", note: $sel.note, selected_rule: $sel.source, candidates: $cands,
+        chosen: ($best | .profile = resolved_effort(.profile; rule_at($sel.source); $r.answers.effort.choice))}
         + (if ($unranked | length) > 0 then
              {unranked_note: "\($unranked | length) eligible candidate(s) unranked (\([$unranked[].provider] | unique | join(", ")))"}
            else {} end)
@@ -810,6 +855,7 @@ TEXT=$(jq -r '
   "  model: \(show(.model))   latency_ms: \(show(.latency_ms))   tokens: \(show(.tokens.input_tokens))/\(show(.tokens.output_tokens))",
   "  rule: \(.rule | flat) (\(.rule_when | flat))   confidence: \(.confidence | flat)",
   "  probabilities: \([.probabilities | to_entries[] | "\(.key | flat)=\(.value | flat)"] | join(" "))",
+  "  suggested_effort: \(show(.suggested_effort))",
   (if .fallback then "  fallback: \(.fallback | flat)" else empty end),
   (if .reason then "  reason: \(.reason | flat)" else empty end),
   (if .note then "  note: \(.note | flat)" else empty end),
@@ -827,5 +873,22 @@ STATUS=$(jq -r '.status' <<<"$RESULT") || emit_error "status rendering failed"
 PROFILE=$(jq -c 'if .chosen then .chosen.profile | {harness, model: (.model // null), effort: (.effort // null)} else null end' <<<"$RESULT") \
   || emit_error "profile rendering failed"
 record_task "$STATUS" "$PROFILE" || emit_error "could not record the dispatch resolution"
+if [ -n "$TASK_RECORD" ]; then
+  record_enriched=$(jq -c --slurpfile rules "$RULES" '
+    (.rule | ltrimstr("rule_") | tonumber? // 0) as $index |
+    (.selected_rule // "" | ltrimstr("rule_") | tonumber? // 0) as $selected_index |
+    (if $index > 0 then $rules[0].rules[$index - 1].min_confidence else null end) as $declared_floor |
+    {jev_pick: .rule, selected_rule: (.selected_rule // null), confidence,
+     suggested_effort, matched_probability: (.probabilities[.rule] // null),
+     selected_effort_ceiling: (if $selected_index > 0 then $rules[0].rules[$selected_index - 1].effort_ceiling else null end),
+     selected_effort_floor: (if $selected_index > 0 then $rules[0].rules[$selected_index - 1].effort_floor else null end),
+     qualification_floor: ($declared_floor // 0.6),
+     qualification_score: (if $declared_floor == null then .confidence else .probabilities[.rule] end)}' <<<"$RESULT") || emit_error "evidence rendering failed"
+  if ! { jq -c --argjson evidence "$record_enriched" '. + $evidence' "$TASK_RECORD" > "$TASK_RECORD.evidence.$$" \
+    && mv -f -- "$TASK_RECORD.evidence.$$" "$TASK_RECORD"; }; then
+    rm -f -- "$TASK_RECORD.evidence.$$"
+    emit_error "could not record dispatch evidence"
+  fi
+fi
 printf '%s\n' "$TEXT"
 exit 0

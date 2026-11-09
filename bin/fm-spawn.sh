@@ -432,9 +432,6 @@
 #   TERN_PANE_SOCKET TERN_WINDOW_KEY TERN_WINDOW_SOCKET HC_SESSION
 #   HC_TERMINAL_ID HC_TERMINAL_SOCKET HC_SCOPE, plus the task
 #   marker FM_TASK_ID that ship and scout panes receive above, plus the
-#   compact-adviser kill switch COMPACT_ADVISER_DISABLE, which the floor also
-#   pins to 1 with a literal assignment so it survives the cleared environment
-#   even on a host that never had it set.
 #   An enabled task trace also retains TRACEPARENT. Explicit Firstmate launch
 #   assignments still apply inside the filtered environment, including the
 #   FM_TASK_INBOX export every launch carries (the absolute state/<id>.inbox
@@ -8190,18 +8187,6 @@ if [ "$GIT_HOOKS_INSTALLED" = 1 ]; then
   GIT_CONFIG_ENV_FILE=$(shell_quote "$LAUNCH_DIR/git-config.$SPAWN_GEN.sh")
   LAUNCH="$(shell_quote "$FM_ROOT/bin/fm-git-strip-ai-trailers.sh") env-file $(shell_quote "$GIT_HOOKS_DIR") $GIT_CONFIG_ENV_FILE && . $GIT_CONFIG_ENV_FILE || return 1 2>/dev/null || exit 1; $LAUNCH"
 fi
-# Every agent this fleet launches - crewmate, scout, and secondmate, on a fresh
-# spawn and on a relaunch alike - runs with the compact-adviser kill switch on.
-# This is an export statement rather than a forwarded ambient name or a
-# command-prefix assignment, so it carries the value across an entire compound
-# raw launch expression. A pane that never had it, and a remote host whose
-# transport never carried it, both still start the agent with it set. It is
-# unconditional, with no config file or flag gating it, and is inserted outside
-# every generated launch prefix; relaunch trace cleanup may execute first but
-# cannot change this value. The cleared-environment floor in the
-# LAUNCH_ENV_PREFIX construction below sets it again at the `env -i` boundary,
-# so under an enabled allowlist the switch is established before the wrapping
-# `/bin/sh` starts rather than only inside the command that shell runs.
 # Arm the worker-side OSC 7501 status reporter (bin/fm-osc7501.sh) inside the
 # launch before the agent command, so the reporter's parent is the pane shell
 # that runs the agent. The reporter header owns eligibility and native-version
@@ -8241,15 +8226,14 @@ if [ "$LAVISH_AXI_HOST_CONFIG_PRESENT" = 1 ]; then
 fi
 # Every launch also exports the absolute path of this task's steering inbox, so
 # the constant doorbell line (bin/fm-task-inbox-lib.sh) can name
-# "$FM_TASK_INBOX" instead of a path that grows with the home's depth. Like the
-# kill switch below it is an export statement, so it survives a compound raw
+# "$FM_TASK_INBOX" instead of a path that grows with the home's depth. The
+# export statement survives a compound raw
 # launch and the launch-env-allowlist `env -i` wrapper.
 LAUNCH="export FM_TASK_INBOX=$(shell_quote "$STATE_REAL/$ID.inbox"); $LAUNCH"
-LAUNCH="export COMPACT_ADVISER_DISABLE=1; $LAUNCH"
 # When the live-harness gate has exported DISABLE_AUTOUPDATER into this spawn's
 # own environment, carry it into the launch command text so Claude Code's
 # auto-updater cannot rewrite the shared binary during a live run. Embedding the
-# assignment - like COMPACT_ADVISER_DISABLE above - rather than leaning on
+# assignment rather than leaning on
 # ambient inheritance is what survives a pre-existing backend daemon that
 # constructs the pane command without the gate's environment. It is gated on the
 # value being set here so ordinary spawns are unchanged.
@@ -8292,7 +8276,7 @@ if [ "$BACKEND" = t3code ]; then
   # (spawn_t3code_env_install). TRACEPARENT is delivered only once its meta
   # record exists, the same delivered-implies-recorded invariant the pane path
   # keeps by unsetting it when the record fails.
-  T3CODE_ENV=("GOTMPDIR=$TASK_TMP/gotmp" COMPACT_ADVISER_DISABLE=1 "FM_TASK_INBOX=$STATE_REAL/$ID.inbox")
+  T3CODE_ENV=("GOTMPDIR=$TASK_TMP/gotmp" "FM_TASK_INBOX=$STATE_REAL/$ID.inbox")
   if [ "$GIT_HOOKS_INSTALLED" = 1 ]; then
     T3CODE_ENV+=(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath "GIT_CONFIG_VALUE_0=$GIT_HOOKS_DIR")
   fi
@@ -8327,10 +8311,6 @@ else
 # process (go build, go test, ...) inherit it. Sent before the launch command so
 # the env is set when the agent starts; the brief sleep lets the export land.
 spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
-# Export the compact-adviser kill switch into the pane shell through the same
-# pre-launch channel, so later commands in that shell inherit it too. The launch
-# command independently establishes the value for the agent process itself.
-spawn_send_text_line "$T" "export COMPACT_ADVISER_DISABLE=1"
 if [ "$LAVISH_AXI_HOST_CONFIG_PRESENT" = 1 ]; then
   spawn_send_text_line "$T" "export LAVISH_AXI_HOST=$(shell_quote "$LAVISH_AXI_HOST")"
 fi
@@ -8366,9 +8346,6 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
   # names, so a name the source leaves unset cannot revive a personal pane value.
   LAUNCH_ENV_FORWARD_NAMES=$LAUNCH_ENV_NAMES
   [ "$ORCA_LAUNCH_ENV_ENABLED" != 1 ] || LAUNCH_ENV_FORWARD_NAMES=
-  # COMPACT_ADVISER_DISABLE is the intentional declarative floor-membership
-  # entry; the explicit COMPACT_ADVISER_DISABLE=1 assignment below is the
-  # authoritative setter.
   for env_name in HOME PATH USER LOGNAME SHELL TERM COLORTERM LANG LC_ALL LC_CTYPE \
     TMPDIR TMP TEMP GOTMPDIR TMUX TMUX_PANE HERDR_ENV HERDR_SESSION HERDR_SOCKET_PATH \
     HERDR_PANE_ID CMUX_WORKSPACE_ID CMUX_SURFACE_ID CMUX_TAB_ID CMUX_PANEL_ID \
@@ -8376,7 +8353,7 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
     TERM_PROGRAM REX_SESSION REX_BLOCK REX_SERVER REX_BIN_DIR \
     TERN_IDENTITY TERN_PANE TERN_PANE_SOCKET TERN_WINDOW_KEY TERN_WINDOW_SOCKET \
     HC_SESSION HC_TERMINAL_ID HC_TERMINAL_SOCKET HC_SCOPE \
-    FM_TASK_ID COMPACT_ADVISER_DISABLE LAVISH_AXI_HOST \
+    FM_TASK_ID LAVISH_AXI_HOST \
     $LAUNCH_ENV_FORWARD_NAMES; do
     if [ "$ORCA_LAUNCH_ENV_ENABLED" = 1 ]; then
       case $'\n'"$LAUNCH_ENV_NAMES"$'\n' in
@@ -8392,16 +8369,6 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
   if [ "$ORCA_LAUNCH_ENV_ENABLED" = 1 ]; then
     LAUNCH_ENV_PREFIX="$LAUNCH_ENV_PREFIX $ORCA_LAUNCH_ENV_ARGS GIT_CONFIG_NOSYSTEM=1"
   fi
-  # COMPACT_ADVISER_DISABLE is retained by the floor loop above, which forwards
-  # whatever the pane export set, and then pinned here to the one value Firstmate
-  # launches on. The literal assignment comes last deliberately: `env` applies
-  # assignments left to right, so this one wins over a forwarded pane value, and
-  # it still delivers the switch on a pane whose export never landed. Unlike the
-  # trace carrier below it carries no gate, so it is appended unconditionally.
-  # Setting it here rather than relying on the assignment already carried by
-  # $LAUNCH is what gives the wrapping `/bin/sh` itself the switch, not only the
-  # agent command it runs.
-  LAUNCH_ENV_PREFIX="$LAUNCH_ENV_PREFIX COMPACT_ADVISER_DISABLE=1"
   if [ -n "$SPAWN_TRACEPARENT" ]; then
     # shellcheck disable=SC2016
     LAUNCH_ENV_PREFIX="$LAUNCH_ENV_PREFIX "'${TRACEPARENT+"TRACEPARENT=$TRACEPARENT"}'
@@ -8707,6 +8674,14 @@ SPAWN_META_LOCK_HELD=0
 if [ "$T3CODE_LAUNCH_UNCONFIRMED" = 1 ]; then
   echo "error: the launch brief for $ID may already have been delivered to T3 thread $T: its outcome is unproven (a lost reply or a T3 error that can follow a commit). The task record is kept; inspect the thread in T3 Code, and if the brief is absent resend only the identical brief text, which reuses its request id within the hour" >&2
   exit 1
+fi
+
+if [ "$KIND" != secondmate ] && [ "$RELAUNCH" -eq 0 ]; then
+  FM_HOME="$FM_HOME" FM_DATA_OVERRIDE="$DATA" FM_STATE_OVERRIDE="$STATE" \
+    "$SCRIPT_DIR/fm-routing-outcomes.sh" launch "$ID" || {
+      echo "error: $ID was launched and its task record is preserved, but routing evidence could not be appended; repair the private ledger before another dispatch" >&2
+      exit 1
+    }
 fi
 
 SPAWN_DELIVERY=

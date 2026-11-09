@@ -440,7 +440,7 @@ printf '%s\n' "$body" > "$TMP_ROOT/typesafe-body.json"
 assert_equals 'jev-latest' "$(jq -r .model <<<"$body")" "default model is jev-latest"
 assert_equals 'pager' "$(jq -r .state.task.project <<<"$body")" "project rides in the state"
 assert_contains "$(jq -r .state.task.brief <<<"$body")" 'off-by-one in the pager' "a brief without task headings rides whole in the state"
-assert_equals '["rule"]' "$(jq -c '.questions | keys' <<<"$body")" "only the rule Choice is asked"
+assert_equals '["effort","rule"]' "$(jq -c '.questions | keys' <<<"$body")" "rule and effort Choices are asked together"
 assert_equals '["default","rule_1","rule_2","rule_3","rule_4"]' "$(jq -c '.questions.rule.criteria | keys' <<<"$body")" "one option per rule plus default"
 assert_equals 'No listed rule applies to this task.' "$(jq -r '.questions.rule.criteria.default' <<<"$body")" "the fixed generic none criterion is the default option"
 assert_equals 'A simple bug fix with a stated root cause.' "$(jq -r '.questions.rule.criteria.rule_4' <<<"$body")" "rule when text is the option verbatim"
@@ -1061,7 +1061,7 @@ assert_equals $'curl:clean\nquota-axi:clean' "$(cat "$LOG/child-env")" "openai k
 body=$(cat "$LOG/body")
 assert_equals 'gpt-6-luna' "$(jq -r .model <<<"$body")" "openai model is explicit"
 assert_equals "$(jq -c .state "$TMP_ROOT/typesafe-body.json")" "$(jq -c '.input | fromjson' <<<"$body")" "openai input carries the same state as JSON text"
-assert_equals '1 choice rule' "$(jq -r '"\(.questions | length) \(.questions[0].type) \(.questions[0].name)"' <<<"$body")" "openai asks one named choice question"
+assert_equals '2 choice rule' "$(jq -r '"\(.questions | length) \(.questions[0].type) \(.questions[0].name)"' <<<"$body")" "openai asks rule and effort in one request"
 assert_equals "$(jq -r .questions.rule.instructions "$TMP_ROOT/typesafe-body.json")" "$(jq -r '.questions[0].instructions' <<<"$body")" "openai keeps the question instructions"
 assert_equals "$(jq -Sc '.questions.rule.criteria' "$TMP_ROOT/typesafe-body.json")" \
   "$(jq -Sc '.questions[0].choices | map({key: .value, value: .description}) | from_entries' <<<"$body")" "openai choices are every rule plus the none option"
@@ -1378,6 +1378,9 @@ assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-m
 assert_equals '{"task":"pager-fix","status":"clear","profile":{"harness":"cursor","model":"cursor-grok-4.6-medium","effort":null}}' \
   "$(jq -c '{task, status, profile: (.profile | {harness, model, effort})}' "$TASK_RECORD")" \
   "a clear run records the task, status, and the printed profile with an unset effort as null"
+assert_equals 'rule_4 0.9 0.6 0.9' "$(jq -r '"\(.jev_pick) \(.confidence) \(.qualification_floor) \(.qualification_score)"' "$TASK_RECORD")" \
+  "the task record keeps bounded Jev evidence for later outcome review"
+assert_not_contains "$(cat "$TASK_RECORD")" 'Fix the off-by-one' "task text is absent from the decision record"
 reset_log
 write_response "$RESPONSE" rule_4 0.41
 TYPESAFE_API_KEY=$KEY run code out err "$TASK_BRIEF" --project pager
@@ -2072,5 +2075,36 @@ assert_not_contains "$out" 'quota ranking off' "shared_quota false prints no opt
 assert_contains "$out" 'spendPriority=' "shared_quota false prints quota evidence"
 pass "shared_quota false keeps the unchanged quota-ranked behavior"
 cp "$BASE_RULES" "$RULES"
+
+# --- suggested effort stays inside declared bounds ----------------------------
+jq '.rules[3].use = {harness:"claude",model:"sonnet"} | .rules[3].effort_ceiling = "medium"' "$BASE_RULES" > "$RULES"
+write_response "$RESPONSE" rule_4 0.9
+jq '.answers.effort = {type:"choice",choice:"high",confidence:0.9,probabilities:{low:0.02,medium:0.03,high:0.95}}' "$RESPONSE" > "$RESPONSE.tmp"
+mv "$RESPONSE.tmp" "$RESPONSE"
+reset_log
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" --project pager
+expect_code 0 "$code" "effort ceiling resolution exits 0"
+assert_contains "$out" '  suggested_effort: high' "Jev's raw effort suggestion is visible"
+assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'medium'" "ceiling clips the suggestion"
+jq '.rules[3].use.effort = "high"' "$RULES" > "$RULES.tmp" && mv "$RULES.tmp" "$RULES"
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" --project pager
+assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'medium'" "ceiling also clips fixed profile effort"
+jq 'del(.rules[3].use.effort)' "$RULES" > "$RULES.tmp" && mv "$RULES.tmp" "$RULES"
+jq '.rules[3].effort_floor = "high"' "$RULES" > "$RULES.tmp" && mv "$RULES.tmp" "$RULES"
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" --project pager
+assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high'" "floor wins over ceiling"
+jq '.rules[3].use.effort = "medium" | del(.rules[3].effort_ceiling)' "$RULES" > "$RULES.tmp" && mv "$RULES.tmp" "$RULES"
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" --project pager
+assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high'" "money floor raises a fixed profile effort"
+jq '.rules[3].effort_ceiling = "xhigh"' "$RULES" > "$RULES.tmp" && mv "$RULES.tmp" "$RULES"
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" --project pager
+expect_code 2 "$code" "invalid effort ceiling is actionable"
+assert_contains "$err" 'effort_ceiling must be low, medium, or high' "invalid bound has a specific diagnostic"
+jq '.rules[3].effort_ceiling = "high"' "$BASE_RULES" > "$RULES"
+jq '.answers.effort.choice = "xhigh"' "$RESPONSE" > "$RESPONSE.tmp" && mv "$RESPONSE.tmp" "$RESPONSE"
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" --project pager
+assert_contains "$out" '  status: error' "an out-of-vocabulary effort answer is rejected"
+cp "$BASE_RULES" "$RULES"
+pass "Jev effort is advisory and clipped by rule ceiling and floor"
 
 printf '# all fm-dispatch-resolve tests passed\n'
