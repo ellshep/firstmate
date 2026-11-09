@@ -76,6 +76,11 @@
 #
 # Every Underway row likewise carries a non-empty `name`: the durable task name
 # when known, otherwise its durable identifier.
+# `lavish_boards` is required and lists every non-ended Lavish session from the
+# snapshot, with a title, local session URL, status and ownership markers.
+# An optional `lavish_status` string carries the snapshot's disclosure when
+# Lavish itself was unavailable (so `lavish_boards` is then empty rather than
+# missing); the template shows it in place of the ordinary empty state.
 # A Charted Next row MAY carry `filed`, the durable filed date (YYYY-MM-DD, or
 # that date with a UTC timestamp) the template orders the section by, newest
 # first; a row with no comparable date keeps its payload order after every dated
@@ -189,6 +194,13 @@ validate_payload() {  # <data.json>
       and ((has("kind") | not) or (.kind == "queued" or .kind == "warning"))
       and optional_filed
       and (if .kind == "warning" then .dispatchable == false else true end);
+    def lavish_item:
+      type == "object" and (.file | nonempty_string)
+      and (.title | nonempty_string)
+      and (.url | type == "string" and test("^https?://[^[:space:]]+$"))
+      and (.status == "open" or .status == "feedback")
+      and (.needs_you == null or (.needs_you | nonempty_string))
+      and (.unclaimed | type == "boolean");
     type == "object"
     and (.schema == $schema)
     and (.home | nonempty_string)
@@ -198,6 +210,8 @@ validate_payload() {  # <data.json>
     and (.underway | type == "array")
     and (.landed | type == "array")
     and (.charted | type == "array")
+    and (.lavish_boards | type == "array")
+    and optional_string("lavish_status")
     and ((has("charted_more") | not)
       or ((.charted_more | type == "number") and (.charted_more >= 0) and (.charted_more | floor == .)))
     and ((has("charted_warning_more") | not)
@@ -206,6 +220,7 @@ validate_payload() {  # <data.json>
     and ([.underway[] | underway_item] | all)
     and ([.landed[] | landed_item] | all)
     and ([.charted[] | charted_item] | all)
+    and ([.lavish_boards[] | lavish_item] | all)
   ' "$1" >/dev/null
 }
 
