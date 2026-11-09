@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Nudge eligibility, reply scope, and one-send-per-set behavior through the CLI.
 set -eu
+
+# shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 NUDGE="$ROOT/bin/fm-afk-nudge.mjs"
