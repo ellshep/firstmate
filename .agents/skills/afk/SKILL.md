@@ -16,7 +16,8 @@ It never changes the authority set.
 The posture is a file, `state/.afk-contract`, written only by `bin/fm-afk-contract.sh` in the same turn as `/afk`; nothing infers the posture from chat.
 A record carrying quiet mode (`bin/fm-afk-contract.sh mode`) is not this posture: the captain is present, so none of this skill's holds for a return apply to it (the `quiet` skill owns it).
 Typing `/afk` is itself the go: the captain may not look at the screen again, so entry never waits for a further human response, and no read-back gates it or asks for a go.
-Hold-for-return is the default and the only reach profile this release records: there is no phone channel, and the entry announcement says so aloud every time.
+When the Claude primary can invoke `PushNotification`, or `config/wedge-alarm` has an active `command:` channel, the entry announcement names phone reach.
+Otherwise it names hold-for-return.
 
 ## Entering: `/afk [words]`
 
@@ -46,7 +47,7 @@ Hold-for-return is the default and the only reach profile this release records: 
    Both daemon paths require the record `enter` wrote and share `bin/fm-afk-start.sh` as the daemon entry.
    The daemon is **presence-gated**: it injects escalations only while `state/.afk` exists, and stays quiet otherwise.
 3. **Announce, then read back after entry.**
-   Relay the announcement in spirit: hold-for-return only, no phone channel, your instructions are recorded and the away session will carry them out where it can, anything it is unsure of, or that needs you, waits for your return, and destructive, irreversible, and security-sensitive actions are never pre-authorizable whatever the words say.
+   Relay the record's reach announcement in spirit: your instructions are recorded and the away session will carry them out where it can, anything it is unsure of waits for your return, and destructive, irreversible, and security-sensitive actions are never pre-authorizable whatever the words say.
    Then give your own plain-sentence restatement of the words in `AGENTS.md` section 9 language - what you read them as asking for, sentence by sentence, never a numbered field list - beside the expected return, the spend cap, and the one-sentence reach announcement.
    Say plainly which sentence, if any, you could not act on while away (a red merge, a discard, anything on the never-set, local-only landing); it waits for their return.
    This read-back is informational: the record already stands, so never ask for a go or wait for a reply; a captain who wants a different reading sends `/afk` again with new words.
@@ -54,6 +55,14 @@ Hold-for-return is the default and the only reach profile this release records: 
    On Pi nothing changes about arming: the supervision session's own cycle continues.
 
 ## While away
+
+- The existing supervision cycle checks `bin/fm-afk-nudge.mjs` after the configured threshold, default 24 hours.
+  Only `tasks-axi ready` queued items whose bodies explicitly say `Ready gate: passed` and `Away start: scout`, `Away start: firstmate-fork-pr`, or `Away start: app-pr` can appear.
+  These labels attest the narrow away-start scope: read-only investigations, Firstmate fixes as fork PRs, and non-money app fixes up to an open PR.
+  The nudge never authorizes a merge, money, migration, production, provider-setting, or outward-facing work.
+  A Claude supervision host hands the exact message to MAIN, which calls `PushNotification` in the existing Remote Control session and then runs `bin/fm-afk-nudge.mjs mark-sent` after success; the headless branch cannot call that tool.
+  Other away supervisors invoke an active `command:` channel from `config/wedge-alarm` with the message as `$1` and stdin.
+  `fm-spawn.sh` refuses each suggested item while the away record stands, so nothing listed starts before the captain's reply returns the session.
 
 - The record exists, so the watcher never rechecks an item held for the captain, in either supervision shape; the return brief lists it instead.
   Declared external waits keep their condition-aware, hours-long recheck cadence (`bin/fm-watch.sh`, `bin/fm-classify-lib.sh`).
@@ -70,6 +79,9 @@ Hold-for-return is the default and the only reach profile this release records: 
 No `/back` is needed. The first genuine message is the return signal:
 
 - A message that is none of the internal forms below, and **not** starting with `/afk` -> the captain is back.
+  Before the return, pass that message to `bin/fm-afk-nudge.mjs reply <message>`.
+  Its printed IDs mean an explicit `go`, `yes`, or listed item numbers approved exactly those items; after the return gate clears, dispatch those IDs under ordinary attended authority, checking current ready state and scope again.
+  Empty output means ordinary chat and grants no work.
   Run `bin/fm-afk-return.sh` before acting on the message that brought the captain back.
   That script owns the correct-ordered daemon shutdown where a daemon ran, the archive of the posture record, durable wake presentation and post-handling acknowledgement, escalation and wedge evidence, the return brief, and the return-catch-up gate.
   Relay every section of the return brief in its emitted order and in section 9 language; `bin/fm-afk-return.sh` owns that order.

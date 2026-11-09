@@ -20,6 +20,12 @@ It lists channel directives, one per non-empty, non-comment line, and every list
 - `rex` writes a blocked `id=fm-wedge` program-status record plus a desktop notification on Firstmate's own Rex pane, and removes the record after the next delivered digest; it needs a Rex supervisor pane, and `auto` never selects it.
 - `command:<cmd>` runs `<cmd>` through `sh -c` with the alarm summary as `$1` and on stdin, allowing delivery to a phone or pager service.
 
+The same `command:` channel can deliver an away work nudge after `FM_AWAY_NUDGE_AFTER_SECS` seconds (default 86400), with the nudge text as `$1` and on stdin.
+Only an explicit `Ready gate: passed` and `Away start: scout|firstmate-fork-pr|app-pr` annotation on a currently ready queued ticket makes it eligible; `bin/fm-afk-nudge.mjs` owns the exact filter and once-per-item-set record.
+On a Claude primary, the supervision host instead hands the message to MAIN for Claude Code's `PushNotification` in its Remote Control session.
+The headless host engine exposes only Bash and Read, so it cannot invoke `PushNotification` itself.
+The captain's reply is processed as an ordinary message in that same session; see the [`afk` skill](../.agents/skills/afk/SKILL.md#how-to-exit-the-return).
+
 An absent `config/wedge-alarm` behaves as `auto`, which is default-on for Herdr and on macOS.
 This is deliberate because the alarm fires only after a genuine max-defer wedge and is rate-limited to at most once per max-defer window.
 

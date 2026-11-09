@@ -89,6 +89,8 @@
 # the BRANCH OUTCOMES section (bin/fm-wake-drain.sh) presents every
 # unprocessed captain outcome until main acknowledges it. Otherwise the host
 # parks on the successor.
+# A Claude primary is also handed a ready-work phone nudge after the away
+# threshold; it alone has PushNotification, while the headless engine does not.
 # Every other outcome exits with the close's own reason line plus one
 # "supervision-host:" line saying why main has this wake, after stopping the
 # successor cycle so main's next turn end starts from the same state as
@@ -1372,6 +1374,21 @@ while :; do
       ARM_TEXT=
       exit_to_main "branch-outcome: the supervision session handled this wake and recorded captain outcomes for you (store rows $CAPTAIN_SEQS); run bin/fm-wake-drain.sh, act on its BRANCH OUTCOMES section, and acknowledge them as it prints" \
         "$HEALTH_NOTE"
+    fi
+  fi
+
+  # The headless Claude engine has only Bash and Read, so its primary must
+  # invoke PushNotification. Other primaries can use the configured command:
+  # alert channel without waking MAIN. The helper owns eligibility and dedupe.
+  if [ "$TURN_POSTURE" = away ] && fm_afk_contract_away_present "$STATE"; then
+    if [ "$PRIMARY" = claude ]; then
+      NUDGE=$("$SCRIPT_DIR/fm-afk-nudge.mjs" check 2>/dev/null) || NUDGE=
+      if [ -n "$NUDGE" ]; then
+        ARM_TEXT=
+        exit_to_main "away phone nudge: invoke PushNotification with the exact message below in this Claude Remote Control session, then run bin/fm-afk-nudge.mjs mark-sent only after delivery succeeds. No listed work starts before the captain replies." "$NUDGE"
+      fi
+    else
+      "$SCRIPT_DIR/fm-afk-nudge.mjs" check --command >/dev/null 2>&1 || true
     fi
   fi
 
