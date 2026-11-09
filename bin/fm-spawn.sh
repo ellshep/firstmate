@@ -8678,10 +8678,8 @@ fi
 
 if [ "$KIND" != secondmate ] && [ "$RELAUNCH" -eq 0 ]; then
   FM_HOME="$FM_HOME" FM_DATA_OVERRIDE="$DATA" FM_STATE_OVERRIDE="$STATE" \
-    "$SCRIPT_DIR/fm-routing-outcomes.sh" launch "$ID" || {
-      echo "error: $ID was launched and its task record is preserved, but routing evidence could not be appended; repair the private ledger before another dispatch" >&2
-      exit 1
-    }
+    "$SCRIPT_DIR/fm-routing-outcomes.sh" launch "$ID" || \
+    echo "warning: $ID was launched but routing evidence could not be appended to the advisory ledger; repair the private ledger before it is needed for review" >&2
 fi
 
 SPAWN_DELIVERY=

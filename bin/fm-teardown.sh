@@ -4569,12 +4569,8 @@ fi
 if [ "$KIND" != secondmate ]; then
   FM_HOME="$FM_HOME" FM_DATA_OVERRIDE="$DATA" FM_STATE_OVERRIDE="$STATE" \
     "$SCRIPT_DIR/fm-routing-outcomes.sh" finalize "$ID" "$TEARDOWN_META_SPAWN_GEN" \
-    "$ROUTING_STALLED" "$ROUTING_ESCALATED" "$ROUTING_FAILED" "$ROUTING_SUCCESS" || {
-      fm_lock_release "$META_LOCK"
-      META_LOCK_HELD=0
-      echo "error: $ID's routing outcome could not be appended; retaining its task record for retry" >&2
-      exit 1
-    }
+    "$ROUTING_STALLED" "$ROUTING_ESCALATED" "$ROUTING_FAILED" "$ROUTING_SUCCESS" || \
+    echo "warning: $ID's routing outcome could not be appended to the advisory ledger; teardown continues" >&2
 fi
 if [ "$BACKLOG_CLOSED" = 1 ]; then
   BACKLOG_CLOSE_MARKER=$(fm_backlog_close_marker_path "$STATE" "$ID") || exit 1

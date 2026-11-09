@@ -1916,12 +1916,13 @@ This section is the single owner of the canonical schema and its per-field seman
 | Profile `model` and `effort`; rule `why` | Optional. |
 | Top-level `preferred_provider` | Optional provider-family preference, applied after eligibility checks under `quota-array-dispatch`. |
 | Top-level `shared_quota` | Optional; see "Shared-quota opt-out" below. |
-| Rule `effort_ceiling` and `effort_floor` | Optional `low`, `medium`, or `high` bounds on the selected profile's effort, whether suggested by Jev or fixed in `use`. |
+| Rule `effort_ceiling` and `effort_floor` | Optional `low`, `medium`, or `high` bounds on the selected profile's effort, whether suggested by Jev or fixed in `use`; undeclared bounds default to `high` and `low` respectively. |
 
-When a rule declares `effort_ceiling` or `effort_floor` and its selected profile omits `effort`, typed resolution uses Jev's `low`, `medium`, or `high` suggestion from the same request as the rule choice.
-The selected effort is clipped to the ceiling, then raised to `effort_floor` if present; the floor wins when it exceeds the ceiling.
+When a matched rule's selected profile omits `effort`, typed resolution uses Jev's `low`, `medium`, or `high` suggestion from the same request as the rule choice, clipped to that rule's `effort_ceiling` (default `high`), then raised to its `effort_floor` (default `low`) if that exceeds the ceiling.
 A profile's explicit effort takes priority over Jev's suggestion within those bounds, and Firstmate may override the resolver's concrete profile with a recorded reason.
 The bounds apply to matched rules only; the default profile remains a Firstmate decision when it omits effort.
+
+This installed no-mistakes version has no per-run reviewer model or effort selector: the review step always runs on whatever profile the matched rule or default resolves to, so a conditional Opus-medium review model and a Claude-quota-based Sonnet fallback for that step are not wired up.
 
 **Preferred provider**
 
