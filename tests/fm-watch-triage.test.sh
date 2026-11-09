@@ -3527,7 +3527,7 @@ test_busy_open_keyed_decision_is_not_wedge_escalated() {
   record_pi_busy "$state" parked-decision
   printf 'needs-decision [key=shape]: pick REST or RPC\n' > "$statusf"
   sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked-decision_status"
-  key=$(printf '%s' "$window" | tr ':/.' '___')
+  key=$(watch_window_key "$window")
   touch -t 200001010000 "$state/parked-decision.meta"
 
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
@@ -3574,7 +3574,7 @@ test_busy_closed_decision_still_wedge_escalates() {
   printf 'needs-decision [key=shape]: pick REST or RPC\nresolved [key=shape]: took REST\nworking: resuming after the answer\n' \
     > "$statusf"
   sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-closed-decision_status"
-  key=$(printf '%s' "$window" | tr ':/.' '___')
+  key=$(watch_window_key "$window")
   printf '%s' "$(hash_text "Working...")" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
   touch -t 200001010000 "$state/closed-decision.meta"
@@ -3604,7 +3604,7 @@ test_buried_open_decision_is_not_wedge_escalated() {
   printf 'needs-decision [key=api]: pick REST or RPC\nworking: parked waiting for firstmate\n' \
     > "$state/buried-decision.status"
   sig=$(seen_sig "$state/buried-decision.status"); printf '%s' "$sig" > "$state/.seen-buried-decision_status"
-  key=$(printf '%s' "$window" | tr ':/.' '___')
+  key=$(watch_window_key "$window")
   pane_hash=$(hash_text "idle building output")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"

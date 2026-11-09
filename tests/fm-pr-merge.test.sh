@@ -3992,7 +3992,7 @@ test_github_behind_updates_and_rechecks_before_merge() {
     "github-behind-red-after-update: the failed updated head was merged"
   grep -qxF "pr_head=$new_head" "$case_dir/state/task-x1.meta" \
     || fail "github-behind-red-after-update: the updated head was not recorded"
-  case_dir=$(make_case github-behind-default-squash)
+  case_dir=$(make_case github-behind-default-merge)
   add_gh_mocks "$case_dir" "$old_head"
   write_github_required "$case_dir" classic:ci
   jq '.mergeStateStatus = "BEHIND"' "$case_dir/github-view.json" > "$case_dir/github-view-after-update.json"
@@ -4002,10 +4002,10 @@ test_github_behind_updates_and_rechecks_before_merge() {
   printf '%s\n' "$new_head" > "$case_dir/github-head-after-update"
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/6181 --update-branch \
     > "$case_dir/stdout" 2> "$case_dir/stderr" \
-    || fail "github-behind-default-squash: default method should update and merge: $(cat "$case_dir/stderr")"
+    || fail "github-behind-default-merge: default method should update and merge: $(cat "$case_dir/stderr")"
   assert_grep "api --method PUT repos/example/repo/pulls/6181/update-branch -f expected_head_sha=$old_head" "$case_dir/gh.log" \
-    "github-behind-default-squash: the branch was not updated"
-  assert_logged_gh_merge "$case_dir" 6181 example/repo --squash
+    "github-behind-default-merge: the branch was not updated"
+  assert_logged_gh_merge "$case_dir" 6181 example/repo --merge
 
   case_dir=$(make_case github-behind-unknown-after-update)
   add_gh_mocks "$case_dir" "$old_head"

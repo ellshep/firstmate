@@ -430,7 +430,7 @@ test_live_worker_decision_churn_honors_wait_cadence() {
   for verb in needs-decision blocked; do
     dir=$(make_case "live-$verb-churn"); state="$dir/state"; fakebin="$dir/fakebin"
     out="$dir/watch.out"; capture="$dir/pane.txt"; statusf="$state/parked.status"
-    window="test:fm-worker-wait"; key=$(printf '%s' "$window" | tr ':/.' '___')
+    window="test:fm-worker-wait"; key=$(watch_window_key "$window")
     throttle="$state/.paused-resurfaced-$key"
     mkdir -p "$dir/config"
     : > "$dir/config/wedge-defer-worker-wait"
