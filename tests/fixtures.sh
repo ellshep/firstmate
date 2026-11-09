@@ -384,6 +384,9 @@ fm_test_spawn_home() {
 }
 
 # fm_test_spawn_brief <home> <id> [captain-intent]
+# Ship dispatch requires a settled-decisions entry (or the in-the-moment
+# sentinel) under Captain's intent; this fixture has no open decisions to
+# record, so it declares the sentinel.
 fm_test_spawn_brief() {
   local home=$1 id=$2 intent=${3:-brief for $2}
   mkdir -p "$home/data/$id"
@@ -391,6 +394,9 @@ fm_test_spawn_brief() {
 # Task
 ## Captain's intent
 $intent
+
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
 
 ## Firstmate spec
 Exercise the spawn behavior under test.
