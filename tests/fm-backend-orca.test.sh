@@ -22,6 +22,9 @@ write_spawn_brief() {  # <data-dir> <id>
 ## Captain's intent
 Exercise Orca dispatch.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Verify the Orca lifecycle behavior under test.
 EOF

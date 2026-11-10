@@ -226,6 +226,11 @@ test_ship_modes_generate_clean_briefs() {
     assert_grep "{TASK}" "$brief" "$id: brief missing the {TASK} placeholder"
     assert_grep "{FIRSTMATE_SPEC}" "$brief" "$id: brief missing the {FIRSTMATE_SPEC} placeholder"
     assert_grep "## Captain's intent" "$brief" "$id: brief missing Captain's intent subsection"
+    assert_grep "### Decisions settled by the captain" "$brief" "$id: brief missing the captain's decision list"
+    assert_grep "{DECISION_AND_ANSWER}" "$brief" "$id: brief missing the decision placeholder"
+    # shellcheck disable=SC2016 # Backticks are literal generated brief text.
+    assert_grep 'never choose it yourself; report the options through `needs-decision`' "$brief" \
+      "$id: brief missing the worker decision escalation rule"
     assert_grep "## Firstmate spec" "$brief" "$id: brief missing Firstmate spec subsection"
     assert_grep 'never a bare number such as "PR 108"' "$brief" "$id: brief missing the full-PR-URL rule"
     assert_grep "mid-task \`working:\` line (including setup complete) is nonterminal" "$brief" \

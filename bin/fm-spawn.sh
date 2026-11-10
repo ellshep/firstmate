@@ -29,7 +29,10 @@
 #   guessed posture. A
 #   ship or scout spawn also refuses leftover `{TASK}` / `{FIRSTMATE_SPEC}`
 #   placeholders, an empty Task, an incomplete pair of Task subsections, or a
-#   `## Captain's intent` line opening with a Captain label or address.
+#   `## Captain's intent` line opening with a Captain label or address. A new
+#   (non-relaunch) ship spawn also refuses a `### Decisions settled by the
+#   captain` subsection that is missing, empty, or carries an unanswered entry
+#   (bin/fm-dod-lib.sh fm_brief_ship_decisions_valid).
 #   When config/herdr-lifecycle-spawn-guard exists, a brief naming
 #   bin/fm-herdr-lab.sh or a listed Herdr session/server lifecycle command must
 #   carry the Herdr isolation contract emitted by bin/fm-brief.sh --herdr-lab;
@@ -4425,6 +4428,10 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
         exit 1
       fi
     fi
+  fi
+  if [ "$KIND" = ship ] && [ "$RELAUNCH" -eq 0 ] && ! fm_brief_ship_decisions_valid "$BRIEF"; then
+    echo "error: $BRIEF needs a nonempty entry under ### Decisions settled by the captain, or Captain-described-in-the-moment: yes, before a new ship dispatch" >&2
+    exit 1
   fi
   if [ "$RELAUNCH" -eq 1 ]; then
     BASE_BRANCH=$(fm_meta_get "$RELAUNCH_META" base_branch)

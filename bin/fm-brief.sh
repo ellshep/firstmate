@@ -8,7 +8,9 @@
 # report, decision, or PR the ask refers to, without added speaker labels or
 # direct address) and `{FIRSTMATE_SPEC}`
 # under `## Firstmate spec` (build instructions, which are never the captain's
-# intent). bin/fm-dod-lib.sh owns the no-mistakes `--intent` contract those
+# intent). A ship's Captain's intent also has a required decision list; Firstmate
+# fills it with each captain-settled product choice and its answer before dispatch.
+# bin/fm-dod-lib.sh owns the no-mistakes `--intent` contract those
 # subsections feed; bin/fm-spawn.sh refuses leftover placeholders and a
 # `## Captain's intent` line opening with a Captain label or address. Secondmate
 # charters still use a single `{TASK}` charter fill. Firstmate may adjust other
@@ -679,6 +681,20 @@ IFS= read -r -d '' TASK_SECTION <<'EOF' || true
 {FIRSTMATE_SPEC}
 EOF
 TASK_SECTION=${TASK_SECTION%$'\n'}
+if [ "$KIND" = ship ]; then
+IFS= read -r -d '' TASK_SECTION <<'EOF' || true
+# Task
+## Captain's intent
+{TASK}
+
+### Decisions settled by the captain
+- {DECISION_AND_ANSWER}
+
+## Firstmate spec
+{FIRSTMATE_SPEC}
+EOF
+TASK_SECTION=${TASK_SECTION%$'\n'}
+fi
 
 # One shared string keeps the ship and scout infrastructure rule identical.
 # Rule 2 governs file edits, so it does not prohibit pool administration.
@@ -850,6 +866,7 @@ $CREWMATE_PAUSE_INSTRUCTIONS
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
    append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+   If a product choice is absent from \`### Decisions settled by the captain\`, never choose it yourself; report the options through \`needs-decision\`. (A bare \`Captain-described-in-the-moment: yes\` there means the captain settled the whole task directly and left no decision list.)
 $ASK_USER_BLOCK
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.

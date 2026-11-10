@@ -96,6 +96,9 @@ cat > "$PRIMARY_HOME/data/cm1/brief.md" <<'EOF'
 ## Captain's intent
 Exercise primary-home Herdr placement.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Verify the crewmate uses its primary home's workspace.
 EOF
@@ -112,6 +115,9 @@ cat > "$SM_HOME/data/cm2/brief.md" <<'EOF'
 # Task
 ## Captain's intent
 Exercise secondmate-owned Herdr placement.
+
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
 
 ## Firstmate spec
 Verify the crewmate uses its secondmate home's workspace.

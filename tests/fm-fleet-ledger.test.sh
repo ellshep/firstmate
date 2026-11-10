@@ -59,6 +59,9 @@ make_case() {  # <name> <on|off>
 ## Captain's intent
 Exercise the fleet ledger for $TASK.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Nothing to build.
 EOF

@@ -434,6 +434,9 @@ write_ship_brief() {  # <home> <id> [description]
 ## Captain's intent
 $description
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Verify projected workspace behavior for $id.
 EOF

@@ -18,6 +18,9 @@ write_ship_brief() {  # <file> <id>
 ## Captain's intent
 Exercise trace propagation for $2.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Verify the spawned process receives the expected trace context.
 EOF

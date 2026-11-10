@@ -15,8 +15,10 @@
 # `## Captain's intent` preserved from the scout brief and promotion's ship-time
 # instructions under `## Firstmate spec`; the scout-time spec remains context but
 # is not relabeled as the ship spec. Promotion refuses leftover `{TASK}` /
-# `{FIRSTMATE_SPEC}` placeholders and a `## Captain's intent` line opening with
-# a Captain label or address (bin/fm-dod-lib.sh). A pre-subsection scout
+# `{FIRSTMATE_SPEC}` placeholders, a `## Captain's intent` line opening with
+# a Captain label or address, and a `### Decisions settled by the captain`
+# subsection that is missing, empty, or carries an unanswered entry
+# (bin/fm-dod-lib.sh fm_brief_ship_decisions_valid). A pre-subsection scout
 # brief contributes only Task lines explicitly marked as captain words to intent,
 # read outside fenced blocks and indented examples so a quoted `Captain:` sample
 # never passes the provenance gate as the ask (bin/fm-dod-lib.sh).
@@ -354,14 +356,24 @@ if ADDRESS_LINE=$(fm_brief_intent_address_line "$SCOUT_BRIEF"); then
   echo "error: $SCOUT_BRIEF ## Captain's intent has an operator-address line: $ADDRESS_LINE; write the captain's actual words without a Captain label or address before promotion, since the heading already records provenance" >&2
   exit 1
 fi
+LEGACY_INTENT=0
 if fm_brief_task_heading_present "$SCOUT_BRIEF" "## Captain's intent"; then
   INTENT_BODY=$(fm_brief_task_heading_body "$SCOUT_BRIEF" "## Captain's intent")
 else
+  LEGACY_INTENT=1
   TASK_BODY=$(fm_brief_heading_body "$SCOUT_BRIEF" "# Task")
   INTENT_BODY=$(fm_brief_marked_captain_words "$TASK_BODY")
 fi
 if [ -z "$(printf '%s' "$INTENT_BODY" | tr -d '[:space:]')" ]; then
   echo "error: $SCOUT_BRIEF has no provenance-marked Captain's intent; add the captain's actual words before promotion" >&2
+  exit 1
+fi
+if [ "$LEGACY_INTENT" -eq 1 ]; then
+  DECISIONS_BODY=$(fm_brief_task_heading_body "$SCOUT_BRIEF" '### Decisions settled by the captain')
+  INTENT_BODY=$(printf '%s\n\n### Decisions settled by the captain\n%s' "$INTENT_BODY" "$DECISIONS_BODY")
+fi
+if ! fm_brief_ship_decisions_valid "$SCOUT_BRIEF"; then
+  echo "error: $SCOUT_BRIEF needs a nonempty entry under ### Decisions settled by the captain, or Captain-described-in-the-moment: yes, before scout promotion" >&2
   exit 1
 fi
 

@@ -43,6 +43,9 @@ make_case() {
 ## Captain's intent
 Ship a change through the review tool.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Exercise the external review spawn path.
 

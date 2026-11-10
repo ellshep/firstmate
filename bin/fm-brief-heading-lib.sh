@@ -10,7 +10,9 @@
 
 # Parse an exact ATX heading outside fenced blocks. Body mode prints through
 # the next unfenced heading at the same or a higher level; present mode reports
-# whether the heading exists.
+# whether the heading exists. An empty <heading> skips the search and grabs
+# from the first line, stopping at the first unfenced heading of any level -
+# this reads a body's own prefix, up to (excluding) its first nested heading.
 fm_brief_heading_parse() {  # <file|-> <heading> <body|present>
   local file=$1 heading=$2 mode=$3 input=$1
   if [ "$file" = - ]; then
@@ -22,6 +24,8 @@ fm_brief_heading_parse() {  # <file|-> <heading> <body|present>
     BEGIN {
       target_level = 0
       while (substr(heading, target_level + 1, 1) == "#") target_level++
+      no_heading = (heading == "")
+      if (no_heading) { found = 1; grab = 1 }
     }
     {
       line = $0
@@ -50,13 +54,15 @@ fm_brief_heading_parse() {  # <file|-> <heading> <body|present>
         }
       }
 
-      if (!found && !was_fenced && line == heading) {
-        found = 1
-        if (mode == "present") next
-        grab = 1
-        next
+      if (!no_heading) {
+        if (!found && !was_fenced && line == heading) {
+          found = 1
+          if (mode == "present") next
+          grab = 1
+          next
+        }
+        if (mode == "present" || !grab) next
       }
-      if (mode == "present" || !grab) next
       if (is_fence || was_fenced) {
         print line
         next
@@ -64,7 +70,7 @@ fm_brief_heading_parse() {  # <file|-> <heading> <body|present>
 
       level = 0
       while (substr(scan, level + 1, 1) == "#") level++
-      if (level > 0 && level <= target_level && substr(scan, level + 1, 1) ~ /^[[:space:]]?$/) exit
+      if (level > 0 && (no_heading || level <= target_level) && substr(scan, level + 1, 1) ~ /^[[:space:]]?$/) exit
       print line
     }
     END {
@@ -91,4 +97,14 @@ fm_brief_task_heading_present() {  # <file> <heading>
   local task
   task=$(fm_brief_heading_body "$1" "# Task")
   fm_brief_heading_parse - "$2" present >/dev/null <<<"$task"
+}
+
+# Print a heading's body up to (excluding) its own first nested heading. A
+# ship's `## Captain's intent` body always nests `### Decisions settled by
+# the captain`, so callers that must see only the captain's own words - e.g.
+# detecting an untouched `{TASK}` placeholder - read this instead of the full
+# body, which would otherwise never equal the bare placeholder once a nested
+# heading is present.
+fm_brief_task_heading_own_body() {  # <file> <heading>
+  fm_brief_task_heading_body "$1" "$2" | fm_brief_heading_parse - '' body
 }

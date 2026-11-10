@@ -429,6 +429,9 @@ test_promotion_keeps_the_recorded_base_branch() {
 ## Captain's intent
 Fix the hub bug.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Reproduce it first.
 

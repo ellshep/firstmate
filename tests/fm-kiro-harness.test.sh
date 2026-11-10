@@ -435,6 +435,9 @@ make_kiro_spawn_case() {
 ## Captain's intent
 Exercise Kiro dispatch.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Verify launch and hook wiring.
 EOF

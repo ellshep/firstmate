@@ -60,7 +60,7 @@ write_brief() {  # <home> <id> [<recorded-mode>]
   local home=$1 id=$2 mode=${3:-}
   mkdir -p "$home/data/$id"
   {
-    printf 'You are a crewmate.\n\n# Task\n## Captain'\''s intent\nExercise the delivery contract.\n\n## Firstmate spec\nVerify the selected delivery behavior.\n\n# Definition of done\n'
+    printf 'You are a crewmate.\n\n# Task\n## Captain'\''s intent\nExercise the delivery contract.\n\n### Decisions settled by the captain\nCaptain-described-in-the-moment: yes\n\n## Firstmate spec\nVerify the selected delivery behavior.\n\n# Definition of done\n'
     [ -z "$mode" ] || printf 'Delivery contract: mode=%s\n' "$mode"
     case "$mode" in direct-PR|local-only) printf 'Mode reason: fixture delivery choice\n' ;; esac
   } > "$home/data/$id/brief.md"
@@ -71,6 +71,10 @@ fill_brief_subsections() {  # <file> <intent> <spec>
   content=$(cat "$file")
   content=${content//'{TASK}'/$intent}
   content=${content//'{FIRSTMATE_SPEC}'/$spec}
+  content=${content//'{DECISION_AND_ANSWER}'/None remain after review.}
+  if [[ "$content" != *'### Decisions settled by the captain'* ]]; then
+    content=${content/"## Firstmate spec"/$'### Decisions settled by the captain\n- None remain after review.\n\n## Firstmate spec'}
+  fi
   printf '%s\n' "$content" > "$file"
 }
 
@@ -498,7 +502,7 @@ STUB
     fill_brief_subsections "$home/data/$id/brief.md" \
       "Ship the delivery-contract change." "Preserve the selected delivery mode."
     out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode "$mode" --yolo off 2>&1) \
-      || fail "$mode: promotion should succeed"
+      || fail "$mode: promotion should succeed: $out"
 
     payload="$TMP_ROOT/promote-dod/payload-$id"
     # Run the delivery command promotion printed, so the assertions below are made
@@ -523,6 +527,10 @@ STUB
       "$mode: promoted worker was not told to leave the scratch base for its ship branch"
     assert_grep "## Captain's intent" "$payload" \
       "$mode: promoted worker did not receive the Captain's intent subsection"
+    assert_grep "### Decisions settled by the captain" "$payload" \
+      "$mode: promoted worker did not receive the settled decision subsection"
+    assert_grep "- None remain after review." "$payload" \
+      "$mode: promoted worker did not receive the settled decision entry"
     assert_grep "## Firstmate spec" "$payload" \
       "$mode: promoted worker did not receive the Firstmate spec subsection"
 
@@ -942,6 +950,108 @@ EOF
     "unfilled ship spawn did not name the intent subsection to fill"
   assert_absent "$home/state/$id.meta" "unfilled ship spawn wrote task metadata"
 
+  # Regression: a ship's `## Captain's intent` body always nests `### Decisions
+  # settled by the captain`, so an unfilled `{TASK}` is never the whole body
+  # once firstmate fills the spec and decisions list. The placeholder check
+  # must still catch the untouched `{TASK}` rather than reading it as filled.
+  id=delivery-task-placeholder-with-decisions
+  mkdir -p "$home/data/$id"
+  cat > "$home/data/$id/brief.md" <<'EOF'
+# Task
+## Captain's intent
+{TASK}
+
+### Decisions settled by the captain
+- Ship the fallback path, not the retry.
+
+## Firstmate spec
+Exercise the ready gate.
+
+# Definition of done
+Delivery contract: mode=no-mistakes
+EOF
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn accepted an untouched {TASK} once decisions were filled in"
+  assert_contains "$out" "still contains {TASK} or {FIRSTMATE_SPEC}" \
+    "untouched {TASK} with filled decisions did not name the leftover placeholder"
+  assert_absent "$home/state/$id.meta" "untouched {TASK} with filled decisions wrote task metadata"
+
+  id=delivery-unsettled-ship
+  FM_HOME="$home" brief_fixture "$id" proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "unsettled ship brief should scaffold"
+  brief="$home/data/$id/brief.md"
+  intent_body=$(cat "$brief")
+  intent_body=${intent_body//'{TASK}'/Build the requested change.}
+  intent_body=${intent_body//'{FIRSTMATE_SPEC}'/Exercise the ready gate.}
+  printf '%s\n' "$intent_body" > "$brief"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn accepted an unfilled captain decision list"
+  assert_contains "$out" "needs a nonempty entry under ### Decisions settled by the captain" \
+    "unsettled ship refusal did not name the missing decision entry"
+  assert_absent "$home/state/$id.meta" "unsettled ship spawn wrote task metadata"
+
+  intent_body=${intent_body//'- {DECISION_AND_ANSWER}'/'- '}
+  printf '%s\n' "$intent_body" > "$brief"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn accepted an empty captain decision entry"
+  assert_contains "$out" "needs a nonempty entry under ### Decisions settled by the captain" \
+    "empty decision entry refusal did not name the decision gate"
+  assert_absent "$home/state/$id.meta" "empty decision entry spawn wrote task metadata"
+
+  id=delivery-decisions-in-spec
+  mkdir -p "$home/data/$id"
+  cat > "$home/data/$id/brief.md" <<'EOF'
+# Task
+## Captain's intent
+Build the requested change.
+
+## Firstmate spec
+Exercise the ready gate.
+
+### Decisions settled by the captain
+- This text is in the wrong subsection.
+
+# Definition of done
+Delivery contract: mode=no-mistakes
+EOF
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn accepted a decision entry inside Firstmate spec"
+  assert_contains "$out" "needs a nonempty entry under ### Decisions settled by the captain" \
+    "misplaced decision entry refusal did not name the decision gate"
+  assert_absent "$home/state/$id.meta" "misplaced decision entry spawn wrote task metadata"
+
+  # Regression: a decision list answering only its first bullet and leaving the
+  # rest as the unfilled placeholder must still be refused - the captain's
+  # standing rule requires every listed decision to be settled, not just one.
+  id=delivery-decisions-partially-answered
+  mkdir -p "$home/data/$id"
+  cat > "$home/data/$id/brief.md" <<'EOF'
+# Task
+## Captain's intent
+Build the requested change.
+
+### Decisions settled by the captain
+- {DECISION_AND_ANSWER}
+- Use Postgres, not Mongo.
+- {DECISION_AND_ANSWER}
+
+## Firstmate spec
+Exercise the ready gate.
+
+# Definition of done
+Delivery contract: mode=no-mistakes
+EOF
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn accepted a decision list with unanswered bullets left"
+  assert_contains "$out" "needs a nonempty entry under ### Decisions settled by the captain" \
+    "partially-answered decision list refusal did not name the decision gate"
+  assert_absent "$home/state/$id.meta" "partially-answered decision list spawn wrote task metadata"
+
   id=delivery-herdr-lifecycle-unguarded
   mkdir -p "$home/data/$id"
   cat > "$home/data/$id/brief.md" <<'EOF'
@@ -1028,6 +1138,9 @@ EOF
 [captain] Fix the legacy dispatch boundary.
 Do not copy this Firstmate-authored constraint into intent.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 # Definition of done
 Delivery contract: mode=no-mistakes
 Pass the entire Task as --intent.
@@ -1055,6 +1168,9 @@ EOF
 # Task
 ## Captain's intent
 Fix the migrated dispatch boundary.
+
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
 
 ## Firstmate spec
 Preserve the existing compatibility path.
@@ -1143,6 +1259,22 @@ EOF
     "unfilled promotion did not distinguish scout and ship Firstmate specs"
   assert_grep 'kind=scout' "$meta" "unfilled promotion still changed the task record"
 
+  id=promote-empty-decisions
+  meta="$home/state/$id.meta"
+  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
+  FM_HOME="$home" brief_fixture "$id" proj --scout >/dev/null 2>&1 \
+    || fail "empty-decision scout brief should scaffold"
+  fill_brief_subsections "$home/data/$id/brief.md" "Investigate the ready gate." "Report the result."
+  sed 's/^- None remain after review\.$/- /' "$home/data/$id/brief.md" > "$home/data/$id/brief.tmp"
+  mv "$home/data/$id/brief.tmp" "$home/data/$id/brief.md"
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode direct-PR --yolo off 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "promotion accepted an empty captain decision entry"
+  assert_contains "$out" "needs a nonempty entry under ### Decisions settled by the captain" \
+    "promotion refusal did not name the empty decision entry"
+  assert_grep 'kind=scout' "$meta" "empty-decision promotion changed the task record"
+  assert_absent "$home/data/$id/ship-instructions.md" "empty-decision promotion wrote ship instructions"
+
   id=promote-missing-brief
   meta="$home/state/$id.meta"
   printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
@@ -1213,6 +1345,9 @@ EOF
 ## Captain's intent
 Ship the parser without losing detailed requirements.
 
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
+
 ## Firstmate spec
 Keep this opening requirement.
 
@@ -1256,6 +1391,9 @@ You are a crewmate.
 
 Reproduce the refusal before changing code.
 Ship the narrow session-floor fix with a regression test.
+
+### Decisions settled by the captain
+Captain-described-in-the-moment: yes
 
 # Setup
 This is a SCOUT task: the deliverable is a written report, not a PR.
@@ -1301,18 +1439,20 @@ EOF
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
   assert_present "$home/data/$id/launch-brief.md" "plain intent was not serialized"
   authorized=$(awk '$0 == "## Captain intent authorized for --intent" { emit=1; next } emit { print }' "$home/data/$id/launch-brief.md")
-  [ "$authorized" = "$words" ] || fail "authorized --intent must contain exactly the request, without headings, address, or contract prose: $authorized"
+  [ "$authorized" = "$words"$'\n\n''### Decisions settled by the captain'$'\n''- None remain after review.' ] || \
+    fail "authorized --intent must contain the request and settled decisions, without build prose: $authorized"
 
   # The request itself may discuss an address spelling. It is data, not an
   # invitation to scrub the user's words or synthesize a different request.
   words=$(printf '%s\n' "Keep the literal example \`Captain, hello\` in the documentation." \
     "Stop composing Captain:, Captain's words:, Captain's ask:, and Captain's intent: into PR bodies.")
   write_brief "$home" intent-literal no-mistakes
-  printf '# Task\n## Captain'"'"'s intent\n%s\n\n## Firstmate spec\nDo not paraphrase.\n\n# Definition of done\nDelivery contract: mode=no-mistakes\n' "$words" > "$home/data/intent-literal/brief.md"
+  printf '# Task\n## Captain'"'"'s intent\n%s\n\n### Decisions settled by the captain\nCaptain-described-in-the-moment: yes\n\n## Firstmate spec\nDo not paraphrase.\n\n# Definition of done\nDelivery contract: mode=no-mistakes\n' "$words" > "$home/data/intent-literal/brief.md"
   out=$(run_spawn "$home" "$fakebin" intent-literal "$proj" claude --mode no-mistakes --yolo off)
   assert_not_contains "$out" "operator-address line" "labels mentioned mid-line were refused as address"
   authorized=$(awk '$0 == "## Captain intent authorized for --intent" { emit=1; next } emit { print }' "$home/data/intent-literal/launch-brief.md")
-  [ "$authorized" = "$words" ] || fail "literal words in the request were scrubbed"
+  [ "$authorized" = "$words"$'\n\n''### Decisions settled by the captain'$'\n''Captain-described-in-the-moment: yes' ] || \
+    fail "literal words in the request were scrubbed"
 
   # A body line that opens with operator address is refused, never rewritten.
   for marker in 'Captain:' "Captain's words:" "Captain's ask:" "Captain's intent:" 'Captain,'; do
@@ -1351,7 +1491,7 @@ EOF
     n=$((n + 1))
     id="intent-marked-$n"
     write_brief "$home" "$id" no-mistakes
-    printf '# Task\n%s %s\nDo not include this build constraint.\n%s %s\n\n# Definition of done\nDelivery contract: mode=no-mistakes\n' \
+    printf '# Task\n%s %s\nDo not include this build constraint.\n%s %s\n\n### Decisions settled by the captain\nCaptain-described-in-the-moment: yes\n\n# Definition of done\nDelivery contract: mode=no-mistakes\n' \
       "$marker" 'Keep the original request intact.' "$marker" 'Preserve its provenance.' > "$home/data/$id/brief.md"
     out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
     assert_present "$home/data/$id/launch-brief.md" "$marker: provenance was not accepted"
